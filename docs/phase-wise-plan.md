@@ -2,26 +2,21 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-## Phase 0 — Setup & Scaffolding (2 hrs)
-- Create repo layout per spec (`blackbox/` tree).
-- `pyproject.toml` with deps: langchain, langchain-openai/langchain-anthropic, langgraph, chromadb, rank_bm25, fastapi, uvicorn, sse-starlette, redis, psycopg2/sqlalchemy, pydantic, python-dotenv, tiktoken, structlog.
-- `.env.example` listing all keys (never commit real keys). `.gitignore`.
-- Config module (`config/settings.py`) reading env + YAML config file; all tunables (chunk sizes, fusion weights, top-k, rewrite cap, token budget) config-driven.
-- Logging setup: structlog JSON, request-id contextvar.
-- Health check endpoint.
+Status: Phase 0 ✅ done, Phase 1 ✅ done, Phase 2 ⬅ next.
 
-## Phase 1 — Corpus & Ingestion (6 hrs)
-- Generate 60+ internally consistent docs (30 postmortems, 15 runbooks, 10 arch docs, 5 alert defs) using a deterministic script (`seed/generate_corpus.py`) with shared service/error-code vocabulary.
-- Loaders per doc type (`ingestion/loaders/`).
-- Structure-aware chunkers per doc type (`ingestion/chunkers/`) — postmortem sections become atomic chunks; runbook symptom/diagnosis/mitigation/escalation; arch docs by section; alerts as single chunks.
-- Metadata on every chunk: doc_type, services[], severity, date, section, error_codes[].
-- Entity extraction at ingest → structured store (Postgres): services, error codes, dependencies graph.
-- Idempotent re-ingestion: deterministic chunk IDs (hash of doc+section), upsert into Chroma + Postgres.
-- Store raw docs in `seed/` (committed) or generation script.
+## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
+- Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
+- Dockerfile + docker-compose (app, postgres, redis). Tests: 15. ruff clean. Committed (ff7438f).
 
-## Phase 2 — Retrieval (5 hrs)
+## Phase 1 — Corpus & Ingestion (6 hrs) ✅ DONE
+- 60-doc deterministic corpus (30 PM, 15 RB, 10 arch, 5 alerts).
+- Loaders, structure-aware chunkers (Root Cause atomic), metadata, entity extraction + SQLAlchemy store.
+- Embedding providers (Fake/OpenAI/ST), Chroma wrapper (idempotent), ingestion pipeline (content-hash skip, batched).
+- Tests: 23. ruff clean. Committed (ff7438f).
+
+## Phase 2 — Retrieval (5 hrs) ⬅ NEXT
 - Dense retriever (`retrieval/dense.py`): Chroma with chosen embedding model.
-- Sparse retriever (`retrieval/sparse.py`): BM25 over chunk corpus (in-memory) OR Postgres FTS.
+- Sparse retriever (`retrieval/sparse.py`): BM25 over chunk corpus (in-memory) or Postgres FTS.
 - Fusion (`retrieval/fusion.py`): RRF (or weighted) with config-driven weights; parallel execution.
 - Reranker (`retrieval/rerank.py`): cross-encoder or LLM reranker; measure impact.
 - Custom LangChain retriever (`retrieval/hybrid_retriever.py`) wrapping all above; composes with LCEL.
@@ -66,7 +61,7 @@ On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 ## Phase 8 — Observability, Caching, Hardening (2 hrs)
 - LangChain callbacks: latency + token counts per LLM call/retrieval/chain.
 - LLM response caching (dev).
-- Structured JSON logging with request id.
+- Structured JSON logging with request id (partial done in Phase 0).
 - Config validation.
 - Redis cache integration for retrieval/embedding caches.
 
