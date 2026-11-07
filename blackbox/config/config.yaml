@@ -1,0 +1,57 @@
+retrieval:
+  top_k: 8
+  fusion_k: 60
+  dense_weight: 0.5
+  sparse_weight: 0.5
+  rerank: true
+  rewrite_cap: 2
+  retrieval_timeout_ms: 5000
+
+memory:
+  working_turns: 6
+  summary_trigger_turns: 8
+  summary_max_tokens: 600
+  entity_max_tokens: 400
+
+budget:
+  system_prompt_tokens: 800
+  entity_memory_tokens: 400
+  summary_tokens: 600
+  recent_turns_tokens: 1200
+  retrieved_chunks_tokens: 2000
+  output_headroom_tokens: 1024
+  total_cap_tokens: 6024
+
+chunking:
+  postmortem_max_tokens: 800
+  runbook_max_tokens: 600
+  arch_max_tokens: 700
+  alert_max_tokens: 300
+  embedding_max_tokens: 8000
+
+guardrails:
+  max_message_chars: 4000
+  rate_limit_rps: 5
+  max_llm_calls_per_turn: 6
+  max_answer_tokens: 1024
+  strict_injection_block: false
+  secret_scrub: true
+
+redis:
+  enabled: true
+  timeout_ms: 200
+  ttl_llm_response_s: 86400
+  ttl_embedding_s: 604800
+  ttl_retrieval_s: 60
+  ttl_rerank_s: 300
+  ttl_conversation_state_s: 3600
+
+ingestion:
+  max_upload_size_mb: 50
+  max_total_corpus_size_mb: 2048
+  spool_threshold_bytes: 1048576
+  batch_size_chunks: 64
+  batch_size_tokens: 100000
+  max_concurrent_jobs: 2
+
+pricing: {}

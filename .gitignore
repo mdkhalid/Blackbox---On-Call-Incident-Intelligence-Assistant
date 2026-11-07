@@ -1,0 +1,36 @@
+# Command Code session metadata
+.commandcode/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data / stores
+data/chroma/
+data/tmp/
+*.db
+*.sqlite
+
+# Secrets
+*.pem
+secrets/
+credentials.json
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

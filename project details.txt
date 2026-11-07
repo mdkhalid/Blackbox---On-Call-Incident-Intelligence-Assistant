@@ -1,0 +1,197 @@
+RAG, LangChain, Memory & LangGraph - Project Assignments
+Two implementation-heavy projects. Both exercise all four areas; the difference is depth and orchestration complexity.
+Area
+Project 1 (Medium)
+Project 2 (Medium–Hard)
+RAG
+Hybrid retrieval, structure-aware chunking, re-ranking, citations, retrieval eval
+Multi-source retrieval, metadata-scoped per-question retrieval, evidence grading
+LangChain
+Loaders, splitters, custom retriever, LCEL chains, output parsers, callbacks, caching
+LCEL inside graph nodes, structured output parsers, tool wrappers
+Memory
+Working + summary + entity memory, conflict resolution, token budgeting
+Graph state as memory, reducers, cross-run persistent findings
+LangGraph
+Corrective-RAG graph: routing, grading, query rewrite, bounded cycles
+Full backbone: fan-out, subgraphs, HITL interrupts, checkpointing, resume, time travel
+
+Stack for both: Python (LangChain + LangGraph) or TypeScript (LangChain.js + LangGraph.js) - pick one and stay consistent. Any LLM provider with tool-calling. Vector store: Chroma, Qdrant, or pgvector. Postgres or MongoDB for structured data. Redis optional for caching.
+Project 1 (Medium)
+Project Name
+Blackbox - On-Call Incident Intelligence Assistant
+Difficulty
+⭐⭐⭐⭐☆ (Medium)
+Expected Duration
+25–32 Hours
+Objective
+An on-call engineer is paged at 2 AM. Something is wrong with a service, and somewhere in the organization's history is a postmortem describing the exact same failure from eighteen months ago - which nobody remembers. Build an assistant that answers questions like "checkout p99 is spiking and the DB connection pool looks saturated - has this happened before?" against a corpus of past incidents, runbooks, architecture docs, and alert definitions.
+What makes this project technically interesting, and why it was chosen over a generic "chat with your docs" build:
+Queries mix two retrieval modes. "checkout-service", "ERR_POOL_EXHAUSTED" and "p99" are exact tokens that keyword search finds and embeddings blur. "the thing where requests pile up and everything slows down" is pure semantics. One retrieval strategy cannot serve both - hybrid search is a requirement, not an optimization.
+Documents have meaningful internal structure. A postmortem has a timeline, a root cause, and a remediation section. Naive fixed-size chunking cuts a root cause in half and retrieves a fragment that means nothing. Chunking must respect document structure.
+Memory is forced, not decorative. An incident conversation runs for hours. By message 40, the context window is gone - but "we already ruled out the deploy at 01:15" must survive. If the assistant re-suggests a ruled-out hypothesis, it is worse than useless during an incident.
+Retrieval failure is normal. Many questions genuinely have no matching past incident. An assistant that confidently invents a precedent is actively dangerous at 2 AM.
+The goal of this assignment is to evaluate: hybrid RAG design, structure-aware ingestion, three-layer memory management, LangGraph self-correction loops, and honest handling of retrieval failure.
+Tech Stack
+LangChain - loaders, splitters, retrievers, LCEL chains, output parsers, callbacks
+LangGraph - the retrieval-and-answer graph
+Vector store - Chroma / Qdrant / pgvector
+Keyword search - BM25 (in-process is fine) or Postgres full-text
+Backend - FastAPI or Express, with SSE streaming
+Frontend - any minimal UI; this is not a frontend assignment, but the trace viewer below is mandatory
+Functional Requirements
+Corpus & Ingestion
+You must seed a realistic corpus yourself - minimum 60 documents across four types. Generate them if needed, but they must be internally consistent (the same service names, error codes and dependencies recurring across documents), because retrieval quality is meaningless against random text.
+Document type
+Structure to respect
+Min count
+Postmortems
+Summary, Impact, Timeline, Root Cause, Contributing Factors, Remediation, Action Items
+30
+Runbooks
+Symptom, Diagnosis steps, Mitigation, Escalation
+15
+Architecture docs
+Service description, dependencies, data flows, known limits
+10
+Alert definitions
+Alert name, condition, threshold, linked runbook
+5
+
+Ingestion requirements:
+Structure-aware chunking. A postmortem's Root Cause section must be chunked as a coherent unit, never split mid-section. Document your chunking strategy per document type and justify the sizes you chose
+Metadata on every chunk - at minimum: document type, service(s) mentioned, severity, date, section name, error codes present. This metadata is what makes filtered retrieval possible later
+Entity extraction at ingest time - service names, error codes, and dependency relationships extracted into a structured store, not just embedded. Some questions ("which services depend on the payment gateway?") are graph lookups, not similarity searches, and answering them from embeddings is the wrong tool
+Re-ingestion must be idempotent - running the pipeline twice must not duplicate chunks
+Retrieval (the core)
+Hybrid search: dense (embeddings) + sparse (BM25/full-text) run in parallel, with results fused. Implement the fusion yourself - reciprocal rank fusion or a weighted score - and justify the weighting with measured numbers, not intuition
+Metadata filtering: "show me only SEV1 incidents involving checkout-service in the last year" must filter before or during retrieval, not by fetching everything and filtering in application code
+Re-ranking: top-k from fusion goes through a re-ranking pass (cross-encoder, or an LLM-based re-ranker). Measure and report retrieval quality with and without re-ranking - if it doesn't help on your corpus, say so with evidence rather than keeping it because it's standard
+Custom LangChain retriever: wrap all of the above as a proper retriever class so it composes with the rest of the LangChain ecosystem
+The LangGraph Pipeline
+Implement a corrective RAG graph - this is where LangGraph earns its place over a plain chain:
+          
+
+Required behaviors:
+Router node decides the path: entity/graph lookup, retrieval, or direct answer (a question like "what does p99 mean?" needs no retrieval and should not pay for it)
+Grading node judges whether retrieved chunks actually answer the question - not whether they are topically similar
+Rewrite cycle: failed grading rewrites the query and retries. Bounded - an unbounded rewrite loop is a cost incident. Define the cap and what happens when it is hit
+Ground check: before the answer reaches the user, verify every factual claim traces to a retrieved chunk. A claim that doesn't must be removed or flagged, not shipped
+The honest-failure path: when retrieval genuinely finds nothing relevant after the bounded retries, the system must say so plainly and say what it did search. This path must be demonstrated, not just coded
+Stream graph events to the client - the user sees which node is executing, not a spinner
+Memory Management
+Three layers, all three implemented:
+Working memory - recent conversation turns, verbatim.
+Summary memory - older turns compressed. The compression must be incident-aware: a generic summarizer will happily drop "we ruled out the 01:15 deploy" as conversational filler. Design your summarization prompt and triggering policy so that ruled-out hypotheses, confirmed facts, and actions already taken survive compression. Document what you deliberately preserve and what you let go.
+Entity memory - structured facts accumulated during the conversation:
+{
+  incident_id,
+  services_implicated: [],
+  hypotheses: [ { text, status: open|ruled_out|confirmed, evidence } ],
+  actions_taken: [ { action, timestamp, outcome } ],
+  timeline_anchors: []
+}
+
+This is queried and injected on every turn, separately from the conversation history.
+Additional requirements:
+Conflict resolution: the engineer says "actually the deploy was the cause" after it was marked ruled out. The entity memory must update rather than hold both contradictory states. Implement and demonstrate this
+Token budgeting: allocate the context window explicitly across system prompt, entity memory, summary, recent turns, and retrieved chunks - with reserved output headroom. Expose the actual per-request allocation through an API so it is observable
+Eviction order: when the budget is exceeded, something must go. Define the order, justify it, and demonstrate a conversation long enough to trigger it while remaining coherent
+Retrieval Evaluation (mandatory)
+Build a small evaluation harness - "it seems to work" is not an acceptable answer for a retrieval system:
+A hand-built eval set of at least 25 questions with known correct source documents
+Measure retrieval quality (precision@k / recall@k or MRR - pick and justify)
+Measure answer groundedness - what fraction of claims are supported by retrieved context
+Report a comparison table: dense-only vs sparse-only vs hybrid vs hybrid+rerank, with real numbers from your corpus
+Re-runnable as a script, with results in the README
+API Surface
+POST   /api/chat                    (SSE - streams graph events + tokens)
+GET    /api/conversations/:id
+GET    /api/conversations/:id/trace (full graph execution trace)
+GET    /api/conversations/:id/memory (entity memory state)
+GET    /api/conversations/:id/budget (token allocation this turn)
+POST   /api/ingest
+POST   /api/eval/run
+
+Trace Viewer (required)
+A minimal UI showing, per message: which graph path executed, the retrieved chunks with their fusion and rerank scores, whether grading passed or triggered a rewrite, the ground-check result, and the token budget breakdown. You cannot debug a RAG system you cannot see, and this viewer is what you will use for the rest of the project.
+Technical Requirements
+LangChain callbacks wired for full observability - every LLM call, retrieval, and chain step logged with latency and token counts
+LLM response caching for identical prompts during development (this saves real money while iterating on the graph)
+Retrieval timeout - a hanging vector store must not hang the request
+Structured JSON logging, request ID threaded through the entire graph execution
+Config-driven: chunk sizes, fusion weights, top-k, rewrite cap, and token budget must all be configurable without code changes
+Folder Structure
+blackbox/
+├── ingestion/
+│   ├── loaders/              # per document type
+│   ├── chunkers/             # structure-aware, per type
+│   ├── entity_extraction/
+│   └── pipeline.py
+├── retrieval/
+│   ├── dense.py
+│   ├── sparse.py
+│   ├── fusion.py             # RRF or weighted - with the weights config-driven
+│   ├── rerank.py
+│   └── hybrid_retriever.py   # the custom LangChain retriever
+├── graph/
+│   ├── state.py              # graph state schema
+│   ├── nodes/                # router, grade, rewrite, generate, ground_check
+│   ├── edges.py              # conditional routing logic
+│   └── build.py
+├── memory/
+│   ├── working.py
+│   ├── summary.py            # incident-aware compression
+│   ├── entity.py             # + conflict resolution
+│   └── budget.py             # allocation + eviction
+├── eval/
+│   ├── dataset.json          # 25+ questions with known sources
+│   ├── retrieval_eval.py
+│   └── groundedness_eval.py
+├── api/
+├── seed/                     # the 60+ document corpus
+├── docs/
+│   ├── chunking-strategy.md  # per doc type, with justification
+│   ├── memory-design.md      # three layers + what compression preserves
+│   ├── retrieval-results.md  # the comparison table
+│   └── architecture.png
+└── README.md
+
+Bonus Features
+Temporal awareness - weight recent incidents higher, and surface "this is the third time this quarter"
+Query expansion with service aliases (checkout-svc ≈ checkout-service ≈ CheckoutAPI)
+A "related incidents" sidebar computed from entity overlap rather than text similarity
+Feedback capture (helpful / not helpful) stored against the retrieval that produced the answer, building toward a real eval set
+Cost per conversation, broken down by node
+Evaluation Criteria
+Criteria
+Marks
+Hybrid Retrieval (fusion implemented + weighting justified with data)
+20
+Structure-Aware Ingestion + Entity Extraction
+15
+LangGraph Pipeline (routing, grading, bounded rewrite cycle, ground check)
+20
+Memory: three layers + conflict resolution + budgeting
+20
+Retrieval Evaluation Harness + Comparison Table
+15
+Trace Viewer & Observability
+5
+Code Quality & Config Discipline
+5
+Total
+100
+
+Submission
+GitHub repository
+README with setup, architecture, and the retrieval comparison table
+The four docs/ files listed in the folder structure
+Seeded corpus committed (or a generation script that produces it deterministically)
+Eval results from an actual run
+Demo video: a multi-turn incident conversation long enough to trigger summary compression, including one question with no good answer in the corpus
+Important Instructions
+Dense-only retrieval fails this assignment regardless of how well the rest works - the error-code case is the entire reason hybrid is required
+Fusion weights chosen by intuition with no eval numbers behind them lose the retrieval marks
+A summarizer that drops ruled-out hypotheses fails the memory section - demonstrate that it doesn't
+The no-answer path must be demonstrated live. A system that always finds something is hallucinating, not retrieving
