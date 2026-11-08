@@ -42,3 +42,15 @@ class ChromaVectorStore:
         emb = self.embedding_provider.embed([text])[0]
         res = self.collection.query(query_embeddings=[emb], n_results=top_k, where=where)
         return res
+
+    def query_embedding(
+        self, embedding: list[float], top_k: int = 5, where: dict | None = None
+    ) -> dict:
+        return self.collection.query(query_embeddings=[embedding], n_results=top_k, where=where)
+
+    def get_all(self, where: dict | None = None) -> dict:
+        """Fetch every matching chunk. Used to build the in-process BM25 index."""
+        kwargs: dict = {"include": ["documents", "metadatas"]}
+        if where:
+            kwargs["where"] = where
+        return self.collection.get(**kwargs)

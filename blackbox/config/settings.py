@@ -13,15 +13,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class RetrievalConfig(BaseModel):
     top_k: int = 8
+    candidate_pool: int = 30
+    fusion_method: str = "rrf"
     fusion_k: int = 60
-    dense_weight: float = 0.5
-    sparse_weight: float = 0.5
-    rerank: bool = True
+    dense_weight: float = 0.75
+    sparse_weight: float = 0.25
+    rerank: bool = False
+    rerank_provider: str = "auto"
+    rerank_candidates: int = 20
     rewrite_cap: int = 2
     retrieval_timeout_ms: int = 5000
     min_relevance_score: float | None = None
+    collection_name: str = "blackbox_chunks"
+    embedding_provider: str = "auto"
 
-    @field_validator("top_k", "fusion_k", "rewrite_cap", "retrieval_timeout_ms")
+    @field_validator("top_k", "candidate_pool", "fusion_k", "rewrite_cap", "retrieval_timeout_ms")
     @classmethod
     def positive(cls, v):
         if v < 1:
@@ -34,6 +40,26 @@ class RetrievalConfig(BaseModel):
         if not (0.0 <= v <= 1.0):
             raise ValueError("weight must be in [0,1]")
         return v
+
+    @field_validator("fusion_method")
+    @classmethod
+    def fusion_method_known(cls, v):
+        if v not in ("rrf", "weighted"):
+            raise ValueError("fusion_method must be 'rrf' or 'weighted'")
+        return v
+
+    @field_validator("rerank_provider")
+    @classmethod
+    def rerank_provider_known(cls, v):
+        if v not in ("auto", "cross_encoder", "lexical", "llm", "none"):
+            raise ValueError("rerank_provider must be auto|cross_encoder|lexical|llm|none")
+        return v
+
+    @model_validator(mode="after")
+    def pool_covers_top_k(self):
+        if self.candidate_pool < self.top_k:
+            raise ValueError("candidate_pool must be >= top_k")
+        return self
 
 
 class MemoryConfig(BaseModel):

@@ -1,0 +1,418 @@
+{
+  "version": 2,
+  "description": "Retrieval eval set for the Blackbox incident corpus. Grades at document level: a retrieved chunk is a hit when its doc_id is in relevant_doc_ids.",
+  "corpus": {
+    "documents": 60,
+    "source": "seed\\corpus"
+  },
+  "question_count": 35,
+  "categories": {
+    "exact_token": 10,
+    "structural": 16,
+    "filtered": 4,
+    "paraphrase": 5
+  },
+  "questions": [
+    {
+      "id": "q001",
+      "question": "Which past incidents involved ERR_POOL_EXHAUSTED in inventory-service?",
+      "relevant_doc_ids": [
+        "pm-005",
+        "pm-008",
+        "pm-019",
+        "pm-027",
+        "pm-030"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q002",
+      "question": "Which past incidents involved ERR_POOL_EXHAUSTED in order-service?",
+      "relevant_doc_ids": [
+        "pm-005",
+        "pm-008",
+        "pm-027"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q003",
+      "question": "Which past incidents involved ERR_TIMEOUT in payment-gateway?",
+      "relevant_doc_ids": [
+        "pm-003",
+        "pm-016",
+        "pm-026"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q004",
+      "question": "Which past incidents involved ERR_TIMEOUT in checkout-service?",
+      "relevant_doc_ids": [
+        "pm-003",
+        "pm-016"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q005",
+      "question": "Which past incidents involved ERR_RATE_LIMIT in inventory-service?",
+      "relevant_doc_ids": [
+        "pm-015",
+        "pm-017"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q006",
+      "question": "Which past incidents involved ERR_AUTH_FAILED in payment-gateway?",
+      "relevant_doc_ids": [
+        "pm-012",
+        "pm-022"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q007",
+      "question": "Which past incidents involved ERR_CACHE_MISS in payment-gateway?",
+      "relevant_doc_ids": [
+        "pm-001",
+        "pm-010"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q008",
+      "question": "Which past incidents involved ERR_RATE_LIMIT in payment-gateway?",
+      "relevant_doc_ids": [
+        "pm-002",
+        "pm-023"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q009",
+      "question": "Which past incidents involved ERR_RATE_LIMIT in search-service?",
+      "relevant_doc_ids": [
+        "pm-015",
+        "pm-017"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q010",
+      "question": "Which past incidents involved ERR_CACHE_MISS in user-service?",
+      "relevant_doc_ids": [
+        "pm-006",
+        "pm-011"
+      ],
+      "category": "exact_token",
+      "note": "service+error-code pair; BM25 should separate these, embeddings blur them",
+      "filter": null
+    },
+    {
+      "id": "q011",
+      "question": "What was the root cause of the payment-gateway ERR_CACHE_MISS incident?",
+      "relevant_doc_ids": [
+        "pm-001"
+      ],
+      "category": "structural",
+      "note": "single-document question; Root Cause must be retrieved as one coherent chunk",
+      "filter": null
+    },
+    {
+      "id": "q012",
+      "question": "What was the root cause of the payment-gateway ERR_RATE_LIMIT incident?",
+      "relevant_doc_ids": [
+        "pm-002"
+      ],
+      "category": "structural",
+      "note": "single-document question; Root Cause must be retrieved as one coherent chunk",
+      "filter": null
+    },
+    {
+      "id": "q013",
+      "question": "What was the root cause of the checkout-service ERR_TIMEOUT incident?",
+      "relevant_doc_ids": [
+        "pm-003"
+      ],
+      "category": "structural",
+      "note": "single-document question; Root Cause must be retrieved as one coherent chunk",
+      "filter": null
+    },
+    {
+      "id": "q014",
+      "question": "What was the root cause of the user-service ERR_AUTH_FAILED incident?",
+      "relevant_doc_ids": [
+        "pm-004"
+      ],
+      "category": "structural",
+      "note": "single-document question; Root Cause must be retrieved as one coherent chunk",
+      "filter": null
+    },
+    {
+      "id": "q015",
+      "question": "What was the root cause of the order-service ERR_POOL_EXHAUSTED incident?",
+      "relevant_doc_ids": [
+        "pm-005"
+      ],
+      "category": "structural",
+      "note": "single-document question; Root Cause must be retrieved as one coherent chunk",
+      "filter": null
+    },
+    {
+      "id": "q016",
+      "question": "What was the root cause of the user-service ERR_CACHE_MISS incident?",
+      "relevant_doc_ids": [
+        "pm-006"
+      ],
+      "category": "structural",
+      "note": "single-document question; Root Cause must be retrieved as one coherent chunk",
+      "filter": null
+    },
+    {
+      "id": "q017",
+      "question": "What remediation did the team apply after the user-service outage on 2024-06-19?",
+      "relevant_doc_ids": [
+        "pm-007"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q018",
+      "question": "What remediation did the team apply after the order-service outage on 2024-04-28?",
+      "relevant_doc_ids": [
+        "pm-008"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q019",
+      "question": "What remediation did the team apply after the notification-service outage on 2024-06-07?",
+      "relevant_doc_ids": [
+        "pm-009"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q020",
+      "question": "What remediation did the team apply after the payment-gateway outage on 2024-03-18?",
+      "relevant_doc_ids": [
+        "pm-010"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q021",
+      "question": "What are the diagnosis steps in the auth-service runbook for ERR_AUTH_FAILED?",
+      "relevant_doc_ids": [
+        "rb-001"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q022",
+      "question": "What are the diagnosis steps in the checkout-service runbook for ERR_CACHE_MISS?",
+      "relevant_doc_ids": [
+        "rb-002"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q023",
+      "question": "What are the diagnosis steps in the payment-gateway runbook for ERR_POOL_EXHAUSTED?",
+      "relevant_doc_ids": [
+        "rb-003"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q024",
+      "question": "Which services does checkout-service depend on according to the architecture docs?",
+      "relevant_doc_ids": [
+        "arch-001"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q025",
+      "question": "Which services does payment-gateway depend on according to the architecture docs?",
+      "relevant_doc_ids": [
+        "arch-002"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q026",
+      "question": "Which services does inventory-service depend on according to the architecture docs?",
+      "relevant_doc_ids": [
+        "arch-003"
+      ],
+      "category": "structural",
+      "note": "",
+      "filter": null
+    },
+    {
+      "id": "q027",
+      "question": "SEV1 incidences involving checkout-service",
+      "relevant_doc_ids": [
+        "pm-012",
+        "pm-016"
+      ],
+      "category": "filtered",
+      "note": "severity+service filter pushed into the store",
+      "filter": {
+        "services": [
+          "checkout-service"
+        ],
+        "severities": [
+          "SEV1"
+        ]
+      }
+    },
+    {
+      "id": "q028",
+      "question": "notification-service ERR_AUTH_FAILED runbook",
+      "relevant_doc_ids": [
+        "rb-005"
+      ],
+      "category": "filtered",
+      "note": "doc_type=runbook filter pushed into the store; query names the document",
+      "filter": {
+        "doc_types": [
+          "runbook"
+        ]
+      }
+    },
+    {
+      "id": "q029",
+      "question": "search-service ERR_RATE_LIMIT alert definition",
+      "relevant_doc_ids": [
+        "alert-001"
+      ],
+      "category": "filtered",
+      "note": "doc_type=alert filter pushed into the store; query names the document",
+      "filter": {
+        "doc_types": [
+          "alert"
+        ]
+      }
+    },
+    {
+      "id": "q030",
+      "question": "auth-service architecture and its dependencies",
+      "relevant_doc_ids": [
+        "arch-008"
+      ],
+      "category": "filtered",
+      "note": "doc_type=arch filter pushed into the store; query names the document",
+      "filter": {
+        "doc_types": [
+          "arch"
+        ]
+      }
+    },
+    {
+      "id": "q031",
+      "question": "the service kept rejecting credentials because they had expired",
+      "relevant_doc_ids": [
+        "pm-004",
+        "pm-012",
+        "pm-021",
+        "pm-022"
+      ],
+      "category": "paraphrase",
+      "note": "no identifier overlap; only a semantic model can bridge this",
+      "filter": null
+    },
+    {
+      "id": "q032",
+      "question": "every request had to go back to the database because cached values vanished",
+      "relevant_doc_ids": [
+        "pm-001",
+        "pm-006",
+        "pm-010",
+        "pm-011",
+        "pm-013"
+      ],
+      "category": "paraphrase",
+      "note": "no identifier overlap; only a semantic model can bridge this",
+      "filter": null
+    },
+    {
+      "id": "q033",
+      "question": "two parts of the system waited on each other and nothing could proceed",
+      "relevant_doc_ids": [
+        "pm-007",
+        "pm-018",
+        "pm-029"
+      ],
+      "category": "paraphrase",
+      "note": "no identifier overlap; only a semantic model can bridge this",
+      "filter": null
+    },
+    {
+      "id": "q034",
+      "question": "the client gave up waiting before the server finished responding",
+      "relevant_doc_ids": [
+        "pm-003",
+        "pm-014",
+        "pm-016",
+        "pm-024",
+        "pm-026"
+      ],
+      "category": "paraphrase",
+      "note": "no identifier overlap; only a semantic model can bridge this",
+      "filter": null
+    },
+    {
+      "id": "q035",
+      "question": "the downstream provider started throttling us for sending too much traffic",
+      "relevant_doc_ids": [
+        "pm-002",
+        "pm-015",
+        "pm-017",
+        "pm-023"
+      ],
+      "category": "paraphrase",
+      "note": "no identifier overlap; only a semantic model can bridge this",
+      "filter": null
+    }
+  ]
+}

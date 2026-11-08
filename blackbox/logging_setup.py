@@ -30,3 +30,8 @@ def setup_logging(settings: Settings) -> None:
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False,
     )
+
+
+def get_logger(name: str | None = None):
+    """Structured logger factory; safe to call before `setup_logging`."""
+    return structlog.get_logger(name) if name else structlog.get_logger()

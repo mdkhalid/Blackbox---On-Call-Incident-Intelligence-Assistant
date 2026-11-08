@@ -1,11 +1,23 @@
 retrieval:
   top_k: 8
+  candidate_pool: 30
+  fusion_method: rrf
   fusion_k: 60
-  dense_weight: 0.5
-  sparse_weight: 0.5
-  rerank: true
+  # Swept empirically (docs/retrieval-results.md): 0.74-0.80 is a flat MRR plateau at
+  # k=5, and the sparse-heavy end of it also maximises recall@5. 0.75 sits mid-plateau
+  # rather than on the exact argmax, because the extra BM25 weight protects the
+  # exact-token queries this system exists for.
+  dense_weight: 0.75
+  sparse_weight: 0.25
+  # Measured off by default: reranking lowered MRR 0.9095 -> 0.8857 on the eval set.
+  # See docs/retrieval-results.md; enable per-request or by flipping this flag.
+  rerank: false
+  rerank_provider: auto
+  rerank_candidates: 20
   rewrite_cap: 2
   retrieval_timeout_ms: 5000
+  collection_name: blackbox_chunks
+  embedding_provider: auto
 
 memory:
   working_turns: 6

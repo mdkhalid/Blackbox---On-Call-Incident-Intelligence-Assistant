@@ -34,6 +34,10 @@ rag = [
     "chromadb>=0.5",
     "rank-bm25>=0.2.2",
     "tiktoken>=0.7",
+    "numpy>=1.26",
+]
+# optional: cross-encoder reranking (needs torch)
+rerank = [
     "sentence-transformers>=3.0",
 ]
 db = [

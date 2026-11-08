@@ -71,23 +71,63 @@ def _split_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _as_str_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return [str(v).strip() for v in value if str(v).strip()]
+
+
+def _as_iso_date(value) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()[:10]
+    return str(value).strip()[:10] or None
+
+
+def to_epoch(date_str: str | None) -> int | None:
+    """Convert an ISO date to an integer epoch day so range filters work in Chroma."""
+    if not date_str:
+        return None
+    try:
+        import datetime as _dt
+
+        return int(_dt.date.fromisoformat(date_str).toordinal())
+    except ValueError:
+        return None
+
+
 def make_metadata(doc: Document, section: str, extra: dict | None = None) -> dict:
-    md = {
+    """Build chunk metadata.
+
+    Lists stay lists (Chroma `$contains` filtering depends on it) and empty values are
+    omitted entirely, because Chroma rejects empty list metadata values.
+    """
+    date = _as_iso_date(doc.metadata.get("date"))
+    services = _as_str_list(doc.metadata.get("services"))
+    error_codes = _as_str_list(doc.metadata.get("error_codes"))
+
+    md: dict = {
         "doc_id": doc.doc_id,
         "doc_type": doc.doc_type,
         "title": doc.title,
         "section": section,
-        "services": doc.metadata.get("services", []),
-        "severity": doc.metadata.get("severity"),
-        "date": doc.metadata.get("date"),
-        "error_codes": doc.metadata.get("error_codes", []),
     }
+    if services:
+        md["services"] = services
+    if error_codes:
+        md["error_codes"] = error_codes
+    if doc.metadata.get("severity"):
+        md["severity"] = str(doc.metadata["severity"])
+    if date:
+        md["date"] = date
+        date_ord = to_epoch(date)
+        if date_ord is not None:
+            md["date_ord"] = date_ord
     if extra:
         md.update(extra)
-    # flatten lists to comma strings? Chroma supports list metadata? Chroma metadata values must be str/int/float/bool or None. Lists not allowed. Convert lists to comma-joined strings.
-    for k, v in list(md.items()):
-        if isinstance(v, list):
-            md[k] = ",".join(str(x) for x in v)
     return md
 
 
