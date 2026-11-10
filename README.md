@@ -25,10 +25,18 @@ planning; `docs/phase-wise-plan.md` tracks progress.
 
 ```bash
 cp .env.example .env
-pip install -e ".[dev,rag]"
-pytest -q                                   # 249 tests
+
+# Project-local environment (nothing installed globally)
+python -m venv .venv
+source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e ".[dev,rag,db]"
+
+pytest -q                            # 249 tests
 uvicorn blackbox.main:app --reload
 ```
+
+`db` is required locally as well as in Docker: the conversation store and entity store use
+SQLAlchemy, and `postgresql://` resolves to psycopg 3.
 
 Then seed the corpus once (idempotent):
 
