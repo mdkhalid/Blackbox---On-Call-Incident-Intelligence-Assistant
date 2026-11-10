@@ -4,7 +4,7 @@ On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
 Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅, Phase 9 ✅. **All phases complete.**
 
-Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **303 passing**, `ruff` clean.
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **324 passing**, `ruff` clean.
 
 ## Production Program (post-assignment)
 The original assignment is complete. Further work is tracked separately:
@@ -389,7 +389,7 @@ re-runnable eval scripts.
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
-pytest -q                            # 303 tests
+pytest -q                            # 324 tests
 python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep
 python -m blackbox.eval.groundedness_eval --write
 uvicorn blackbox.main:app --reload   # then POST /api/ingest and open /

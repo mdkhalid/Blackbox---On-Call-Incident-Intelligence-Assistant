@@ -4,16 +4,18 @@ from __future__ import annotations
 import re
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from blackbox.api.auth import Principal, require_roles
 from blackbox.api.deps import get_services
 from blackbox.api.guardrails import detect_injection
 from blackbox.api.locks import ConversationBusy
 from blackbox.api.schemas import ChatRequest
 from blackbox.api.services import PersistenceUnavailable
 from blackbox.api.sse import chunk_trails, public_update, sse_event, token_chunks
+from blackbox.api.store import ConversationTenantMismatch
 from blackbox.graph import initial_state, stream_graph_events
 from blackbox.logging_setup import get_logger
 from blackbox.memory import build_context, count_tokens
@@ -23,6 +25,8 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["chat"])
 
 _CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_IDEMPOTENCY_HEADER = Header(default=None, alias="Idempotency-Key")
 
 CHAT_SYSTEM_PROMPT = (
     "You are Blackbox, an on-call incident assistant. Answer only from retrieved evidence "
@@ -36,11 +40,18 @@ _SSE_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+_CHAT_AUTH = Depends(require_roles("operator", "admin"))
 
 
 @router.post("/api/chat")
-async def chat(payload: ChatRequest, request: Request):
+async def chat(
+    payload: ChatRequest,
+    request: Request,
+    principal: Principal = _CHAT_AUTH,
+    idempotency_key: str | None = _IDEMPOTENCY_HEADER,
+):
     services = get_services(request)
+    tenant_id = principal.tenant_id
     message = payload.message
     if not message.strip():
         raise HTTPException(status_code=400, detail="message must not be empty")
@@ -78,16 +89,41 @@ async def chat(payload: ChatRequest, request: Request):
         logger.exception("runtime_unavailable")
         raise HTTPException(status_code=503, detail="runtime unavailable") from exc
 
+    cache = services.cache_backend
+    idempotency_cache_key: str | None = None
+    if idempotency_key is not None:
+        if not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
+            raise HTTPException(status_code=400, detail="invalid Idempotency-Key")
+        if cache is not None:
+            idempotency_cache_key = f"idem:{tenant_id}:{idempotency_key}"
+            cached = await run_in_threadpool(cache.get, idempotency_cache_key)
+            if isinstance(cached, dict):
+                return StreamingResponse(
+                    _replay_final(cached),
+                    media_type="text/event-stream",
+                    headers=_SSE_HEADERS,
+                )
+
     try:
-        turn_lock = await services.acquire_turn_lock(conversation_id)
+        turn_lock = await services.acquire_turn_lock(conversation_id, tenant_id)
     except ConversationBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    try:
+        record = await run_in_threadpool(
+            services.conversations.get_or_create,
+            conversation_id,
+            tenant_id=tenant_id,
+        )
+    except ConversationTenantMismatch as exc:
+        await turn_lock.release()
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except Exception:
+        await turn_lock.release()
+        raise
+
     async def event_stream():
         try:
-            record = await run_in_threadpool(
-                services.conversations.get_or_create, conversation_id
-            )
             memory = record.memory
             if memory.compression_due:
                 await run_in_threadpool(
@@ -154,24 +190,30 @@ async def chat(payload: ChatRequest, request: Request):
                 result.get("status") or "error",
                 result.get("trace") or [],
                 result.get("chunks") or [],
+                tenant_id=tenant_id,
             )
 
-            yield sse_event(
-                "final",
-                {
-                    "conversation_id": conversation_id,
-                    "status": result.get("status"),
-                    "route": result.get("route"),
-                    "answer": answer,
-                    "budget": budget,
-                    "usage": result.get("usage") or {},
-                    "trace": result.get("trace") or [],
-                    "chunks": chunk_trails(result.get("chunks") or []),
-                    "grade": result.get("grade"),
-                    "ground_check": result.get("ground_check"),
-                    "injection_flags": injection_flags,
-                },
-            )
+            final_payload = {
+                "conversation_id": conversation_id,
+                "status": result.get("status"),
+                "route": result.get("route"),
+                "answer": answer,
+                "budget": budget,
+                "usage": result.get("usage") or {},
+                "trace": result.get("trace") or [],
+                "chunks": chunk_trails(result.get("chunks") or []),
+                "grade": result.get("grade"),
+                "ground_check": result.get("ground_check"),
+                "injection_flags": injection_flags,
+            }
+            if idempotency_cache_key and cache is not None:
+                await run_in_threadpool(
+                    cache.set,
+                    idempotency_cache_key,
+                    final_payload,
+                    services.config.redis.ttl_idempotency_s,
+                )
+            yield sse_event("final", final_payload)
         except Exception as exc:
             logger.exception("chat_stream_failed", conversation_id=conversation_id)
             yield sse_event(
@@ -184,6 +226,10 @@ async def chat(payload: ChatRequest, request: Request):
     return StreamingResponse(
         event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS
     )
+
+
+async def _replay_final(payload: dict):
+    yield sse_event("final", {**payload, "replayed": True})
 
 
 def _merge_chunk_budget(report: dict, result: dict, services) -> dict:

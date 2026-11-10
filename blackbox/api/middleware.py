@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections import deque
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -85,17 +84,16 @@ class BodyLimitMiddleware(BaseHTTPMiddleware):
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """In-process sliding-window limiter per client IP.
+    """Sliding/fixed window limiter per client IP.
 
-    Single-instance by design; multi-instance deployments should move counters to Redis.
-    Health and the viewer are exempt so probes and the demo UI never get throttled.
+    The limiter is Redis-backed when available (shared across pods) and falls back to an
+    in-process limiter. Health and the viewer are exempt.
     """
 
-    def __init__(self, app, *, rate_limit: int = 5, window_s: float = 1.0) -> None:
+    def __init__(self, app, *, services, window_s: float = 1.0) -> None:
         super().__init__(app)
-        self.rate_limit = max(1, rate_limit)
+        self.services = services
         self.window_s = window_s
-        self._hits: dict[str, deque[float]] = {}
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -103,21 +101,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         key = request.client.host if request.client else "unknown"
-        now = time.monotonic()
-        hits = self._hits.setdefault(key, deque())
-        while hits and now - hits[0] >= self.window_s:
-            hits.popleft()
-        if len(hits) >= self.rate_limit:
-            retry_after = max(1, int(self.window_s - (now - hits[0])) + 1)
+        limit = self.services.config.guardrails.rate_limit_rps
+        limiter = await self.services.ensure_rate_limiter()
+        allowed, retry_after = await limiter.check(
+            key, limit=limit, window_s=self.window_s
+        )
+        if not allowed:
             return JSONResponse(
                 {"detail": "rate limit exceeded"},
                 status_code=429,
                 headers={
                     "Retry-After": str(retry_after),
-                    "X-RateLimit-Limit": str(self.rate_limit),
+                    "X-RateLimit-Limit": str(limit),
                 },
             )
-        hits.append(now)
-        if len(self._hits) > 4096:  # keep the per-IP map bounded
-            self._hits = {ip: values for ip, values in self._hits.items() if values}
         return await call_next(request)

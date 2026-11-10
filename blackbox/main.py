@@ -41,7 +41,7 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     app.state.services = services or build_services(settings)
     app.add_middleware(
         RateLimitMiddleware,
-        rate_limit=app.state.services.config.guardrails.rate_limit_rps,
+        services=app.state.services,
     )
     app.add_middleware(
         BodyLimitMiddleware,

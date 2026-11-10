@@ -9,6 +9,8 @@ from blackbox.logging_setup import setup_logging
 def test_logging_json_in_prod(monkeypatch, capsys):
     monkeypatch.setenv("ENV", "prod")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-secret")
     s = Settings()
     setup_logging(s)
     log = structlog.get_logger()

@@ -166,6 +166,7 @@ class RedisConfig(BaseModel):
     ttl_retrieval_s: int = 60
     ttl_rerank_s: int = 300
     ttl_conversation_state_s: int = 3600
+    ttl_idempotency_s: int = 3600
 
     @field_validator("timeout_ms")
     @classmethod
@@ -180,6 +181,7 @@ class RedisConfig(BaseModel):
         "ttl_retrieval_s",
         "ttl_rerank_s",
         "ttl_conversation_state_s",
+        "ttl_idempotency_s",
     )
     @classmethod
     def non_negative_ttl(cls, v):
@@ -256,6 +258,14 @@ class Settings(BaseSettings):
     llm_timeout_s: float = Field(default=30.0, alias="LLM_TIMEOUT_S")
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
 
+    # Authentication. Disabled by default only for local development; required in prod.
+    auth_enabled: bool = Field(default=False, alias="AUTH_ENABLED")
+    auth_jwt_secret: str | None = Field(default=None, alias="AUTH_JWT_SECRET")
+    auth_jwks_url: str | None = Field(default=None, alias="AUTH_JWKS_URL")
+    auth_jwt_issuer: str | None = Field(default=None, alias="AUTH_JWT_ISSUER")
+    auth_jwt_audience: str | None = Field(default=None, alias="AUTH_JWT_AUDIENCE")
+    auth_default_tenant: str = Field(default="default", alias="AUTH_DEFAULT_TENANT")
+
     @field_validator("llm_timeout_s")
     @classmethod
     def positive_timeout(cls, v):
@@ -283,6 +293,12 @@ class Settings(BaseSettings):
                 raise ValueError("ANTHROPIC_API_KEY required in prod")
             if "*" in self.cors_origin_list:
                 raise ValueError("CORS_ORIGINS must not contain '*' in prod")
+            if not self.auth_enabled:
+                raise ValueError("AUTH_ENABLED must be true in prod")
+        if self.auth_enabled and not (self.auth_jwt_secret or self.auth_jwks_url):
+            raise ValueError(
+                "AUTH_JWT_SECRET or AUTH_JWKS_URL is required when AUTH_ENABLED=true"
+            )
         return self
 
 

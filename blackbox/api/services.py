@@ -38,6 +38,7 @@ class AppServices:
     storage_backend: str = ""
     cache_backend: Any | None = None
     lock_engine: Any | None = None
+    rate_limiter: Any | None = None
 
     ingest_lock: threading.Lock = field(default_factory=threading.Lock)
     eval_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -46,6 +47,7 @@ class AppServices:
     _storage_lock: threading.Lock = field(default_factory=threading.Lock)
     _runtime_lock: threading.Lock = field(default_factory=threading.Lock)
     _lock_engine_lock: threading.Lock = field(default_factory=threading.Lock)
+    _rate_limiter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # ---- storage ----
 
@@ -152,24 +154,25 @@ class AppServices:
 
     # ---- locks ----
 
-    async def acquire_turn_lock(self, conversation_id: str):
+    async def acquire_turn_lock(self, conversation_id: str, tenant_id: str = "default"):
         from blackbox.api.locks import (
             ConversationBusy,
             LocalTurnLock,
             acquire_postgres_lock,
         )
 
+        lock_key = f"{tenant_id}:{conversation_id}"
         if self.storage_backend == "postgres" and hasattr(self.conversations, "engine"):
             if self.lock_engine is None:
                 with self._lock_engine_lock:
                     if self.lock_engine is None:
                         self.lock_engine = build_lock_engine(self.settings.database_url)
-            lock = await acquire_postgres_lock(self.lock_engine, conversation_id)
+            lock = await acquire_postgres_lock(self.lock_engine, lock_key)
             if lock is None:
                 raise ConversationBusy("conversation already has an active turn")
             return lock
 
-        local = self.lock_for(conversation_id)
+        local = self.lock_for(lock_key)
         if local.locked():
             raise ConversationBusy("conversation already has an active turn")
         await local.acquire()
@@ -181,6 +184,21 @@ class AppServices:
             lock = asyncio.Lock()
             self.conversation_locks[conversation_id] = lock
         return lock
+
+    async def ensure_rate_limiter(self):
+        """Redis-backed limiter when reachable, local fallback otherwise."""
+        if self.rate_limiter is not None:
+            return self.rate_limiter
+        async with self._rate_limiter_lock:
+            if self.rate_limiter is not None:
+                return self.rate_limiter
+            from blackbox.api.rate_limit import LocalRateLimiter, build_rate_limiter
+
+            fallback = LocalRateLimiter()
+            self.rate_limiter = await build_rate_limiter(
+                self.settings, self.config, fallback
+            )
+            return self.rate_limiter
 
 
 def build_services(settings: Settings) -> AppServices:

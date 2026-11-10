@@ -4,8 +4,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from blackbox.api.auth import Principal, require_roles
 from blackbox.api.deps import get_services
 from blackbox.api.schemas import EvalRequest, IngestRequest
 from blackbox.eval.groundedness_eval import evaluate_dataset
@@ -15,10 +16,15 @@ from blackbox.logging_setup import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["operations"])
+_ADMIN_AUTH = Depends(require_roles("admin"))
 
 
 @router.post("/api/ingest")
-def ingest(payload: IngestRequest, request: Request):
+def ingest(
+    payload: IngestRequest,
+    request: Request,
+    _principal: Principal = _ADMIN_AUTH,
+):
     services = get_services(request)
     try:
         services.ensure_runtime()
@@ -59,7 +65,11 @@ def ingest(payload: IngestRequest, request: Request):
 
 
 @router.post("/api/eval/run")
-def run_evaluation(payload: EvalRequest, request: Request):
+def run_evaluation(
+    payload: EvalRequest,
+    request: Request,
+    _principal: Principal = _ADMIN_AUTH,
+):
     services = get_services(request)
     try:
         services.ensure_runtime()

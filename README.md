@@ -56,7 +56,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 303 tests
+pytest -q                            # 324 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -312,16 +312,24 @@ unreachable the service falls back to SQLite under `data/`; in prod an unavailab
   include query, filters, top-k and fusion config, and are cleared on ingest). Dev-only LLM
   response caching keys on provider/model/prompt/temperature/max-tokens/JSON mode and is
   never used by the eval harnesses. A cache failure is a miss, never an error.
-- **Rate limiting.** Per-IP sliding window from `guardrails.rate_limit_rps`; health and the
-  viewer are exempt; 429 responses include `Retry-After`.
+- **Rate limiting.** Redis-backed fixed-window limiter shared across replicas when Redis is
+  reachable, with an in-process fallback; health/viewer are exempt; 429 includes `Retry-After`.
+- **Idempotent chat.** Send `Idempotency-Key` on `/api/chat` to replay the stored final
+  response instead of running the turn again (in-flight dedupe is still pending).
 - **CORS.** Set `CORS_ORIGINS` to a comma-separated allowlist. Empty disables CORS; `*` is
   rejected when `ENV=prod`.
 - **Prompt injection.** Heuristics flag and log suspected injection and return the labels in
   the final SSE payload. Set `guardrails.strict_injection_block: true` to reject with 400.
 - **Concurrency.** One active turn per conversation (409). SQLite/dev uses an asyncio lock;
   Postgres uses a session advisory lock across workers.
+- **Authentication and roles.** When `AUTH_ENABLED=true`, send `Authorization: Bearer
+  <jwt>`. The token must carry `tenant_id` and roles (`viewer`/`operator`/`admin`). Ingest and
+  eval require `admin`; chat requires `operator`; reads require `viewer`. Conversation
+  access is tenant-scoped, so cross-tenant IDs return 404. Dev mode (`AUTH_ENABLED=false`)
+  uses a local admin principal.
 - **Config validation** fails at startup for impossible settings (compression trigger below
-  the verbatim window, negative budgets/TTLs, zero rate limits, wildcard CORS in prod).
+  the verbatim window, negative budgets/TTLs, zero rate limits, wildcard CORS in prod,
+  missing auth in prod).
 
 ## Trace viewer
 
@@ -380,8 +388,10 @@ python -m blackbox.eval.groundedness_eval --write
   reported as measured rather than tuned away.
 - The cross-encoder reranker requires the optional `rerank` extra; without it the lexical
   reranker is used and the measured trade-off still holds.
-- **No authentication.** v1 is single-tenant by design; put it behind an authenticated
-  proxy before exposing conversations or ingest publicly.
+- **Authentication is implemented but dev-disabled.** Set `AUTH_ENABLED=true` (and a JWT
+  secret or JWKS URL) to enforce bearer-token auth and tenant scoping; production settings
+  refuse to start without it. Postgres RLS and retrieval-store tenant filters are still
+  pending (Phase 1/2).
 - `Content-Length` is capped before JSON parsing (`413`); chunked/streamed requests still
   need a hard body limit at the reverse proxy.
 - Hosted LLM SDK calls receive the configured timeout/retries; a circuit-breaker/semaphore
@@ -391,7 +401,7 @@ python -m blackbox.eval.groundedness_eval --write
 
 ## Tests
 
-303 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+324 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

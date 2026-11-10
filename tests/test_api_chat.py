@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from blackbox.api.services import AppServices
 from blackbox.api.store import SqlAlchemyConversationRepository
+from blackbox.cache import TTLCache
 from blackbox.config.settings import (
     AppConfig,
     GuardrailsConfig,
@@ -54,6 +55,7 @@ def api_services(tmp_path, vectorstore, settings):
         storage_ready=True,
         runtime_ready=True,
         storage_backend="sqlite",
+        cache_backend=TTLCache(default_ttl_s=60),
     )
 
 
@@ -185,6 +187,41 @@ def test_chat_updates_entity_memory_and_resolves_conflict(api_client):
     assert len(deploy) == 1
     assert deploy[0]["status"] == "confirmed"
     assert deploy[0]["history"][0]["from"] == "ruled_out"
+
+
+def test_idempotency_key_replays_without_rerunning(api_client, api_services):
+    calls_before = len(api_services.llm.calls)
+    first = api_client.post(
+        "/api/chat",
+        json={"message": "What caused ERR_POOL_EXHAUSTED in checkout-service?"},
+        headers={"Idempotency-Key": "demo-key-1"},
+    )
+    first_final = parse_sse(first.text)[-1]["data"]
+    calls_after_first = len(api_services.llm.calls)
+    assert calls_after_first > calls_before
+
+    second = api_client.post(
+        "/api/chat",
+        json={"message": "What caused ERR_POOL_EXHAUSTED in checkout-service?"},
+        headers={"Idempotency-Key": "demo-key-1"},
+    )
+    second_events = parse_sse(second.text)
+    second_final = second_events[-1]["data"]
+
+    assert second_final["replayed"] is True
+    assert second_final["conversation_id"] == first_final["conversation_id"]
+    assert second_final["answer"] == first_final["answer"]
+    assert len(api_services.llm.calls) == calls_after_first
+    assert all(event["event"] == "final" for event in second_events)
+
+
+def test_invalid_idempotency_key_is_400(api_client):
+    response = api_client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        headers={"Idempotency-Key": "bad key!"},
+    )
+    assert response.status_code == 400
 
 
 def test_unknown_conversation_returns_404(api_client):

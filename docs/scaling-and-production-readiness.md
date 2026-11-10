@@ -16,7 +16,7 @@ The current application is a correct, measured, single-process corrective-RAG se
 
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
 - Local Chroma for dense vectors; in-process BM25; local rate limits and asyncio locks.
-- 303 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- 324 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
 
 It is suitable for a demo or a small internal team. It is **not** horizontally scalable as
 written: the retrieval indexes are node-local, shared counters/locks are per process, the graph
@@ -124,8 +124,13 @@ dense quality. Decide after the Phase 2 parity benchmark.
 
 ### Status
 
-**Planned.** No auth or tenant scoping exists today. This is the first Phase 1 deliverable and
-must land before any external tenant or public exposure.
+**Implemented at the application layer (Phase 1):** JWT validation (HS256 dev, JWKS
+RS256/ES256), role enforcement (`viewer`/`operator`/`admin`), tenant claims required when
+auth is enabled, tenant-scoped conversation reads/writes, admin-only ingest/eval, and
+cross-tenant tests (read/chat → 404, admin actions → 403).
+
+**Still required:** mandatory tenant filters in the external retrieval stores, Postgres RLS,
+Alembic-managed tenant schema, audit events and tenant offboarding.
 
 ---
 
@@ -310,6 +315,12 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 ### Phase 1 progress (this pass)
 
 Implemented:
+- JWT auth + RBAC (`viewer`/`operator`/`admin`), tenant-scoped conversation repository and
+  cross-tenant authorization tests. Auth is disabled only in dev; prod requires it.
+- Alembic baseline migration covering conversations, turns and entity tables, with an
+  upgrade/downgrade test. Production deploys run `alembic upgrade head` before the API.
+- Redis-backed fixed-window rate limiting with local fallback, and `Idempotency-Key` chat
+  result replay (in-flight dedupe still pending).
 - Dedicated `NullPool` engine for Postgres advisory turn locks (no pooled request connection
   held for the SSE duration).
 - Request-body size cap before JSON parsing for API POSTs.
@@ -318,11 +329,11 @@ Implemented:
 - JSON-serialisable trace/state retained for the future store adapters.
 
 Still required before Phase 1 can close:
-- OIDC/JWT auth, tenant columns and mandatory tenant filters, RLS.
-- Alembic baseline + CI migration check.
-- Redis-backed shared rate limits and idempotency keys.
+- Mandatory tenant filters in retrieval and Postgres RLS.
+- Retire the ad-hoc tenant-column ALTER; add the Alembic migration check to CI.
+- In-flight idempotency dedupe and per-tenant turn concurrency limits.
 - Async LLM wrapper with circuit breaker/semaphore.
-- Multi-pod Compose/kind smoke test and authorization matrix tests.
+- Multi-pod Compose/kind smoke test.
 
 ---
 

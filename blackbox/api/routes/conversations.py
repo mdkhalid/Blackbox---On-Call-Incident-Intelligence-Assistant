@@ -1,19 +1,29 @@
 """Conversation introspection: conversation, trace, memory and budget endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from blackbox.api.auth import Principal, require_roles
 from blackbox.api.deps import get_services
 from blackbox.api.services import PersistenceUnavailable
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
+_READ_ROLES = require_roles("viewer", "operator", "admin")
+_READ_AUTH = Depends(_READ_ROLES)
+
 
 @router.get("/{conversation_id}")
-def get_conversation(conversation_id: str, request: Request):
+def get_conversation(
+    conversation_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
     services = _with_storage(request)
-    record = _record_or_404(services, conversation_id)
-    turns = services.conversations.get_turns(conversation_id)
+    record = _record_or_404(services, conversation_id, principal.tenant_id)
+    turns = services.conversations.get_turns(
+        conversation_id, tenant_id=principal.tenant_id
+    )
     last = turns[-1] if turns else None
     return {
         "id": record.id,
@@ -28,10 +38,16 @@ def get_conversation(conversation_id: str, request: Request):
 
 
 @router.get("/{conversation_id}/trace")
-def get_trace(conversation_id: str, request: Request):
+def get_trace(
+    conversation_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
     services = _with_storage(request)
-    _record_or_404(services, conversation_id)
-    turns = services.conversations.get_turns(conversation_id)
+    _record_or_404(services, conversation_id, principal.tenant_id)
+    turns = services.conversations.get_turns(
+        conversation_id, tenant_id=principal.tenant_id
+    )
     return {
         "conversation_id": conversation_id,
         "turns": [
@@ -51,9 +67,13 @@ def get_trace(conversation_id: str, request: Request):
 
 
 @router.get("/{conversation_id}/memory")
-def get_memory(conversation_id: str, request: Request):
+def get_memory(
+    conversation_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
     services = _with_storage(request)
-    record = _record_or_404(services, conversation_id)
+    record = _record_or_404(services, conversation_id, principal.tenant_id)
     memory = record.memory
     return {
         "conversation_id": conversation_id,
@@ -76,9 +96,13 @@ def get_memory(conversation_id: str, request: Request):
 
 
 @router.get("/{conversation_id}/budget")
-def get_budget(conversation_id: str, request: Request):
+def get_budget(
+    conversation_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
     services = _with_storage(request)
-    record = _record_or_404(services, conversation_id)
+    record = _record_or_404(services, conversation_id, principal.tenant_id)
     return record.last_budget or {}
 
 
@@ -91,8 +115,8 @@ def _with_storage(request: Request):
     return services
 
 
-def _record_or_404(services, conversation_id: str):
-    record = services.conversations.get(conversation_id)
+def _record_or_404(services, conversation_id: str, tenant_id: str):
+    record = services.conversations.get(conversation_id, tenant_id=tenant_id)
     if record is None:
         raise HTTPException(status_code=404, detail="conversation not found")
     return record

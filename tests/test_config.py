@@ -19,6 +19,8 @@ def test_settings_env_override(monkeypatch):
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-secret")
     s = Settings()
     assert s.env == "prod"
     assert s.log_level == "DEBUG"
@@ -36,8 +38,18 @@ def test_prod_requires_api_key(monkeypatch):
 def test_prod_with_key_ok(monkeypatch):
     monkeypatch.setenv("ENV", "prod")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("AUTH_JWT_SECRET", "test-secret")
     s = Settings()
     assert s.openai_api_key == "sk-test"
+
+
+def test_prod_requires_auth(monkeypatch):
+    monkeypatch.setenv("ENV", "prod")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    with pytest.raises(ValidationError):
+        Settings()
 
 
 def test_invalid_log_level_not_strict():

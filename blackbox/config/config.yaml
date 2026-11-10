@@ -65,6 +65,7 @@ redis:
   ttl_retrieval_s: 60
   ttl_rerank_s: 300
   ttl_conversation_state_s: 3600
+  ttl_idempotency_s: 3600
 
 ingestion:
   max_upload_size_mb: 50

@@ -23,8 +23,9 @@ def settings(monkeypatch):
     monkeypatch.setenv("ENV", "dev")
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     monkeypatch.setenv("CONFIG_PATH", "blackbox/config/config.yaml")
-    # Tests must not depend on a reachable Postgres from .env.
+    # Tests must not depend on reachable Postgres/Redis from .env.
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("REDIS_URL", "")
     return get_settings()
 
 

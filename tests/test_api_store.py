@@ -1,4 +1,9 @@
-from blackbox.api.store import SqlAlchemyConversationRepository
+import pytest
+
+from blackbox.api.store import (
+    ConversationTenantMismatch,
+    SqlAlchemyConversationRepository,
+)
 
 
 def _repo(tmp_path):
@@ -79,6 +84,20 @@ def test_record_turn_persists_state_and_turn_atomically(tmp_path):
     assert restored.memory.working.turns[0].user == "p99 spiking"
     assert restored.last_budget["total_tokens"] == 7
     assert repo.get_turns("conv-1")[0].chunks[0]["chunk_id"] == "c1"
+
+
+def test_tenant_isolation_on_conversations_and_turns(tmp_path):
+    repo = _repo(tmp_path)
+    repo.get_or_create("c1", tenant_id="tenant-a")
+    repo.append_turn(
+        "c1", "u", "a", "answered", [], {}, tenant_id="tenant-a"
+    )
+
+    assert repo.get("c1", tenant_id="tenant-a") is not None
+    assert repo.get("c1", tenant_id="tenant-b") is None
+    assert repo.get_turns("c1", tenant_id="tenant-b") == []
+    with pytest.raises(ConversationTenantMismatch):
+        repo.get_or_create("c1", tenant_id="tenant-b")
 
 
 def test_get_or_create_is_idempotent(tmp_path):

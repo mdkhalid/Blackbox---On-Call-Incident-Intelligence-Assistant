@@ -17,14 +17,37 @@ Last updated: 2026-11-10
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 303 passing, `ruff` clean |
+| Tests | 324 passing, `ruff` clean |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
+| Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) |
 | Stores | Postgres/SQLite conversation + entity store |
 | Deployment | Docker Compose only |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
-## 2. Status dashboard
+## 2. Current status (2026-11-10)
+
+**Done**
+- Original assignment phases 0–9: complete.
+- Production Phase 0 (architecture/scaling/production document): complete.
+- Phase 1 foundations: request-body cap, LLM timeout/retry settings, dedicated NullPool
+  lock engine, real readiness check.
+- Phase 1 auth/tenancy: JWT/RBAC, tenant-scoped conversations and turns, cross-tenant tests.
+- Phase 1 persistence: Alembic baseline migration (all app tables) with upgrade/downgrade test.
+- Phase 1 shared state: Redis-backed rate limiter with local fallback; `/api/chat`
+  `Idempotency-Key` result replay.
+
+**Left in Phase 1**
+- Postgres RLS; mandatory tenant filters in retrieval stores.
+- Retire ad-hoc DDL for tenant columns; add CI migration check.
+- In-flight idempotency dedupe (two simultaneous requests with the same key both execute).
+- Async LLM circuit-breaker/semaphore wrapper; max concurrent turns per tenant.
+- Multi-pod Compose/kind smoke test and audit events.
+
+**Not started:** Phase 2 retrieval migration, Phase 3 async/workers/traces, Phase 4
+Kubernetes/observability/CI, Phase 5 multi-region/DR.
+
+## 3. Status dashboard
 
 | Workstream | Phase | State | Notes |
 |---|---|---|---|
@@ -33,9 +56,11 @@ Last updated: 2026-11-10
 | LLM timeout/retries | 1 | ✅ | passed to OpenAI/Anthropic clients |
 | Dedicated lock pool | 1 | ✅ | `NullPool` engine for Postgres advisory locks |
 | Readiness checks storage | 1 | ✅ | `/health/ready` returns 503 when storage fails |
-| Auth + tenant isolation | 1 | ⬜ | highest-priority blocker |
-| Alembic + tenant schema | 1 | ⬜ | replace ad-hoc DDL |
-| Shared Redis limits/idempotency | 1 | ⬜ | multi-pod correctness |
+| Auth (JWT + RBAC) | 1 | ✅ | dev-disabled, prod-required; HS256 dev / JWKS RS256 |
+| Tenant-scoped conversations | 1 | ◐ | schema + repository isolation done; RLS/Alembic check pending |
+| Alembic migration baseline | 1 | ✅ | all tables + upgrade/downgrade test |
+| Shared Redis rate limits | 1 | ✅ | fixed-window shared counter, local fallback |
+| Chat idempotency keys | 1 | ◐ | result replay done; in-flight dedupe pending |
 | Async LLM wrapper | 1 | ⬜ | circuit breaker, semaphore, retry policy |
 | Multi-pod smoke test | 1 | ⬜ | Compose/kind + authorization matrix |
 | Qdrant/OpenSearch migration | 2 | ⬜ | adapters, dual-read, alias cutover |
@@ -63,27 +88,29 @@ CI, multi-pod smoke passes, existing suite green.
 - [ ] Document operational runbooks (provider outage, DB failover, index rollback)
 
 ### 3.2 Authentication and tenancy
-- [ ] Add OIDC/JWT verification dependency (`blackbox/api/auth.py`)
-- [ ] Roles `viewer` / `operator` / `admin`; admin-only ingest/eval
-- [ ] Add `tenant_id` to conversations, turns, traces, entity facts and chunk metadata
-- [ ] Tenant-scoped repository methods; missing tenant fails closed
+- [x] Add OIDC/JWT verification dependency (`blackbox/api/auth.py`)
+- [x] Roles `viewer` / `operator` / `admin`; admin-only ingest/eval
+- [x] Add `tenant_id` to conversations and turns (lightweight migration)
+- [x] Tenant-scoped repository methods; cross-tenant reads return 404
 - [ ] Mandatory tenant predicate in retrieval filters; reject empty tenant
 - [ ] Postgres RLS policies as defense in depth
-- [ ] Authorization matrix tests (cross-tenant read/write/ingest → 403/404)
+- [x] Authorization matrix tests (cross-tenant read/write/ingest → 403/404)
 - [ ] Audit events for access, ingest, eval and admin actions
+- [ ] Delete/rotate tenant credentials and offboarding
 
 ### 3.3 Persistence
-- [ ] Add Alembic (dependency, `alembic.ini`, baseline revision)
+- [x] Add Alembic (dependency, `alembic.ini`, baseline revision, upgrade/downgrade test)
 - [ ] SQLAlchemy 2.0 `Mapped` models; remove ad-hoc `ALTER TABLE`
-- [ ] Indexes on `(tenant_id, updated_at)` and `(tenant_id, conversation_id, id)`
+- [x] Indexes on `tenant_id` and `conversation_id` in the baseline migration
 - [ ] JSONB + partition plan for turns/traces
-- [ ] Migration check job in CI; rollback tested
+- [ ] Migration check job in CI; rollback tested in a deployed environment
 - [ ] Retention/deletion API and tenant-offboarding job
 
 ### 3.4 Shared state and concurrency
-- [ ] Redis token-bucket rate limiter with in-process fallback
-- [ ] `Idempotency-Key` support on `/api/chat`
-- [ ] Shared cache keys tenant/window scoped
+- [x] Redis fixed-window rate limiter with in-process fallback
+- [x] `Idempotency-Key` support on `/api/chat` (final response replay)
+- [ ] In-flight idempotency dedupe for simultaneous identical requests
+- [x] Shared keys tenant-scoped for chat idempotency
 - [ ] Max concurrent turns per tenant/pod; backpressure with `Retry-After`
 - [ ] Verify lock release on SSE disconnect and pod shutdown
 - [ ] Multi-pod Compose/kind smoke: two API replicas, one conversation
@@ -199,6 +226,9 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-10 | Production/scaling document created | ✅ | local |
 | 2026-11-10 | Tracker created | ✅ | local |
 | 2026-11-10 | Body limit, LLM timeout/retries, NullPool lock engine | ✅ | local |
+| 2026-11-10 | JWT auth/RBAC, tenant-scoped conversations, cross-tenant tests | ✅ | local |
+| 2026-11-10 | Alembic baseline migration + upgrade/downgrade test | ✅ | local |
+| 2026-11-10 | Redis rate limiter + chat idempotency replay | ✅ | local |
 
 ## 12. Update protocol
 
