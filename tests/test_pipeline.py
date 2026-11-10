@@ -45,6 +45,22 @@ def test_pipeline_idempotent(tmp_path):
     assert all(r["status"] == "skipped" for r in r2)
 
 
+def test_pipeline_force_reingests_even_when_unchanged(tmp_path):
+    _corpus(tmp_path)
+    root = tmp_path / "corpus"
+    vs = ChromaVectorStore(str(tmp_path / "chroma"), "coll", FakeEmbeddingProvider(dim=4))
+    es = SqlAlchemyEntityStore(f"sqlite:///{tmp_path / 'e.db'}")
+    es.init()
+    pipe = IngestionPipeline(vs, es, batch_size=10)
+    pipe.ingest_directory(root)
+    count_before = vs.count()
+
+    results = pipe.ingest_directory(root, force=True)
+
+    assert all(result["status"] == "ingested" for result in results)
+    assert vs.count() == count_before
+
+
 def test_pipeline_reingests_when_vector_store_was_rebuilt(tmp_path):
     """A surviving entity DB must not suppress ingestion into an empty vector store.
 

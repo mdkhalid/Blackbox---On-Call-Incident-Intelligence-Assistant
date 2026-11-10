@@ -18,6 +18,8 @@ RUN pip install --upgrade pip && pip install -e ".[dev,rag,db]" 2>/dev/null || p
 
 # Copy app
 COPY blackbox ./blackbox
+COPY seed ./seed
+COPY scripts ./scripts
 COPY .env.example ./.env.example
 
 EXPOSE 8000

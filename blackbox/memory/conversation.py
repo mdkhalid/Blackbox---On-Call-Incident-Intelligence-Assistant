@@ -82,8 +82,8 @@ class ConversationMemory:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> ConversationMemory:
-        memory = cls(config=MemoryConfig(**(data.get("config") or {})))
+    def from_dict(cls, data: dict, *, config: MemoryConfig | None = None) -> ConversationMemory:
+        memory = cls(config=config or MemoryConfig(**(data.get("config") or {})))
         memory.entity = EntityMemory.from_dict(data.get("entity") or {})
         summary = data.get("summary") or {}
         memory.summary = SummaryMemory(

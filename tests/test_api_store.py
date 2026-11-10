@@ -1,0 +1,63 @@
+from blackbox.api.store import SqlAlchemyConversationRepository
+
+
+def _repo(tmp_path):
+    repo = SqlAlchemyConversationRepository(f"sqlite:///{tmp_path / 'conversations.db'}")
+    repo.init()
+    return repo
+
+
+def test_missing_conversation_returns_none(tmp_path):
+    repo = _repo(tmp_path)
+    assert repo.get("nope") is None
+    assert repo.get_turns("nope") == []
+    assert repo.last_turn("nope") is None
+
+
+def test_conversation_state_round_trips(tmp_path):
+    repo = _repo(tmp_path)
+    record = repo.get_or_create("conv-1")
+    record.memory.entity.incident_id = "INC-1"
+    record.memory.entity.note_services(["checkout-service"])
+    record.memory.entity.upsert_hypothesis("pool exhaustion", status="confirmed")
+    record.memory.add_turn("p99 is spiking", "checking pool metrics")
+
+    repo.save_state("conv-1", record.memory, {"total_tokens": 42})
+
+    restored = repo.get("conv-1")
+    assert restored is not None
+    assert restored.memory.entity.incident_id == "INC-1"
+    assert restored.memory.entity.services == ["checkout-service"]
+    assert restored.memory.entity.hypotheses[0].status == "confirmed"
+    assert restored.memory.working.turns[0].user == "p99 is spiking"
+    assert restored.last_budget["total_tokens"] == 42
+
+
+def test_turns_persist_with_trace_and_budget(tmp_path):
+    repo = _repo(tmp_path)
+    repo.get_or_create("conv-1")
+    turn = repo.append_turn(
+        "conv-1",
+        "what happened?",
+        "pool exhaustion",
+        "answered",
+        [{"node": "router", "route": "retrieval"}],
+        {"total_tokens": 100},
+    )
+
+    assert turn.id is not None
+    turns = repo.get_turns("conv-1")
+    assert len(turns) == 1
+    assert turns[0].user == "what happened?"
+    assert turns[0].assistant == "pool exhaustion"
+    assert turns[0].status == "answered"
+    assert turns[0].trace[0]["node"] == "router"
+    assert turns[0].budget["total_tokens"] == 100
+    assert repo.last_turn("conv-1").assistant == "pool exhaustion"
+
+
+def test_get_or_create_is_idempotent(tmp_path):
+    repo = _repo(tmp_path)
+    first = repo.get_or_create("conv-1")
+    second = repo.get_or_create("conv-1")
+    assert first.created_at == second.created_at

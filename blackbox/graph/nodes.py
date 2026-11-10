@@ -23,6 +23,7 @@ from blackbox.graph.prompts import (
 )
 from blackbox.llm.base import LLMProvider, LLMResponse
 from blackbox.logging_setup import get_logger
+from blackbox.memory.tokens import count_tokens
 
 logger = get_logger(__name__)
 
@@ -192,7 +193,7 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     chunks = _fit_chunks(
-        state.get("chunks") or [], deps.config.budget.retrieved_chunks_tokens * 4
+        state.get("chunks") or [], deps.config.budget.retrieved_chunks_tokens
     )
 
     if _over_budget(state, deps):
@@ -380,12 +381,12 @@ def _serialize_chunk(chunk: Any) -> dict:
     return trail
 
 
-def _fit_chunks(chunks: list[dict], char_cap: int) -> list[dict]:
+def _fit_chunks(chunks: list[dict], token_cap: int) -> list[dict]:
     kept: list[dict] = []
     used = 0
     for chunk in chunks:
-        size = len(chunk.get("text") or "")
-        if kept and used + size > char_cap:
+        size = count_tokens(chunk.get("text") or "")
+        if kept and used + size > token_cap:
             break
         kept.append(chunk)
         used += size

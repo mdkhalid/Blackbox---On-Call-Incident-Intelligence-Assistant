@@ -4,9 +4,9 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–4 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
-and three-layer memory. See `docs/` for design and planning; `docs/phase-wise-plan.md`
-tracks progress.
+Phases 0–5 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
+three-layer memory, and the streaming API. See `docs/` for design and planning;
+`docs/phase-wise-plan.md` tracks progress.
 
 ## Status
 
@@ -17,15 +17,24 @@ tracks progress.
 | 2 | Hybrid retrieval, fusion, reranking, metadata filtering, eval harness | ✅ |
 | 3 | LangGraph corrective-RAG graph: routing, grading, bounded rewrite, ground check | ✅ |
 | 4 | Three-layer memory, conflict resolution, token budget | ✅ |
-| 5 | API + SSE streaming, conversation persistence, trace endpoints | next |
+| 5 | API + SSE streaming, conversation persistence, trace endpoints | ✅ |
+| 6 | Trace viewer UI | next |
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 pip install -e ".[dev,rag]"
-pytest -q                                   # 229 tests
+pytest -q                                   # 246 tests
 uvicorn blackbox.main:app --reload
+```
+
+Then seed the corpus once (idempotent):
+
+```bash
+curl -X POST localhost:8000/api/ingest \
+  -H 'content-type: application/json' \
+  -d '{"corpus_dir":"seed/corpus"}'
 ```
 
 No API key is required to run retrieval. Dense embeddings fall back to Chroma's bundled
@@ -197,6 +206,38 @@ compression → entity essentials; the system prompt is never evicted. `bundle.r
 same accounting exposed by `/budget` in Phase 5, and `ConversationMemory.to_dict()` is the
 persistence shape.
 
+## API
+
+`blackbox/api/` — the streaming surface over the graph and memory.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/chat` | SSE: node events, ground-checked token events, final state |
+| `GET /api/conversations/:id` | Conversation summary (turn count, last status) |
+| `GET /api/conversations/:id/trace` | Per-turn graph trace with chunk scores and budgets |
+| `GET /api/conversations/:id/memory` | Entity facts, summary, working turns |
+| `GET /api/conversations/:id/budget` | Last turn's token allocation |
+| `POST /api/ingest` | Idempotent corpus ingest (`{"corpus_dir","refresh"}`) |
+| `POST /api/eval/run` | Retrieval eval as JSON (`{"k","fusion_sweep"}`) |
+
+```bash
+curl -N -X POST localhost:8000/api/chat \
+  -H 'content-type: application/json' \
+  -d '{"message":"What caused ERR_POOL_EXHAUSTED in checkout-service?"}'
+```
+
+The SSE sequence is `node` (graph path as it executes) → `token` (the answer, emitted only
+after ground check) → `final` (status, route, trace, chunk score trails, grade, ground check,
+budget, conversation id). The turn is persisted before `final` is emitted. Errors mid-stream
+arrive as an `error` event.
+
+Persistence uses `DATABASE_URL` (Postgres in Docker). In dev, if the configured DB is
+unreachable the service falls back to SQLite under `data/`; in prod an unavailable DB is a
+503. One active turn per conversation is enforced (409), and ingest/eval runs are serialised.
+
+> Token events are transport chunks of the already-verified answer, not raw provider decode
+> tokens: answer text is deliberately withheld until ground check passes.
+
 ## Corpus
 
 `seed/corpus/` — 60 deterministic documents (30 postmortems, 15 runbooks, 10 architecture
@@ -205,7 +246,7 @@ document types share one service/error-code vocabulary so retrieval is measurabl
 
 ## Tests
 
-229 tests, `ruff` clean. Retrieval, graph and memory tests run against a small in-file
+246 tests, `ruff` clean. Retrieval, graph, memory and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

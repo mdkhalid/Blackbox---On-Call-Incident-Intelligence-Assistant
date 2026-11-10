@@ -2,7 +2,7 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅ done. Phase 5 ⬅ next.
+Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅ done. Phase 6 ⬅ next.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -161,12 +161,46 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - **Context is injected separately from history and evidence**, so provenance stays visible
   in the trace and retrieved chunks are never duplicated into the memory block.
 
-## Phase 5 — API + Streaming (3 hrs)
-- FastAPI routes per spec.
-- SSE streaming of graph events + tokens.
-- Conversation persistence (Postgres).
-- Trace storage for `/trace`.
-- `/memory`, `/budget`, `/ingest`, `/eval/run`.
+## Phase 5 — API + Streaming (3 hrs) ✅ DONE
+- `api/store.py`: SQLAlchemy conversation repository — memory JSON, last budget, and every
+  turn's trace and budget. One schema runs on Postgres in prod and SQLite in tests.
+- `api/services.py`: lazy runtime (retriever, LLM, graph, entity store) and lazy storage so
+  health checks are free. Dev falls back to SQLite; prod fails fast with a clear 503.
+- `api/routes/chat.py`: `POST /api/chat` SSE — node events, token events emitted only after
+  ground check, then a final event carrying the trace, chunk scores, grade, ground check and
+  budget. The turn is persisted before the final event. 400 (empty/invalid id), 413
+  (oversized), 409 (concurrent turn), 503 (runtime/storage unavailable).
+- `api/routes/conversations.py`: conversation summary, `/trace`, `/memory`, `/budget`.
+- `api/routes/operations.py`: `POST /api/ingest` (workspace-confined, optional force,
+  invalidates BM25 + reranker) and `POST /api/eval/run` (serialised, metrics JSON, optional
+  fusion sweep; does not rewrite docs).
+- Budget wiring: graph evidence fitting now uses the same tiktoken counter as memory, and
+  `/budget` merges post-retrieval chunk tokens into the pre-turn allocation.
+- Dockerfile ships `seed/` and `scripts/` so `/api/ingest` works in the container.
+- Tests: 246 total (+17), ruff clean.
+
+### Verified offline against the seeded corpus
+- Real `TestClient` run: chain `router → retrieve → grade → generate → ground_check`, token
+  bytes reconstitute the final answer exactly, and the turn/trace/memory/budget are readable
+  afterwards (703/6024 tokens; five buckets including retrieved chunks).
+- A second turn on the same conversation persisted as turn 2; unknown conversations return
+  404; `/api/ingest` and `/api/eval/run` are covered by tests with the offline embedder.
+- SSE node events expose the path as it executes; no answer text is emitted before ground
+  check passes.
+
+### Decisions
+- **Token events are post-ground-check chunks, not raw decode tokens.** Shipping decode
+  tokens would expose unverified claims before the check that removes them. Transport
+  streaming is preserved; hosted-provider decode streaming is a future improvement.
+- **One active turn per conversation** is enforced with a per-conversation asyncio lock
+  (409). This is a single-process v1 guarantee; multi-instance needs a Postgres advisory
+  lock, noted for Phase 8.
+- **Dev SQLite fallback, prod hard failure.** The DB stays the source of truth; the fallback
+  exists so a keyless/local demo runs without Postgres.
+- **`/api/ingest` is workspace-confined and lock-serialised.** Path traversal is rejected and
+  a second concurrent ingest gets 409.
+- **The eval endpoint reads metrics but never writes `docs/`.** Results stay reproducible via
+  the documented script; the API serves the same numbers.
 
 ## Phase 6 — Trace Viewer UI (2 hrs)
 - Minimal web UI (HTML/JS or small React) showing per-message: graph path, retrieved chunks with scores, grading result, ground check, budget breakdown.
@@ -197,27 +231,22 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   incident thread compresses without losing ruled-out facts and the graph consumes the
   budgeted context.
 - M3 (after Phase 7): eval harness + trace viewer. (Retrieval half done in Phase 2;
-  groundedness is unblocked by the Phase 3 graph.)
+  groundedness is unblocked by the Phase 3 graph; the API side is done in Phase 5.)
 - M4 (after Phase 9): submission-ready.
 
-## Immediate next actions (Phase 5 entry)
-1. `api/routes/chat.py`: conversation id in, `ConversationMemory` loaded, context assembled,
-   graph run, turn persisted.
-2. SSE endpoint streaming `stream_graph_events()` node updates, then token events.
-3. `/trace` returns the stored per-turn trace; `/memory` and `/budget` return the entity /
-   summary / working layers and the last allocation.
-4. Persist conversation state, turns, traces and `last_budget` in Postgres; fail fast with a
-   clear 503 when the DB is unavailable.
-5. Update entity memory each turn from the graph's grounded claims plus explicit
-   service/error-code matches — no extra LLM call.
-6. `/ingest` and `/eval/run`; serialize eval runs (409) and invalidate the BM25/reranker
-   indexes after ingest.
-7. Groundedness eval can now be built directly from `ground_check.verdicts`.
+## Immediate next actions (Phase 6 entry)
+1. Serve a single static trace viewer from FastAPI (no build step): pick a conversation,
+   replay a turn, or watch a live turn.
+2. Per turn render: graph path, retrieved chunks with dense/sparse/fused/rerank scores,
+   grade verdict and rewrite attempts, ground-check verdicts, and the budget breakdown.
+3. Live mode consumes the same SSE stream with `fetch` + `ReadableStream` (EventSource
+   cannot POST); replay mode reads `/trace`.
+4. Keep it dependency-free HTML/JS under `blackbox/api/static/`, served by `StaticFiles` and
+   linked from `/` for the demo.
+5. Add an API test that the viewer is served and references the trace endpoint.
 
-## Open questions to settle before Phase 5
-- One active graph run per conversation: enforce with a Postgres advisory lock or a Redis
-  lock; decide before the first concurrent request.
-- Redis is optional in this phase; the DB is the source of truth. The cache should be
-  additive, never required for correctness.
-- Entity updates: trust grounded claims for facts, but infer hypothesis status changes only
-  from explicit user statements, so the graph cannot silently "confirm" its own guess.
+## Open questions to settle before Phase 6
+- Live vs replay default: replay is deterministic for the demo; live proves streaming.
+- The trace payload is already JSON-serialisable and includes everything the viewer needs,
+  so the UI must not need a second API.
+- Conversation discovery is by id only; the demo script should print the id from `/api/chat`.

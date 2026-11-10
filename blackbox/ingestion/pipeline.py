@@ -53,7 +53,7 @@ class IngestionPipeline:
                 return ld, ch
         raise ValueError(f"unknown doc_type: {doc_type}")
 
-    def ingest_document(self, path: Path, doc_type: str | None = None) -> dict:
+    def ingest_document(self, path: Path, doc_type: str | None = None, force: bool = False) -> dict:
         if doc_type is None:
             # infer from parent dir name
             doc_type = LOADER_BY_DIR.get(path.parent.name, "postmortem")
@@ -65,7 +65,8 @@ class IngestionPipeline:
         h = content_hash(doc.raw)
         existing = self.es.get_ingested(doc.doc_id)
         if (
-            existing is not None
+            not force
+            and existing is not None
             and existing.content_hash == h
             and self.vs.has_doc(doc.doc_id)
         ):
@@ -106,14 +107,16 @@ class IngestionPipeline:
         self.es.record_ingested(doc.doc_id, h, [c.chunk_id for c in chunks])
         return {"doc_id": doc.doc_id, "status": "ingested", "chunks": total}
 
-    def ingest_directory(self, root: Path, progress: Callable | None = None) -> list[dict]:
+    def ingest_directory(
+        self, root: Path, progress: Callable | None = None, force: bool = False
+    ) -> list[dict]:
         results = []
         for subdir in ("postmortems", "runbooks", "arch", "alerts"):
             d = root / subdir
             if not d.exists():
                 continue
             for path in sorted(d.glob("*.md")):
-                r = self.ingest_document(path)
+                r = self.ingest_document(path, force=force)
                 results.append(r)
                 if progress:
                     progress(r)
