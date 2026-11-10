@@ -1,9 +1,10 @@
 # Scaling & Production Readiness — Blackbox
 
-Status: **Phase 0 complete; Phase 1 in progress.** This document is the production contract for
-the codebase: target architecture, capacity model, tenancy, retrieval migration, runtime,
-operations and the phased path from the current single-node demo to an org-wide, multi-region
-service. It is deliberately explicit about what is **implemented now** versus **planned**.
+Status: **Phase 0 complete; Phase 1 complete (control plane); Phase 2 next.** This document
+is the production contract for the codebase: target architecture, capacity model, tenancy,
+retrieval migration, runtime, operations and the phased path from the current single-node demo
+to an org-wide, multi-region service. It is deliberately explicit about what is **implemented
+now** versus **planned**.
 
 Target deployment: Kubernetes (AWS EKS reference), org-wide scale (thousands of concurrent
 conversations, 10M+ chunks, multi-region, strict tenant isolation).
@@ -15,13 +16,14 @@ conversations, 10M+ chunks, multi-region, strict tenant isolation).
 The current application is a correct, measured, single-process corrective-RAG service:
 
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
-- Local Chroma for dense vectors; in-process BM25; local rate limits and asyncio locks.
-- 324 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- Local Chroma for dense vectors; in-process BM25; Redis-shared rate limits and Postgres
+  advisory turn locks; JWT/RBAC with tenant-scoped conversations.
+- 333 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
 
 It is suitable for a demo or a small internal team. It is **not** horizontally scalable as
-written: the retrieval indexes are node-local, shared counters/locks are per process, the graph
-is synchronous, long SSE turns can hold pooled DB connections, and there is no authentication
-or tenant isolation.
+written: the retrieval indexes are node-local, the graph is synchronous, long SSE turns still
+run in a threadpool, tenant admission control is per pod, and data-plane tenant filters/RLS are
+not yet in the stores.
 
 The target separates state from compute:
 
@@ -129,8 +131,8 @@ RS256/ES256), role enforcement (`viewer`/`operator`/`admin`), tenant claims requ
 auth is enabled, tenant-scoped conversation reads/writes, admin-only ingest/eval, and
 cross-tenant tests (read/chat → 404, admin actions → 403).
 
-**Still required:** mandatory tenant filters in the external retrieval stores, Postgres RLS,
-Alembic-managed tenant schema, audit events and tenant offboarding.
+**Still required:** mandatory tenant filters in the external retrieval stores and Postgres RLS
+(both Phase 2, where the stores are replaced), plus tenant offboarding.
 
 ---
 
@@ -174,12 +176,14 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 - Async provider interface; async graph nodes; concurrent dense/sparse calls; no threadpool
   hops in the request path.
 - Explicit LLM policy: connect/read timeout, bounded retries with jitter, circuit breaker,
-  per-tenant semaphore, max tokens/cost. **Phase 1 adds timeout/retry settings; the wrapper
-  and gateway are Phase 3.**
+  per-tenant admission control, max tokens/cost. **Phase 1 implements timeout/retry, the
+  circuit breaker, bounded provider concurrency and per-pod tenant admission; async provider
+  execution and global quotas are Phase 3/4.**
 - SSE: stateless streams, configurable ingress idle timeout, no proxy buffering; tokens remain
   post-ground-check; node events stream during execution.
 - Idempotency: `Idempotency-Key` on `/api/chat`, stored in Redis with the final result, so
-  client retries do not duplicate turns.
+  client retries do not duplicate turns. A Redis `SET NX` lock rejects concurrent duplicates
+  with `409` while the first request is in flight.
 - Backpressure: max concurrent turns per tenant/pod; 429/503 with `Retry-After` when the LLM
   or database is saturated.
 - Optional LangGraph Postgres checkpointer for crash recovery; Postgres remains the
@@ -306,34 +310,31 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | This document, architecture decisions, SLOs, tenancy/runbook outline | ✅ Done |
-| 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry, body limits, readiness | ◐ Partial |
-| 2 | Qdrant/OpenSearch adapters, concurrent legs, tenant filters, versioned indexes, shadow/dual-read cutover | ⬜ Planned |
-| 3 | Async graph/providers, idempotent chat, queue workers, trace store split | ⬜ Planned |
+| 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
+| 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ⬜ Planned |
+| 3 | Async graph/providers, queue workers, trace store split | ⬜ Planned |
 | 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ⬜ Planned |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
-### Phase 1 progress (this pass)
+### Phase 1 progress (complete, control plane)
 
 Implemented:
 - JWT auth + RBAC (`viewer`/`operator`/`admin`), tenant-scoped conversation repository and
   cross-tenant authorization tests. Auth is disabled only in dev; prod requires it.
 - Alembic baseline migration covering conversations, turns and entity tables, with an
-  upgrade/downgrade test. Production deploys run `alembic upgrade head` before the API.
-- Redis-backed fixed-window rate limiting with local fallback, and `Idempotency-Key` chat
-  result replay (in-flight dedupe still pending).
+  upgrade/downgrade test and a CI migration check. Production runs `alembic upgrade head`.
+- Redis-backed fixed-window rate limiting with local fallback; `Idempotency-Key` result replay
+  and in-flight dedupe (Redis `SET NX`, `409` while in flight).
+- Per-pod per-tenant turn admission control with `429` + `Retry-After`.
 - Dedicated `NullPool` engine for Postgres advisory turn locks (no pooled request connection
   held for the SSE duration).
-- Request-body size cap before JSON parsing for API POSTs.
-- LLM timeout/retry configuration passed to hosted provider clients.
-- `/health/ready` checks the conversation store.
-- JSON-serialisable trace/state retained for the future store adapters.
+- `ResilientLLMProvider`: jittered retries, circuit breaker, bounded concurrency.
+- Request-body size cap before JSON parsing; `/health/ready` checks the conversation store.
+- Audit log lines for chat, ingest and eval.
+- Two-replica Docker smoke green: shared Postgres conversation read and shared Redis limit.
 
-Still required before Phase 1 can close:
-- Mandatory tenant filters in retrieval and Postgres RLS.
-- Retire the ad-hoc tenant-column ALTER; add the Alembic migration check to CI.
-- In-flight idempotency dedupe and per-tenant turn concurrency limits.
-- Async LLM wrapper with circuit breaker/semaphore.
-- Multi-pod Compose/kind smoke test.
+Data-plane isolation (retrieval tenant predicates and Postgres RLS) is a Phase 2 gate because
+the retrieval stores are replaced there. Tenant offboarding and global quotas are also Phase 2.
 
 ---
 

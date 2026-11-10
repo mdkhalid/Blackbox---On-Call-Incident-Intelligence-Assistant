@@ -10,7 +10,7 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
-pytest -q                            # 324 tests
+pytest -q                            # 333 tests
 uvicorn blackbox.main:app --reload
 ```
 

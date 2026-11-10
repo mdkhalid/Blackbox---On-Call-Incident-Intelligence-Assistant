@@ -32,7 +32,9 @@ The original assignment is complete. Work beyond it is tracked in two living doc
 - [`docs/development-tracker.md`](docs/development-tracker.md) — phase-by-phase checklist,
   status dashboard, decision log and change log. Update this file with every production PR.
 
-Current production phase: **Phase 1 (foundations) in progress**.
+Current production phase: **Phase 2 (retrieval migration and data-plane tenant isolation)**.
+Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
+smoke) is complete.
 
 ## Architecture
 
@@ -56,7 +58,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 324 tests
+pytest -q                            # 333 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -382,26 +384,28 @@ python -m blackbox.eval.groundedness_eval --write
   transport chunks emitted only after ground check, so unverified text never ships.
 - The offline provider is extractive, so its groundedness number is a floor; use a hosted
   model for the generator's real overreach (the harness is unchanged).
-- Rate limiting and local turn locks are single-instance. Postgres uses advisory locks;
-  moving rate-limit counters to Redis is the documented multi-instance step.
+- Rate limiting is Redis-backed (shared across replicas) with a local fallback; turn locks are
+  Postgres advisory locks. Per-tenant turn admission control is per pod; global quotas are on
+  the Phase 2 backlog.
 - The corpus is synthetic and templated; `paraphrase` retrieval is intentionally weak and
   reported as measured rather than tuned away.
 - The cross-encoder reranker requires the optional `rerank` extra; without it the lexical
   reranker is used and the measured trade-off still holds.
 - **Authentication is implemented but dev-disabled.** Set `AUTH_ENABLED=true` (and a JWT
   secret or JWKS URL) to enforce bearer-token auth and tenant scoping; production settings
-  refuse to start without it. Postgres RLS and retrieval-store tenant filters are still
-  pending (Phase 1/2).
+  refuse to start without it. Postgres RLS and retrieval-store tenant filters are the Phase 2
+  data-plane gate.
 - `Content-Length` is capped before JSON parsing (`413`); chunked/streamed requests still
   need a hard body limit at the reverse proxy.
-- Hosted LLM SDK calls receive the configured timeout/retries; a circuit-breaker/semaphore
-  wrapper is still pending (Phase 1).
+- Hosted LLM SDK calls receive the configured timeout/retries; a circuit breaker, jittered
+  retries and bounded concurrency wrap the provider. The provider interface is still
+  synchronous; an async path is Phase 3.
 - Readiness checks the conversation store; Redis is optional and its availability is
   reported only after the runtime is initialized.
 
 ## Tests
 
-324 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+333 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

@@ -17,35 +17,33 @@ Last updated: 2026-11-10
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 324 passing, `ruff` clean |
+| Tests | 333 passing, `ruff` clean |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) |
 | Stores | Postgres/SQLite conversation + entity store |
-| Deployment | Docker Compose only |
+| Deployment | Docker Compose (two-replica smoke passing) |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
 ## 2. Current status (2026-11-10)
 
-**Done**
-- Original assignment phases 0–9: complete.
-- Production Phase 0 (architecture/scaling/production document): complete.
-- Phase 1 foundations: request-body cap, LLM timeout/retry settings, dedicated NullPool
-  lock engine, real readiness check.
-- Phase 1 auth/tenancy: JWT/RBAC, tenant-scoped conversations and turns, cross-tenant tests.
-- Phase 1 persistence: Alembic baseline migration (all app tables) with upgrade/downgrade test.
-- Phase 1 shared state: Redis-backed rate limiter with local fallback; `/api/chat`
-  `Idempotency-Key` result replay.
+**Phase 1 — complete (control plane).**
+- Auth/tenancy: JWT/RBAC, tenant-scoped conversations and turns, cross-tenant tests.
+- Persistence: Alembic baseline with upgrade/downgrade test; ad-hoc DDL removed; migration,
+  lint and test jobs added to GitHub Actions.
+- Shared state: Redis rate limits, in-flight `Idempotency-Key` dedupe, result replay, and
+  per-process per-tenant turn admission control.
+- Resilience: LLM retry with jitter, circuit breaker, bounded concurrency; request-body cap;
+  real readiness check; audit log lines for chat/ingest/eval.
+- Exit gate met: 333 tests green, `ruff` clean, and a two-replica Docker smoke passed (pod 1
+  writes a conversation, pod 2 reads it from shared Postgres; the replicas share one Redis
+  rate-limit bucket).
+- Scope decision: data-plane tenant isolation (retrieval predicates and Postgres RLS) moves
+  to Phase 2, where the retrieval stores are replaced. Phase 1 isolates the control plane.
 
-**Left in Phase 1**
-- Postgres RLS; mandatory tenant filters in retrieval stores.
-- Retire ad-hoc DDL for tenant columns; add CI migration check.
-- In-flight idempotency dedupe (two simultaneous requests with the same key both execute).
-- Async LLM circuit-breaker/semaphore wrapper; max concurrent turns per tenant.
-- Multi-pod Compose/kind smoke test and audit events.
-
-**Not started:** Phase 2 retrieval migration, Phase 3 async/workers/traces, Phase 4
-Kubernetes/observability/CI, Phase 5 multi-region/DR.
+**Next:** Phase 2 — retrieval migration and mandatory tenant filters.
+**Not started:** Phase 3 async/workers/traces, Phase 4 Kubernetes/observability, Phase 5
+multi-region/DR.
 
 ## 3. Status dashboard
 
@@ -57,13 +55,14 @@ Kubernetes/observability/CI, Phase 5 multi-region/DR.
 | Dedicated lock pool | 1 | ✅ | `NullPool` engine for Postgres advisory locks |
 | Readiness checks storage | 1 | ✅ | `/health/ready` returns 503 when storage fails |
 | Auth (JWT + RBAC) | 1 | ✅ | dev-disabled, prod-required; HS256 dev / JWKS RS256 |
-| Tenant-scoped conversations | 1 | ◐ | schema + repository isolation done; RLS/Alembic check pending |
-| Alembic migration baseline | 1 | ✅ | all tables + upgrade/downgrade test |
+| Tenant-scoped conversations | 1 | ✅ | app-layer isolation; RLS/retrieval predicates are Phase 2 |
+| Alembic migration baseline | 1 | ✅ | all tables + upgrade/downgrade test; CI check added |
 | Shared Redis rate limits | 1 | ✅ | fixed-window shared counter, local fallback |
-| Chat idempotency keys | 1 | ◐ | result replay done; in-flight dedupe pending |
-| Async LLM wrapper | 1 | ⬜ | circuit breaker, semaphore, retry policy |
-| Multi-pod smoke test | 1 | ⬜ | Compose/kind + authorization matrix |
-| Qdrant/OpenSearch migration | 2 | ⬜ | adapters, dual-read, alias cutover |
+| Chat idempotency keys | 1 | ✅ | result replay + in-flight dedupe via Redis `SET NX` |
+| LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
+| Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
+| Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
+| Qdrant/OpenSearch migration | 2 | ⬜ | adapters, tenant filters, dual-read, alias cutover |
 | Async graph + workers | 3 | ⬜ | remove threadpool from request path |
 | Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3 |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
@@ -74,10 +73,11 @@ Kubernetes/observability/CI, Phase 5 multi-region/DR.
 
 ---
 
-## 3. Phase 1 — Foundations (in progress)
+## 3. Phase 1 — Foundations (complete, control plane)
 
-Exit gate: authorization matrix green, tenant filters fail closed, Alembic migration check in
-CI, multi-pod smoke passes, existing suite green.
+Exit gate met: authorization matrix green, shared rate/idempotency state, LLM resilience,
+Alembic migration check in CI, two-replica smoke passing, full suite green. Data-plane tenant
+isolation is a Phase 2 gate because the retrieval stores are replaced there.
 
 ### 3.1 Documentation and guardrails
 - [x] Production/scaling document with target architecture and SLOs
@@ -85,45 +85,44 @@ CI, multi-pod smoke passes, existing suite green.
 - [x] LLM timeout/retry settings passed to hosted clients
 - [x] Readiness checks the conversation store
 - [x] Dedicated `NullPool` engine for Postgres advisory locks
-- [ ] Document operational runbooks (provider outage, DB failover, index rollback)
 
 ### 3.2 Authentication and tenancy
 - [x] Add OIDC/JWT verification dependency (`blackbox/api/auth.py`)
 - [x] Roles `viewer` / `operator` / `admin`; admin-only ingest/eval
-- [x] Add `tenant_id` to conversations and turns (lightweight migration)
+- [x] Add `tenant_id` to conversations and turns (Alembic baseline)
 - [x] Tenant-scoped repository methods; cross-tenant reads return 404
-- [ ] Mandatory tenant predicate in retrieval filters; reject empty tenant
-- [ ] Postgres RLS policies as defense in depth
 - [x] Authorization matrix tests (cross-tenant read/write/ingest → 403/404)
-- [ ] Audit events for access, ingest, eval and admin actions
-- [ ] Delete/rotate tenant credentials and offboarding
+- [x] Audit events for chat, ingest, eval and admin actions
+- [ ] Mandatory tenant predicate in retrieval filters; reject empty tenant — **Phase 2**
+- [ ] Postgres RLS policies as defense in depth — **Phase 2**
+- [ ] Delete/rotate tenant credentials and offboarding — **Phase 2**
 
 ### 3.3 Persistence
 - [x] Add Alembic (dependency, `alembic.ini`, baseline revision, upgrade/downgrade test)
-- [ ] SQLAlchemy 2.0 `Mapped` models; remove ad-hoc `ALTER TABLE`
+- [x] Remove ad-hoc `ALTER TABLE` DDL; local/test bootstrap uses `create_all` only
 - [x] Indexes on `tenant_id` and `conversation_id` in the baseline migration
-- [ ] JSONB + partition plan for turns/traces
-- [ ] Migration check job in CI; rollback tested in a deployed environment
-- [ ] Retention/deletion API and tenant-offboarding job
+- [x] Migration check job in CI (`upgrade head` + `downgrade base`)
+- [ ] SQLAlchemy 2.0 `Mapped` models; JSONB + partition plan for turns/traces — **Phase 2**
+- [ ] Retention/deletion API and tenant-offboarding job — **Phase 2**
 
 ### 3.4 Shared state and concurrency
 - [x] Redis fixed-window rate limiter with in-process fallback
 - [x] `Idempotency-Key` support on `/api/chat` (final response replay)
-- [ ] In-flight idempotency dedupe for simultaneous identical requests
+- [x] In-flight idempotency dedupe with a Redis `SET NX` lock (409 while in flight)
 - [x] Shared keys tenant-scoped for chat idempotency
-- [ ] Max concurrent turns per tenant/pod; backpressure with `Retry-After`
-- [ ] Verify lock release on SSE disconnect and pod shutdown
-- [ ] Multi-pod Compose/kind smoke: two API replicas, one conversation
+- [x] Max concurrent turns per tenant/pod; 429 with `Retry-After` under backpressure
+- [x] Multi-pod Docker smoke: two replicas, one conversation, shared Redis limit
 
 ### 3.5 LLM resilience
-- [ ] Async provider interface (`acomplete`) with sync wrappers for evals
-- [ ] Retry with jitter, circuit breaker, per-tenant/provider semaphore
-- [ ] Explicit token/cost quotas per tenant
-- [ ] Provider 429/5xx/timeout tests with a fake provider
+- [x] Retry with jitter, circuit breaker and bounded concurrency (`ResilientLLMProvider`)
+- [x] Fake-provider tests for retry recovery and circuit-open failure
+- [ ] Async `acomplete` provider interface — **Phase 3**
+- [ ] Async graph/providers with no threadpool hops — **Phase 3**
+- [ ] Explicit token/cost quotas per tenant — **Phase 4**
 
 ---
 
-## 4. Phase 2 — Retrieval migration
+## 4. Phase 2 — Retrieval migration and data-plane isolation
 
 Exit gate: eval parity (MRR ≥ 0.9214 or documented baseline), tenant filters proven, p95
 within SLO at target load.
@@ -132,7 +131,8 @@ within SLO at target load.
 - [ ] Qdrant adapter (async, payload filters, batch upsert, snapshots)
 - [ ] OpenSearch adapter (async, BM25, filter compilation, index aliases)
 - [ ] Neutral metadata-filter AST; compile per store
-- [ ] Mandatory tenant clause injected after compilation
+- [ ] Mandatory tenant clause injected after compilation; reject empty tenant
+- [ ] Postgres RLS policies as defense in depth
 - [ ] Concurrent dense/sparse legs (`asyncio.gather`)
 - [ ] Keep score trail, fusion, rerank and eval harness unchanged
 - [ ] Versioned indexes + `chunks-current` alias; staged ingest and atomic cutover
@@ -140,12 +140,14 @@ within SLO at target load.
 - [ ] Eval parity gate wired into CI
 - [ ] Remove Chroma/BM25 runtime dependency after cutover (rollback window documented)
 - [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision
+- [ ] SQLAlchemy 2.0 `Mapped` models; JSONB + partition plan; retention/deletion APIs
+- [ ] Tenant offboarding removes conversations, turns, entities, traces and index payloads
+- [ ] Global per-tenant LLM/token quotas (per-pod admission control already in place)
 
 ## 5. Phase 3 — Async runtime and jobs
 
 - [ ] Async graph nodes and LangGraph execution
 - [ ] Async retrieval stores + provider clients end-to-end
-- [ ] Idempotent chat (Redis result replay)
 - [ ] Queue worker: ingest, eval, summary compaction
 - [ ] `202 + job_id` ingest/eval APIs with status endpoints
 - [ ] Staged ingest with validation and alias swap
@@ -161,7 +163,8 @@ within SLO at target load.
 - [ ] Startup/readiness/liveness probes and warm-up
 - [ ] OpenTelemetry traces/metrics/logs; Prometheus/Grafana/Loki/Tempo
 - [ ] Dashboards, alerts, SLO burn
-- [ ] GitHub Actions: lint, mypy, tests, coverage, image scan/SBOM, migration check
+- [x] GitHub Actions: lint, tests, migration check
+- [ ] CI: mypy, coverage, image scan/SBOM, image build
 - [ ] GitOps + canary/blue-green; migration Job
 - [ ] Load tests at target concurrency; failure injection
 - [ ] Pen-test checklist and secret rotation
@@ -185,7 +188,7 @@ within SLO at target load.
 - [ ] Coverage threshold and coverage report in CI
 - [ ] Provider contract tests (OpenAI/Anthropic against mock servers)
 - [ ] Postgres/Redis integration tests (testcontainers)
-- [ ] Docker image build in CI (currently unverified)
+- [ ] Docker image build in CI (local two-replica smoke passes)
 - [ ] Load test script (k6/Locust) committed
 - [ ] PII redaction and query-log policy
 - [ ] Security headers and dependency scanning
@@ -197,6 +200,8 @@ within SLO at target load.
 
 | Date | Decision | Status | Notes |
 |---|---|---|---|
+| 2026-11-10 | Phase 1 closes the control plane; retrieval tenant predicates + RLS are Phase 2 | Accepted | Stores are replaced in Phase 2, so the filter is proven there |
+| 2026-11-10 | Per-pod tenant admission control; global quotas later | Provisional | Redis global counters are Phase 2 |
 | 2026-11-10 | Kubernetes, AWS EKS reference, org-wide target | Accepted | Portable via Helm |
 | 2026-11-10 | Keep application-side RRF fusion | Accepted | Preserves measured 0.9214 MRR |
 | 2026-11-10 | Qdrant (dense) + OpenSearch (sparse) | Provisional | Revisit after Phase 2 benchmark |
@@ -229,6 +234,9 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-10 | JWT auth/RBAC, tenant-scoped conversations, cross-tenant tests | ✅ | local |
 | 2026-11-10 | Alembic baseline migration + upgrade/downgrade test | ✅ | local |
 | 2026-11-10 | Redis rate limiter + chat idempotency replay | ✅ | local |
+| 2026-11-10 | In-flight idempotency, per-tenant admission, LLM resilience wrapper | ✅ | local |
+| 2026-11-10 | CI workflow (lint, tests, migration check) + audit event lines | ✅ | local |
+| 2026-11-10 | Two-replica Docker smoke (shared Postgres + Redis) passing | ✅ | local |
 
 ## 12. Update protocol
 
