@@ -41,6 +41,13 @@ class RetrievalConfig(BaseModel):
             raise ValueError("weight must be in [0,1]")
         return v
 
+    @field_validator("min_relevance_score")
+    @classmethod
+    def score_range(cls, v):
+        if v is not None and not (0.0 <= v <= 1.0):
+            raise ValueError("min_relevance_score must be in [0,1]")
+        return v
+
     @field_validator("fusion_method")
     @classmethod
     def fusion_method_known(cls, v):
@@ -80,6 +87,20 @@ class MemoryConfig(BaseModel):
     summary_max_tokens: int = 600
     entity_max_tokens: int = 400
 
+    @field_validator("working_turns", "summary_trigger_turns", "summary_max_tokens", "entity_max_tokens")
+    @classmethod
+    def positive(cls, v):
+        if v < 1:
+            raise ValueError("must be >= 1")
+        return v
+
+    @model_validator(mode="after")
+    def compression_can_trigger(self):
+        # Compression only runs when the buffer exceeds the verbatim window.
+        if self.summary_trigger_turns <= self.working_turns:
+            raise ValueError("summary_trigger_turns must be greater than working_turns")
+        return self
+
 
 class BudgetConfig(BaseModel):
     system_prompt_tokens: int = 800
@@ -89,6 +110,21 @@ class BudgetConfig(BaseModel):
     retrieved_chunks_tokens: int = 2000
     output_headroom_tokens: int = 1024
     total_cap_tokens: int = 6024
+
+    @field_validator(
+        "system_prompt_tokens",
+        "entity_memory_tokens",
+        "summary_tokens",
+        "recent_turns_tokens",
+        "retrieved_chunks_tokens",
+        "output_headroom_tokens",
+        "total_cap_tokens",
+    )
+    @classmethod
+    def non_negative(cls, v):
+        if v < 0:
+            raise ValueError("token budgets must be >= 0")
+        return v
 
 
 class ChunkingConfig(BaseModel):
@@ -107,6 +143,15 @@ class GuardrailsConfig(BaseModel):
     strict_injection_block: bool = False
     secret_scrub: bool = True
 
+    @field_validator(
+        "max_message_chars", "rate_limit_rps", "max_llm_calls_per_turn", "max_answer_tokens"
+    )
+    @classmethod
+    def positive(cls, v):
+        if v < 1:
+            raise ValueError("must be >= 1")
+        return v
+
 
 class RedisConfig(BaseModel):
     enabled: bool = True
@@ -116,6 +161,26 @@ class RedisConfig(BaseModel):
     ttl_retrieval_s: int = 60
     ttl_rerank_s: int = 300
     ttl_conversation_state_s: int = 3600
+
+    @field_validator("timeout_ms")
+    @classmethod
+    def positive_timeout(cls, v):
+        if v < 1:
+            raise ValueError("timeout_ms must be >= 1")
+        return v
+
+    @field_validator(
+        "ttl_llm_response_s",
+        "ttl_embedding_s",
+        "ttl_retrieval_s",
+        "ttl_rerank_s",
+        "ttl_conversation_state_s",
+    )
+    @classmethod
+    def non_negative_ttl(cls, v):
+        if v < 0:
+            raise ValueError("ttl must be >= 0")
+        return v
 
 
 class IngestionConfig(BaseModel):
@@ -182,6 +247,11 @@ class Settings(BaseSettings):
         default="cross-encoder/ms-marco-MiniLM-L-6-v2", alias="RERANKER_MODEL"
     )
     config_path: str = Field(default="blackbox/config/config.yaml", alias="CONFIG_PATH")
+    cors_origins: str = Field(default="", alias="CORS_ORIGINS")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @model_validator(mode="after")
     def validate_provider_key(self):
@@ -190,6 +260,8 @@ class Settings(BaseSettings):
                 raise ValueError("OPENAI_API_KEY required in prod")
             if self.llm_provider == "anthropic" and not self.anthropic_api_key:
                 raise ValueError("ANTHROPIC_API_KEY required in prod")
+            if "*" in self.cors_origin_list:
+                raise ValueError("CORS_ORIGINS must not contain '*' in prod")
         return self
 
 

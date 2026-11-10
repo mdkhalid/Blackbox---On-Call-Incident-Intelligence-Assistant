@@ -16,6 +16,7 @@ class LLMResponse:
     model: str = ""
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached: bool = False
 
     @property
     def total_tokens(self) -> int:

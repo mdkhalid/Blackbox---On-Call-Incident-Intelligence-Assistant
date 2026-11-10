@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from blackbox.api.services import AppServices
 from blackbox.api.store import SqlAlchemyConversationRepository
-from blackbox.config.settings import AppConfig, RetrievalConfig
+from blackbox.config.settings import AppConfig, GuardrailsConfig, RetrievalConfig
 from blackbox.eval.metrics import Metrics
 from blackbox.graph.build import build_graph
 from blackbox.ingestion.entity_extraction.store import SqlAlchemyEntityStore
@@ -17,7 +17,9 @@ def operations_services(tmp_path, vectorstore, settings):
     retrieval = RetrievalConfig(
         top_k=3, candidate_pool=10, rerank=False, rerank_provider="none", rewrite_cap=2
     )
-    config = AppConfig(retrieval=retrieval)
+    config = AppConfig(
+        retrieval=retrieval, guardrails=GuardrailsConfig(rate_limit_rps=100)
+    )
     repo = SqlAlchemyConversationRepository(
         f"sqlite:///{tmp_path / 'conv.db'}", memory_config=config.memory
     )

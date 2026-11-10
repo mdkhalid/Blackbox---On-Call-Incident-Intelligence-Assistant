@@ -9,6 +9,8 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from blackbox.api.deps import get_services
+from blackbox.api.guardrails import detect_injection
+from blackbox.api.locks import ConversationBusy
 from blackbox.api.schemas import ChatRequest
 from blackbox.api.services import PersistenceUnavailable
 from blackbox.api.sse import chunk_trails, public_update, sse_event, token_chunks
@@ -54,6 +56,18 @@ async def chat(payload: ChatRequest, request: Request):
     if not _CONVERSATION_ID.fullmatch(conversation_id):
         raise HTTPException(status_code=400, detail="invalid conversation_id")
 
+    injection_flags = detect_injection(message)
+    if injection_flags:
+        logger.warning(
+            "prompt_injection_suspected",
+            conversation_id=conversation_id,
+            flags=injection_flags,
+        )
+        if services.config.guardrails.strict_injection_block:
+            raise HTTPException(
+                status_code=400, detail="message rejected by input guardrail"
+            )
+
     try:
         await run_in_threadpool(services.ensure_storage)
         await run_in_threadpool(services.ensure_runtime)
@@ -63,12 +77,10 @@ async def chat(payload: ChatRequest, request: Request):
         logger.exception("runtime_unavailable")
         raise HTTPException(status_code=503, detail="runtime unavailable") from exc
 
-    lock = services.lock_for(conversation_id)
-    if lock.locked():
-        raise HTTPException(
-            status_code=409, detail="conversation already has an active turn"
-        )
-    await lock.acquire()
+    try:
+        turn_lock = await services.acquire_turn_lock(conversation_id)
+    except ConversationBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     async def event_stream():
         try:
@@ -95,6 +107,7 @@ async def chat(payload: ChatRequest, request: Request):
                 context=bundle.render(),
                 budget=bundle.report,
                 filters=payload.filters,
+                injection_flags=injection_flags,
             )
 
             result: dict = {}
@@ -148,6 +161,7 @@ async def chat(payload: ChatRequest, request: Request):
                     "chunks": chunk_trails(result.get("chunks") or []),
                     "grade": result.get("grade"),
                     "ground_check": result.get("ground_check"),
+                    "injection_flags": injection_flags,
                 },
             )
         except Exception as exc:
@@ -157,7 +171,7 @@ async def chat(payload: ChatRequest, request: Request):
                 {"message": "the turn failed", "detail": type(exc).__name__},
             )
         finally:
-            lock.release()
+            await turn_lock.release()
 
     return StreamingResponse(
         event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS

@@ -34,6 +34,7 @@ class GraphState(TypedDict, total=False):
     # Phase 4: budgeted memory injection, assembled before the turn reaches the graph.
     context: str
     budget: dict[str, Any]
+    injection_flags: list[str]
 
     llm_calls: int
     usage: dict[str, int]
@@ -49,6 +50,7 @@ def initial_state(
     original_query: str | None = None,
     context: str | None = None,
     budget: dict[str, Any] | None = None,
+    injection_flags: list[str] | None = None,
 ) -> GraphState:
     return GraphState(
         query=query,
@@ -56,6 +58,7 @@ def initial_state(
         filters=dict(filters or {}),
         context=context or "",
         budget=dict(budget or {}),
+        injection_flags=list(injection_flags or []),
         chunks=[],
         grade_history=[],
         rewrite_count=0,

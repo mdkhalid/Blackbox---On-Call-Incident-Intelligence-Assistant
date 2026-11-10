@@ -2,9 +2,9 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅ done. Phase 8 ⬅ next.
+Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅ done. Phase 9 ⬅ next.
 
-Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **254 passing**, `ruff` clean.
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **286 passing**, `ruff` clean.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -265,17 +265,46 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   from 0.7429 to 0.8857 and draft support from 0.8387 to 1.0000 by removing the artifact,
   not by loosening the checker.
 
-## Phase 8 — Observability, Caching, Hardening ⬜ TODO
-- ⬜ LangChain callbacks: latency + token counts per LLM call, retrieval and chain step.
-  (The graph records per-node timings and token usage today, but not via callbacks.)
-- ⬜ LLM response caching for development (identical prompts).
-- ◐ Structured JSON logging with request id — done in Phase 0; add graph-level context.
-- ◐ Config validation — pydantic validators exist for retrieval/graph/budget; add
-  cross-field checks and prod-only requirements.
-- ⬜ Redis cache integration for retrieval/embedding caches, invalidated on ingest.
-- ⬜ Rate limiting and CORS allowlist from `docs/guardrails.md` / `api-security.md`.
-- ⬜ Prompt-injection detection (log/flag in dev, optional block in strict mode).
-- ⬜ Postgres advisory lock for per-conversation turns when running more than one instance.
+## Phase 8 — Observability, Caching, Hardening ✅ DONE
+- `cache/`: `TTLCache` and `RedisCache` backends with best-effort semantics (a failure is a
+  miss), plus `CachedEmbeddingProvider`.
+- Retrieval cache in `HybridRetriever`: keyed by query, top-k, filters, strategy flags and
+  fusion/rerank config; TTL from `redis.ttl_retrieval_s`; cleared by `invalidate()` on
+  ingest; a hit records `cache_ms` in the stage timings.
+- Dev LLM response cache (`CachedLLMProvider`) keyed by provider, model, system, prompt,
+  temperature, max tokens and JSON mode. Disabled in prod and not used by the eval
+  harnesses, so measured numbers are not flattered by cache hits.
+- Observability: LangChain-compatible `LoggingCallbackHandler` (LLM, retriever, chain
+  latency/tokens) plus structured `llm_call` logs from the provider seam with node, model,
+  tokens, cached flag and duration. The graph trace remains the product-facing view.
+- Rate limiting: per-IP sliding window from `guardrails.rate_limit_rps` (429 + Retry-After);
+  health and the viewer are exempt. CORS allowlist from `CORS_ORIGINS`; `*` is rejected in
+  prod.
+- Prompt-injection heuristics flag and log by default; `strict_injection_block` rejects with
+  400. Flags are carried into the final SSE payload.
+- Turn locking: asyncio lock for single-process SQLite/dev, Postgres session advisory lock
+  when the conversation store is Postgres; 409 when a conversation is already busy.
+- Config validation: memory trigger must exceed the working window, positive guardrails,
+  non-negative budgets/TTLs, bounded relevance score, prod CORS rule.
+- Tests: 286 total (+32), ruff clean.
+
+### Verified
+- Local smoke with an unreachable Redis: warning logged, in-memory fallback used, chat
+  end-to-end unchanged (SSE, trace, persistence, budget).
+- Unit coverage for TTL expiry/prefix clearing, Redis failure-as-miss, embedding cache
+  hits, LLM cache parameter separation, retrieval cache invalidation, 429 + Retry-After,
+  health exemption, CORS preflight, strict injection rejection and advisory-lock acquire /
+  busy / release.
+
+### Decisions
+- **Redis is never required.** Every cache path degrades to memory or a miss; the DB stays
+  the source of truth.
+- **LLM caching is dev-only** and keys include every generation parameter, so a model or
+  temperature change cannot serve a stale answer.
+- **Rate limiting is in-process**, matching the current single-instance deployment. Moving
+  counters to Redis is the documented multi-instance next step.
+- **Injection detection flags rather than blocks by default**: incident text can legitimately
+  contain words like "system" or "instructions", so false positives would harm real users.
 
 ## Phase 9 — Docs & Submission ⬜ TODO
 - ◐ README — covers setup, architecture, both results tables, API, memory and viewer;
@@ -287,15 +316,14 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   with a genuine no-answer question.
 - ⬜ Final submission pass: reproduce tests + eval from a clean `.venv`, tag/commit.
 
-## Remaining work (as of Phase 7 close)
+## Remaining work (as of Phase 8 close)
 | Phase | State | Remaining deliverables |
 |---|---|---|
-| 8 — Observability & Hardening | ⬜ | LangChain callbacks; LLM cache; Redis cache; rate limiting + CORS; prompt-injection detection; Postgres advisory lock; finish logging/config polish |
 | 9 — Docs & Submission | ⬜ | `docs/architecture.png`; demo video script; final README polish; clean-room test + eval verification; final commit |
 
-Bottom line: **two phases remain** (8 and 9). Phase 8 is the largest remaining block;
-Phase 9 is documentation/submission. The eval harness is complete, so submission numbers are
-already generated from real runs.
+Bottom line: **one phase remains**. All implementation and evaluation work is complete and
+measured; Phase 9 is the diagram, demo script, documentation polish and clean-room
+submission pass.
 
 ## Milestones
 - M1 (after Phase 2): retrieval works, eval numbers exist. ✅ **reached** —
@@ -307,28 +335,18 @@ already generated from real runs.
   ground-checked answers, groundedness and abstention measured from real runs (Phase 7).
 - M4 (after Phase 9): submission-ready.
 
-## Immediate next actions (Phase 8 entry)
-1. LangChain callback handler: log latency + token counts for every LLM call, retrieval and
-   chain step; keep the existing per-node trace as the user-facing view (no double counting).
-2. Dev-only LLM response cache keyed by (provider, model, prompt, temperature, max_tokens,
-   json_mode); disabled or TTL-bounded outside dev.
-3. Redis caches for retrieval/embedding with the configured TTLs; `invalidate()` on ingest;
-   a Redis outage must degrade to uncached, never fail the turn.
-4. Rate limiting per IP/conversation from `guardrails.rate_limit_rps` (429 + Retry-After)
-   and a CORS allowlist.
-5. Prompt-injection detection: log/flag in dev, optional block under
-   `guardrails.strict_injection_block`.
-6. Config validation: cross-field checks (e.g. trigger >= working turns) and prod-only
-   requirements; fail at startup, not on the first request.
-7. Postgres advisory lock for per-conversation turns; document the single-process fallback.
-8. Tests for cache hit/miss, Redis-down degradation, rate-limit 429, injection flag and
-   invalid-config startup.
+## Immediate next actions (Phase 9 entry)
+1. `docs/architecture.png`: render the high-level component/flow diagram as an image.
+2. Demo video script: ingest, a multi-turn incident conversation that triggers summary
+   compression, a genuine no-answer question, then replay the turn in the trace viewer.
+3. Final README pass: refreshed status, both results tables, setup and known limitations.
+4. Clean-room verification from a fresh `.venv`: tests, ingest, retrieval + groundedness
+   evals, one API turn.
+5. Final commit/tag and submission checklist.
 
-## Open questions to settle before Phase 8
-- Cache keys must include every generation parameter; a model or temperature change must not
-  return a stale stored answer.
-- Callbacks are for operators, the trace is for the product. Keep them separate rather than
-  turning one into a projection of the other.
-- Rate limiting and locks are in-process today. Multi-instance correctness needs Postgres or
-  Redis; document which guarantee applies where.
-- Keep caching off in the eval harness so measured numbers are not flattered by cache hits.
+## Open questions to settle before Phase 9
+- Diagram source: keep a Mermaid/ASCII source beside the PNG so it can be regenerated.
+- The demo must show the honest-failure path live; use one of the measured unanswerable
+  questions so the script is reproducible.
+- Mention the offline-provider caveat next to the groundedness numbers in the submission
+  notes, not just in the generated report.

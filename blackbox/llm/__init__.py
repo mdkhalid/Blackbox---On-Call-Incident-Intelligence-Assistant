@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from blackbox.config.settings import Settings, get_settings
 from blackbox.llm.base import LLMProvider, LLMResponse
+from blackbox.llm.cached import CachedLLMProvider
 from blackbox.llm.fake import FakeLLMProvider
 from blackbox.llm.providers import AnthropicProvider, OpenAIProvider
 
 __all__ = [
     "AnthropicProvider",
+    "CachedLLMProvider",
     "FakeLLMProvider",
     "LLMProvider",
     "LLMResponse",

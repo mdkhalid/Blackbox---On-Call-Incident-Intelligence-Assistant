@@ -50,3 +50,13 @@ redis:
 - Redis AUTH enabled in prod; URL includes password.
 - No secrets stored in cache values.
 - Cache keys must not contain raw user PII if PII present; hash inputs.
+
+## Implementation status (Phase 8)
+- Implemented: `RedisCache` + `TTLCache` fallback, embedding cache, retrieval-result cache
+  (keyed by query/filter/top-k/fusion config, cleared on ingest), and the dev-only LLM
+  response cache.
+- Not implemented as Redis entries: rerank cache, conversation hot state (the DB is the
+  source of truth), and rate-limit counters (in-process sliding window today). These remain
+  documented options for multi-instance deployment.
+- Redis is never required: connection failure logs a warning and falls back to memory; each
+  cache operation treats failure as a miss.

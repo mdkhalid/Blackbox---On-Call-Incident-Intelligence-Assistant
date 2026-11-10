@@ -36,6 +36,7 @@ class AppServices:
     storage_ready: bool = False
     runtime_ready: bool = False
     storage_backend: str = ""
+    cache_backend: Any | None = None
 
     ingest_lock: threading.Lock = field(default_factory=threading.Lock)
     eval_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -87,17 +88,38 @@ class AppServices:
             if self.runtime_ready:
                 return
 
+            from blackbox.cache import CachedEmbeddingProvider, build_cache
             from blackbox.graph import build_graph
             from blackbox.ingestion.entity_extraction.store import SqlAlchemyEntityStore
             from blackbox.llm import build_llm_provider
+            from blackbox.llm.cached import CachedLLMProvider
             from blackbox.retrieval import build_default_retriever
 
+            cache = build_cache(self.settings, self.config)
             retriever = build_default_retriever(settings=self.settings)
+            if cache is not None:
+                retriever.vectorstore.embedding_provider = CachedEmbeddingProvider(
+                    retriever.vectorstore.embedding_provider,
+                    cache,
+                    ttl_s=self.config.redis.ttl_embedding_s,
+                )
+                retriever.cache = cache
+                retriever.cache_ttl_s = self.config.redis.ttl_retrieval_s
+
             llm = build_llm_provider(self.settings)
+            if (
+                cache is not None
+                and self.settings.env != "prod"
+                and self.config.redis.ttl_llm_response_s > 0
+            ):
+                llm = CachedLLMProvider(
+                    llm, cache, ttl_s=self.config.redis.ttl_llm_response_s
+                )
             entity_store = self._build_entity_store(SqlAlchemyEntityStore)
 
             self.retriever = retriever
             self.llm = llm
+            self.cache_backend = cache
             self.entity_store = entity_store
             self.graph = build_graph(
                 retriever=retriever,
@@ -127,6 +149,25 @@ class AppServices:
         return None
 
     # ---- locks ----
+
+    async def acquire_turn_lock(self, conversation_id: str):
+        from blackbox.api.locks import (
+            ConversationBusy,
+            LocalTurnLock,
+            acquire_postgres_lock,
+        )
+
+        if self.storage_backend == "postgres" and hasattr(self.conversations, "engine"):
+            lock = await acquire_postgres_lock(self.conversations.engine, conversation_id)
+            if lock is None:
+                raise ConversationBusy("conversation already has an active turn")
+            return lock
+
+        local = self.lock_for(conversation_id)
+        if local.locked():
+            raise ConversationBusy("conversation already has an active turn")
+        await local.acquire()
+        return LocalTurnLock(local)
 
     def lock_for(self, conversation_id: str) -> asyncio.Lock:
         lock = self.conversation_locks.get(conversation_id)

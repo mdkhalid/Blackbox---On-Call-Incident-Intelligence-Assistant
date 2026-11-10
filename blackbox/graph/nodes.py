@@ -24,6 +24,7 @@ from blackbox.graph.prompts import (
 from blackbox.llm.base import LLMProvider, LLMResponse
 from blackbox.logging_setup import get_logger
 from blackbox.memory.tokens import count_tokens
+from blackbox.observability.callbacks import log_llm_call
 
 logger = get_logger(__name__)
 
@@ -104,6 +105,7 @@ def grade_node(state: dict, deps: GraphDeps) -> dict:
             ],
         }
 
+    call_started = time.perf_counter()
     response = deps.llm.complete(
         system=GRADE_SYSTEM,
         prompt=grade_prompt(query, state.get("chunks") or []),
@@ -111,6 +113,10 @@ def grade_node(state: dict, deps: GraphDeps) -> dict:
         temperature=0.0,
         max_tokens=256,
         json_mode=True,
+    )
+    log_llm_call(
+        logger, node="grade", response=response,
+        duration_ms=(time.perf_counter() - call_started) * 1000,
     )
     decision = parse_grade(response.text)
     grade = {
@@ -159,12 +165,17 @@ def rewrite_node(state: dict, deps: GraphDeps) -> dict:
             ],
         }
 
+    call_started = time.perf_counter()
     response = deps.llm.complete(
         system=REWRITE_SYSTEM,
         prompt=rewrite_prompt(query, attempt),
         model=deps.settings.rewrite_model,
         temperature=0.3,
         max_tokens=256,
+    )
+    log_llm_call(
+        logger, node="rewrite", response=response,
+        duration_ms=(time.perf_counter() - call_started) * 1000,
     )
     rewritten = (response.text or "").strip() or query
 
@@ -211,6 +222,7 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
             ],
         }
 
+    call_started = time.perf_counter()
     response = deps.llm.complete(
         system=GENERATE_SYSTEM,
         prompt=generate_prompt(query, chunks, context=state.get("context") or None),
@@ -218,6 +230,10 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
         temperature=0.2,
         max_tokens=deps.config.guardrails.max_answer_tokens,
         json_mode=True,
+    )
+    log_llm_call(
+        logger, node="generate", response=response,
+        duration_ms=(time.perf_counter() - call_started) * 1000,
     )
     generated = parse_generation(response.text)
     answer = _scrub(generated.answer, deps)

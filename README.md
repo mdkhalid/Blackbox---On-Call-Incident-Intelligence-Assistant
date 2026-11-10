@@ -4,9 +4,9 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–7 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
-three-layer memory, the streaming API, the trace viewer, and the eval harness. See `docs/`
-for design and planning; `docs/phase-wise-plan.md` tracks progress.
+Phases 0–8 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
+three-layer memory, the streaming API, the trace viewer, the eval harness, and hardening.
+See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks progress.
 
 ## Status
 
@@ -20,7 +20,8 @@ for design and planning; `docs/phase-wise-plan.md` tracks progress.
 | 5 | API + SSE streaming, conversation persistence, trace endpoints | ✅ |
 | 6 | Trace viewer UI | ✅ |
 | 7 | Groundedness eval + abstention measurement | ✅ |
-| 8 | Observability, caching, hardening | next |
+| 8 | Observability, caching, hardening | ✅ |
+| 9 | Architecture diagram, demo script, submission pass | next |
 
 ## Quick start
 
@@ -32,7 +33,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 254 tests
+pytest -q                            # 286 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -273,6 +274,24 @@ unreachable the service falls back to SQLite under `data/`; in prod an unavailab
 > Token events are transport chunks of the already-verified answer, not raw provider decode
 > tokens: answer text is deliberately withheld until ground check passes.
 
+### Caching, limits and hardening
+
+- **Optional caching.** Redis is used when reachable; otherwise an in-process TTL cache is
+  the fallback. Embeddings and repeated identical retrievals are cached (retrieval keys
+  include query, filters, top-k and fusion config, and are cleared on ingest). Dev-only LLM
+  response caching keys on provider/model/prompt/temperature/max-tokens/JSON mode and is
+  never used by the eval harnesses. A cache failure is a miss, never an error.
+- **Rate limiting.** Per-IP sliding window from `guardrails.rate_limit_rps`; health and the
+  viewer are exempt; 429 responses include `Retry-After`.
+- **CORS.** Set `CORS_ORIGINS` to a comma-separated allowlist. Empty disables CORS; `*` is
+  rejected when `ENV=prod`.
+- **Prompt injection.** Heuristics flag and log suspected injection and return the labels in
+  the final SSE payload. Set `guardrails.strict_injection_block: true` to reject with 400.
+- **Concurrency.** One active turn per conversation (409). SQLite/dev uses an asyncio lock;
+  Postgres uses a session advisory lock across workers.
+- **Config validation** fails at startup for impossible settings (compression trigger below
+  the verbatim window, negative budgets/TTLs, zero rate limits, wildcard CORS in prod).
+
 ## Trace viewer
 
 Served by the same process at `/` (alias `/ui`) — no build step, no Node toolchain.
@@ -298,7 +317,7 @@ document types share one service/error-code vocabulary so retrieval is measurabl
 
 ## Tests
 
-254 tests, `ruff` clean. Retrieval, graph, memory and API tests run against a small in-file
+286 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

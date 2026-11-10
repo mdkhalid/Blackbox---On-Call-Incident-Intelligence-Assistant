@@ -52,6 +52,38 @@ class RetrievedChunk:
         )
         return Document(page_content=self.text, metadata=md)
 
+    def to_cache_dict(self) -> dict[str, Any]:
+        """JSON-safe form for the retrieval cache."""
+        return {
+            "chunk_id": self.chunk_id,
+            "text": self.text,
+            "metadata": self.metadata,
+            "dense_score": self.dense_score,
+            "dense_rank": self.dense_rank,
+            "sparse_score": self.sparse_score,
+            "sparse_rank": self.sparse_rank,
+            "fused_score": self.fused_score,
+            "fused_rank": self.fused_rank,
+            "rerank_score": self.rerank_score,
+            "rerank_rank": self.rerank_rank,
+        }
+
+    @classmethod
+    def from_cache_dict(cls, data: dict[str, Any]) -> RetrievedChunk:
+        return cls(
+            chunk_id=data["chunk_id"],
+            text=data.get("text", ""),
+            metadata=dict(data.get("metadata") or {}),
+            dense_score=data.get("dense_score"),
+            dense_rank=data.get("dense_rank"),
+            sparse_score=data.get("sparse_score"),
+            sparse_rank=data.get("sparse_rank"),
+            fused_score=data.get("fused_score"),
+            fused_rank=data.get("fused_rank"),
+            rerank_score=data.get("rerank_score"),
+            rerank_rank=data.get("rerank_rank"),
+        )
+
     def score_trail(self) -> dict[str, Any]:
         return {
             "chunk_id": self.chunk_id,

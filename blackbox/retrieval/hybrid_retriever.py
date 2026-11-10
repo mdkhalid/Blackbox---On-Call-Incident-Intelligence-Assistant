@@ -15,6 +15,8 @@ set for sparse, so nothing is ever retrieved unfiltered and trimmed afterwards.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from typing import Any
 
@@ -51,6 +53,8 @@ class HybridRetriever(BaseRetriever):
     reranker: Any = None
     top_k: int | None = None
     rerank_enabled: bool | None = None
+    cache: Any = Field(default=None, exclude=True, repr=False)
+    cache_ttl_s: int = 0
 
     _dense: DenseRetriever = PrivateAttr(default=None)
     _sparse: SparseRetriever = PrivateAttr(default=None)
@@ -93,6 +97,8 @@ class HybridRetriever(BaseRetriever):
         if type(self.reranker).__name__ == "LexicalReranker":
             corpus_texts = list(self.vectorstore.get_all().get("documents") or [])
             self.reranker = type(self.reranker).from_corpus(corpus_texts)
+        if self.cache is not None:
+            self.cache.clear_prefix("ret:")
 
     @property
     def corpus_size(self) -> int:
@@ -117,7 +123,38 @@ class HybridRetriever(BaseRetriever):
         """
         k = top_k or self.top_k or self.config.top_k
         md_filter = self._coerce_filter(filter)
+        wants_rerank = (
+            self.rerank_enabled if self.rerank_enabled is not None else self.config.rerank
+        )
+        if use_rerank is not None:
+            wants_rerank = use_rerank
         timings: dict[str, float] = {}
+
+        cache_key = self._cache_key(
+            query=query,
+            top_k=k,
+            md_filter=md_filter,
+            use_rerank=wants_rerank,
+            dense_only=dense_only,
+            sparse_only=sparse_only,
+        )
+        if cache_key:
+            started = time.perf_counter()
+            cached = self.cache.get(cache_key)
+            if isinstance(cached, list):
+                results = [RetrievedChunk.from_cache_dict(item) for item in cached]
+                elapsed = round((time.perf_counter() - started) * 1000, 2)
+                self._last_timings = {"cache_ms": elapsed, "total_ms": elapsed}
+                self._last_counts = {
+                    "dense": 0,
+                    "sparse": 0,
+                    "fused": 0,
+                    "returned": len(results),
+                }
+                logger.info(
+                    "retrieval_cache_hit", query=query[:120], returned=len(results)
+                )
+                return results
 
         pool = max(self.config.candidate_pool, k)
 
@@ -165,12 +202,6 @@ class HybridRetriever(BaseRetriever):
             )
         timings["fuse_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
-        wants_rerank = (
-            self.rerank_enabled if self.rerank_enabled is not None else self.config.rerank
-        )
-        if use_rerank is not None:
-            wants_rerank = use_rerank
-
         t0 = time.perf_counter()
         if wants_rerank and fused and self.reranker is not None:
             candidates = fused[: max(self.config.rerank_candidates, k)]
@@ -183,6 +214,13 @@ class HybridRetriever(BaseRetriever):
         timings["rerank_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         results = self._apply_score_floor(results, reranked=bool(wants_rerank and self.reranker))
+
+        if cache_key:
+            self.cache.set(
+                cache_key,
+                [chunk.to_cache_dict() for chunk in results],
+                self.cache_ttl_s,
+            )
 
         timings["total_ms"] = round(sum(v for kk, v in timings.items()), 2)
         self._last_timings = timings
@@ -260,6 +298,39 @@ class HybridRetriever(BaseRetriever):
             return filter
         parsed = parse_filter(filter)
         return parsed if not parsed.is_empty() else self.default_filter
+
+    def _cache_key(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        md_filter: MetadataFilter | None,
+        use_rerank: bool,
+        dense_only: bool,
+        sparse_only: bool,
+    ) -> str | None:
+        if self.cache is None or self.cache_ttl_s <= 0:
+            return None
+        payload = json.dumps(
+            {
+                "query": query,
+                "top_k": top_k,
+                "filter": repr(md_filter),
+                "rerank": use_rerank,
+                "dense_only": dense_only,
+                "sparse_only": sparse_only,
+                "candidate_pool": self.config.candidate_pool,
+                "fusion": self.config.fusion_method,
+                "fusion_k": self.config.fusion_k,
+                "dense_weight": self.config.dense_weight,
+                "sparse_weight": self.config.sparse_weight,
+                "rerank_candidates": self.config.rerank_candidates,
+                "score_floor": self.config.min_relevance_score,
+            },
+            sort_keys=True,
+        )
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return f"ret:{digest}"
 
     @property
     def last_timings(self) -> dict[str, float]:

@@ -1,15 +1,20 @@
 """Conversation memory: the three layers plus the compression trigger policy."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from blackbox.config.settings import MemoryConfig
 from blackbox.llm.base import LLMProvider
+from blackbox.logging_setup import get_logger
 from blackbox.memory.models import EntityMemory, Turn
 from blackbox.memory.prompts import SUMMARY_SYSTEM, summary_prompt
 from blackbox.memory.summary import SummaryMemory
 from blackbox.memory.tokens import truncate_to_tokens
 from blackbox.memory.working import WorkingMemory
+from blackbox.observability.callbacks import log_llm_call
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -50,12 +55,17 @@ class ConversationMemory:
 
         fold_count = len(self.working.turns) - self.working.max_turns
         older = self.working.turns[:fold_count]
+        started = time.perf_counter()
         response = llm.complete(
             system=SUMMARY_SYSTEM,
             prompt=summary_prompt(self.summary.text, older),
             model=model,
             temperature=0.2,
             max_tokens=self.config.summary_max_tokens,
+        )
+        log_llm_call(
+            logger, node="summarize", response=response,
+            duration_ms=(time.perf_counter() - started) * 1000,
         )
         self.summary.text = truncate_to_tokens(
             (response.text or "").strip(), self.config.summary_max_tokens
