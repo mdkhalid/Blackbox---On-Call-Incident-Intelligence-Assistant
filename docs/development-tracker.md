@@ -45,6 +45,37 @@ Last updated: 2026-11-10
 **Not started:** Phase 3 async/workers/traces, Phase 4 Kubernetes/observability, Phase 5
 multi-region/DR.
 
+### Resume point (next session)
+
+State: clean working tree at `9efb2c4`; **333 tests green**, `ruff` clean; Docker available;
+Phase 1 closed. Nothing is uncommitted.
+
+**First Phase 2 package (do this next):**
+1. Add `DenseStore` / `SparseStore` protocols plus a neutral metadata-filter AST in
+   `blackbox/retrieval/stores.py`. Wrap the current Chroma and BM25 implementations as
+   adapters without changing behavior, with contract tests against the existing corpus.
+2. Put `tenant_id` into chunk metadata at ingestion and require it in retrieval filters
+   (reject an empty tenant). Backfill/re-ingest the seed corpus and add cross-tenant retrieval
+   tests: tenant A must never retrieve tenant B chunks, even with an empty/forged filter.
+3. Add the Qdrant dense adapter and contract tests (Docker/testcontainers), then the OpenSearch
+   sparse adapter. Keep Chroma/BM25 as the default and rollback path until eval parity is green.
+4. Only then start shadow indexing and dual-read cutover.
+
+Do not begin alias cutover before the filtered-retrieval contract and tenant-isolation proof
+are green. Phase 2 exit gate: MRR ≥ 0.9214 (or documented baseline), tenant filters proven,
+p95 within SLO.
+
+**Commands:**
+```bash
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check blackbox tests scripts alembic
+.\.venv\Scripts\python.exe scripts\multi_pod_smoke.py   # Docker; shared Postgres + Redis
+```
+
+**Open decision before adapter work:** Qdrant+OpenSearch vs OpenSearch-only (benchmark with
+the eval harness). Tenant corpus strategy: one shared collection with mandatory tenant
+payloads vs per-tenant indexes — decide before the Qdrant adapter lands.
+
 ## 3. Status dashboard
 
 | Workstream | Phase | State | Notes |
@@ -237,6 +268,7 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-10 | In-flight idempotency, per-tenant admission, LLM resilience wrapper | ✅ | local |
 | 2026-11-10 | CI workflow (lint, tests, migration check) + audit event lines | ✅ | local |
 | 2026-11-10 | Two-replica Docker smoke (shared Postgres + Redis) passing | ✅ | local |
+| 2026-11-10 | Added Phase 2 resume point: store protocols, tenant metadata, adapters | ✅ | `9efb2c4` |
 
 ## 12. Update protocol
 
