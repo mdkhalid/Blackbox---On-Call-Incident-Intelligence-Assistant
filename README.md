@@ -4,9 +4,8 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–8 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
-three-layer memory, the streaming API, the trace viewer, the eval harness, and hardening.
-See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks progress.
+Phases 0–9 complete. See `docs/` for design, planning and results; `docs/phase-wise-plan.md`
+tracks progress.
 
 ## Status
 
@@ -21,7 +20,19 @@ See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks progress.
 | 6 | Trace viewer UI | ✅ |
 | 7 | Groundedness eval + abstention measurement | ✅ |
 | 8 | Observability, caching, hardening | ✅ |
-| 9 | Architecture diagram, demo script, submission pass | next |
+| 9 | Architecture diagram, demo script, submission pass | ✅ |
+
+## Architecture
+
+![Blackbox architecture](docs/architecture.png)
+
+Client → FastAPI → corrective-RAG graph, with memory, hybrid retrieval, ingestion and the
+optional stores. Full narrative in `docs/high-level-design.md`; regenerate the image with:
+
+```bash
+pip install -e ".[docs]"
+python scripts/render_architecture.py
+```
 
 ## Quick start
 
@@ -33,7 +44,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 286 tests
+pytest -q                            # 295 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -49,6 +60,14 @@ curl -X POST localhost:8000/api/ingest \
 ```
 
 Open `http://localhost:8000/` for the trace viewer.
+
+Run the scripted demo conversation (nine turns + a no-answer question):
+
+```bash
+python scripts/demo_chat.py --base-url http://localhost:8000
+```
+
+The recording outline is in [`docs/demo-script.md`](docs/demo-script.md).
 
 No API key is required to run retrieval. Dense embeddings fall back to Chroma's bundled
 ONNX MiniLM model, so the corpus, the tests and the eval harness all work offline. Set
@@ -315,9 +334,44 @@ so messages, answers and entity values cannot inject HTML.
 docs, 5 alert definitions), regenerable via `python seed/generate_corpus.py`. All four
 document types share one service/error-code vocabulary so retrieval is measurable.
 
+## Submission checklist
+
+| Requirement | Location |
+|---|---|
+| Structure-aware chunking rationale | [`docs/chunking-strategy.md`](docs/chunking-strategy.md) |
+| Three-layer memory + compression contract | [`docs/memory-design.md`](docs/memory-design.md) |
+| Retrieval comparison + fusion sweep | [`docs/retrieval-results.md`](docs/retrieval-results.md) |
+| Groundedness + abstention results | [`docs/groundedness-results.md`](docs/groundedness-results.md) |
+| Architecture diagram | [`docs/architecture.png`](docs/architecture.png) |
+| Demo video script | [`docs/demo-script.md`](docs/demo-script.md) |
+| Re-runnable evals | `python -m blackbox.eval.retrieval_eval --write --fusion-sweep` · `python -m blackbox.eval.groundedness_eval --write` |
+
+Reproduce from a clean environment:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev,rag,db]"
+pytest -q
+python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep
+python -m blackbox.eval.groundedness_eval --write
+```
+
+### Known limitations
+
+- Hosted-provider **decode-level** token streaming is not wired; SSE token events are
+  transport chunks emitted only after ground check, so unverified text never ships.
+- The offline provider is extractive, so its groundedness number is a floor; use a hosted
+  model for the generator's real overreach (the harness is unchanged).
+- Rate limiting and local turn locks are single-instance. Postgres uses advisory locks;
+  moving rate-limit counters to Redis is the documented multi-instance step.
+- The corpus is synthetic and templated; `paraphrase` retrieval is intentionally weak and
+  reported as measured rather than tuned away.
+- The cross-encoder reranker requires the optional `rerank` extra; without it the lexical
+  reranker is used and the measured trade-off still holds.
+
 ## Tests
 
-286 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+295 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

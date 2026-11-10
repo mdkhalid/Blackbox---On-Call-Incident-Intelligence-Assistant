@@ -17,6 +17,7 @@ from blackbox.api.sse import chunk_trails, public_update, sse_event, token_chunk
 from blackbox.graph import initial_state, stream_graph_events
 from blackbox.logging_setup import get_logger
 from blackbox.memory import build_context, count_tokens
+from blackbox.memory.updates import update_entity_memory
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["chat"])
@@ -133,6 +134,15 @@ async def chat(payload: ChatRequest, request: Request):
             budget = _merge_chunk_budget(bundle.report, result, services)
             memory.add_turn(message, answer)
             memory.last_budget = budget
+            entity_events = update_entity_memory(
+                memory.entity, user_message=message, assistant_message=answer
+            )
+            if entity_events:
+                logger.info(
+                    "entity_memory_updated",
+                    conversation_id=conversation_id,
+                    events=entity_events,
+                )
 
             await run_in_threadpool(
                 services.conversations.save_state, conversation_id, memory, budget

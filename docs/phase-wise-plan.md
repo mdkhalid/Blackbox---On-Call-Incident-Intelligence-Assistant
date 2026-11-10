@@ -2,9 +2,9 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅ done. Phase 9 ⬅ next.
+Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅, Phase 9 ✅. **All phases complete.**
 
-Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **286 passing**, `ruff` clean.
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **295 passing**, `ruff` clean.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -306,24 +306,47 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - **Injection detection flags rather than blocks by default**: incident text can legitimately
   contain words like "system" or "instructions", so false positives would harm real users.
 
-## Phase 9 — Docs & Submission ⬜ TODO
-- ◐ README — covers setup, architecture, both results tables, API, memory and viewer;
-  final polish remains.
-- ✅ `docs/chunking-strategy.md`, `docs/memory-design.md`, `docs/retrieval-results.md`,
-  `docs/groundedness-results.md` — generated from current code.
-- ⬜ `docs/architecture.png` (diagram; the repo currently has textual diagrams only).
-- ⬜ Demo video script: multi-turn conversation that triggers summary compression and ends
-  with a genuine no-answer question.
-- ⬜ Final submission pass: reproduce tests + eval from a clean `.venv`, tag/commit.
+## Phase 9 — Docs & Submission ✅ DONE
+- `docs/architecture.png`: full component/flow diagram, generated reproducibly by
+  `scripts/render_architecture.py` (`pip install -e ".[docs]"`).
+- `docs/demo-script.md`: scene-by-scene recording script. `scripts/demo_chat.py` reproduces
+  the nine-turn incident conversation and the no-answer question over the real HTTP API.
+- README: all nine phases, architecture embed, both results tables, API/hardening notes,
+  submission checklist and known limitations.
+- Entity memory is now updated from every chat turn (services, error codes, timeline
+  anchors, actions, and hypothesis status from explicit user statements), so conflict
+  resolution is demonstrable through the API and viewer, not only in unit tests.
+- Clean-room verification in a fresh venv at a short path (`.[dev,rag,db]`):
+  - 295 tests pass, ruff clean;
+  - corpus ingested from `seed/corpus`: 60 documents → 315 chunks;
+  - retrieval eval reproduced exactly (hybrid MRR 0.9214 / R@5 0.9067 / P@5 0.4548);
+  - groundedness subset (10 answerable + 5 unanswerable): answer rate 1.0, abstention 1.0,
+    draft claim support 1.0;
+  - live demo over HTTP: compression preserved the ruled-out deploy, the entity hypothesis
+    resolved `ruled_out → confirmed` with history, and the no-answer question took the
+    honest-failure path.
+- Tests: 295 total (+9), ruff clean.
 
-## Remaining work (as of Phase 8 close)
-| Phase | State | Remaining deliverables |
-|---|---|---|
-| 9 — Docs & Submission | ⬜ | `docs/architecture.png`; demo video script; final README polish; clean-room test + eval verification; final commit |
+### Decisions
+- **The diagram is generated, not hand-drawn**, so it cannot silently drift from the docs.
+- **The demo is a script, not a checklist**, so the recording is reproducible and exercises
+  compression, conflict resolution and honest failure on the real API.
+- **Entity updates read only the user's message** for hypothesis status: the assistant must
+  never confirm its own guess. Grounded claims remain the graph's responsibility.
+- **Known limitations are in the README**, not hidden: decode-level token streaming, offline
+  groundedness as a floor, single-instance rate limiting, templated `paraphrase` weakness.
 
-Bottom line: **one phase remains**. All implementation and evaluation work is complete and
-measured; Phase 9 is the diagram, demo script, documentation polish and clean-room
-submission pass.
+## Post-submission (optional bonus ideas)
+- Temporal weighting ("third time this quarter") and service aliases.
+- Related-incidents sidebar from entity overlap rather than text similarity.
+- Feedback capture stored against the retrieval that produced each answer.
+- Per-conversation cost report from the existing usage counters.
+- True provider token streaming with a shared JSON/answer streaming protocol.
+
+## Remaining work
+**None. All phases are complete.** The submission assets are the README, the four generated
+docs files, `docs/architecture.png`, `docs/demo-script.md`, the seeded corpus and the
+re-runnable eval scripts.
 
 ## Milestones
 - M1 (after Phase 2): retrieval works, eval numbers exist. ✅ **reached** —
@@ -333,20 +356,16 @@ submission pass.
   budgeted context.
 - M3 (after Phase 7): eval harness + trace viewer. ✅ **reached** — viewer (Phase 6),
   ground-checked answers, groundedness and abstention measured from real runs (Phase 7).
-- M4 (after Phase 9): submission-ready.
+- M4 (after Phase 9): submission-ready. ✅ **reached** — diagram, demo script, clean-room
+  verification and submission checklist.
 
-## Immediate next actions (Phase 9 entry)
-1. `docs/architecture.png`: render the high-level component/flow diagram as an image.
-2. Demo video script: ingest, a multi-turn incident conversation that triggers summary
-   compression, a genuine no-answer question, then replay the turn in the trace viewer.
-3. Final README pass: refreshed status, both results tables, setup and known limitations.
-4. Clean-room verification from a fresh `.venv`: tests, ingest, retrieval + groundedness
-   evals, one API turn.
-5. Final commit/tag and submission checklist.
-
-## Open questions to settle before Phase 9
-- Diagram source: keep a Mermaid/ASCII source beside the PNG so it can be regenerated.
-- The demo must show the honest-failure path live; use one of the measured unanswerable
-  questions so the script is reproducible.
-- Mention the offline-provider caveat next to the groundedness numbers in the submission
-  notes, not just in the generated report.
+## Final verification commands
+```bash
+python -m venv .venv
+source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e ".[dev,rag,db]"
+pytest -q                            # 295 tests
+python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep
+python -m blackbox.eval.groundedness_eval --write
+uvicorn blackbox.main:app --reload   # then POST /api/ingest and open /
+```

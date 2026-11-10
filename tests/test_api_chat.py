@@ -169,6 +169,24 @@ def test_injection_is_flagged_but_not_blocked(api_client):
     assert "ignore_instructions" in final["injection_flags"]
 
 
+def test_chat_updates_entity_memory_and_resolves_conflict(api_client):
+    _, first = chat(
+        api_client,
+        "We ruled out the 01:15 deploy as the cause; checkout-service ERR_POOL_EXHAUSTED.",
+    )
+    conversation_id = first["conversation_id"]
+    chat(api_client, "Actually, the 01:15 deploy was the cause.", conversation_id)
+
+    memory = api_client.get(f"/api/conversations/{conversation_id}/memory").json()
+    entity = memory["entity"]
+    assert "checkout-service" in entity["services"]
+    assert "ERR_POOL_EXHAUSTED" in entity["error_codes"]
+    deploy = [h for h in entity["hypotheses"] if "deploy" in h["text"].lower()]
+    assert len(deploy) == 1
+    assert deploy[0]["status"] == "confirmed"
+    assert deploy[0]["history"][0]["from"] == "ruled_out"
+
+
 def test_unknown_conversation_returns_404(api_client):
     assert api_client.get("/api/conversations/missing").status_code == 404
     assert api_client.get("/api/conversations/missing/trace").status_code == 404

@@ -1,5 +1,10 @@
 # High-Level Design — Blackbox
 
+![Blackbox architecture](architecture.png)
+
+Generated diagram: [architecture.png](architecture.png) (regenerate with
+`python scripts/render_architecture.py`).
+
 ## System Overview
 
 Blackbox is a corrective-RAG assistant for on-call engineers. It answers incident questions against a corpus of postmortems, runbooks, architecture docs, and alert definitions. It is honest about retrieval failure and preserves critical facts across long conversations.
