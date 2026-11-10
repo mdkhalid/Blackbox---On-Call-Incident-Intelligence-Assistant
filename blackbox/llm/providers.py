@@ -9,12 +9,21 @@ from blackbox.llm.base import LLMResponse
 
 
 class OpenAIProvider:
-    def __init__(self, *, api_key: str, default_model: str = "gpt-4o-mini") -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        default_model: str = "gpt-4o-mini",
+        timeout_s: float = 30.0,
+        max_retries: int = 2,
+    ) -> None:
         from openai import OpenAI
 
         self.name = "openai"
         self.default_model = default_model
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(
+            api_key=api_key, timeout=timeout_s, max_retries=max_retries
+        )
 
     def complete(
         self,
@@ -49,12 +58,21 @@ class OpenAIProvider:
 
 
 class AnthropicProvider:
-    def __init__(self, *, api_key: str, default_model: str = "claude-3-5-haiku-20241022") -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        default_model: str = "claude-3-5-haiku-20241022",
+        timeout_s: float = 30.0,
+        max_retries: int = 2,
+    ) -> None:
         from anthropic import Anthropic
 
         self.name = "anthropic"
         self.default_model = default_model
-        self._client = Anthropic(api_key=api_key)
+        self._client = Anthropic(
+            api_key=api_key, timeout=timeout_s, max_retries=max_retries
+        )
 
     def complete(
         self,

@@ -50,6 +50,7 @@ chunking:
 
 guardrails:
   max_message_chars: 4000
+  max_request_bytes: 32768
   rate_limit_rps: 5
   max_llm_calls_per_turn: 6
   max_answer_tokens: 1024

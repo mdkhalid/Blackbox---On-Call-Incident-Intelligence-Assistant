@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from blackbox import __version__
 from blackbox.api.middleware import (
+    BodyLimitMiddleware,
     LoggingMiddleware,
     RateLimitMiddleware,
     RequestIdMiddleware,
@@ -41,6 +42,10 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     app.add_middleware(
         RateLimitMiddleware,
         rate_limit=app.state.services.config.guardrails.rate_limit_rps,
+    )
+    app.add_middleware(
+        BodyLimitMiddleware,
+        max_bytes=app.state.services.config.guardrails.max_request_bytes,
     )
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)

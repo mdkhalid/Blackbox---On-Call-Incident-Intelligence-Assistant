@@ -77,6 +77,24 @@ def test_strict_injection_mode_rejects_before_runtime(tmp_path, settings):
     assert response.status_code == 400
 
 
+def test_body_limit_rejects_before_parsing(tmp_path, settings):
+    config = AppConfig(
+        guardrails=GuardrailsConfig(max_request_bytes=100, rate_limit_rps=100)
+    )
+    client = TestClient(create_app(settings, services=_services(tmp_path, settings, config)))
+    response = client.post("/api/chat", json={"message": "x" * 1000})
+    assert response.status_code == 413
+    assert response.headers["X-Max-Body-Bytes"] == "100"
+
+
+def test_llm_timeout_and_retries_are_configurable(monkeypatch):
+    monkeypatch.setenv("LLM_TIMEOUT_S", "12.5")
+    monkeypatch.setenv("LLM_MAX_RETRIES", "4")
+    settings = Settings()
+    assert settings.llm_timeout_s == 12.5
+    assert settings.llm_max_retries == 4
+
+
 def test_readiness_reports_storage_unavailable(tmp_path, settings):
     services = _services(tmp_path, settings, AppConfig())
 

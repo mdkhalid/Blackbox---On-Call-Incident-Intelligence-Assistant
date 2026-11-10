@@ -39,27 +39,43 @@ def build_llm_provider(
         key = api_key or settings.openai_api_key
         if not key:
             return _missing_key_fallback(settings, explicit, "OPENAI_API_KEY")
-        return OpenAIProvider(api_key=key, default_model=model or settings.grading_model)
+        return OpenAIProvider(
+            api_key=key,
+            default_model=model or settings.grading_model,
+            timeout_s=settings.llm_timeout_s,
+            max_retries=settings.llm_max_retries,
+        )
     if choice == "anthropic":
         key = api_key or settings.anthropic_api_key
         if not key:
             return _missing_key_fallback(settings, explicit, "ANTHROPIC_API_KEY")
-        return AnthropicProvider(api_key=key, default_model=model or settings.grading_model)
+        return AnthropicProvider(
+            api_key=key,
+            default_model=model or settings.grading_model,
+            timeout_s=settings.llm_timeout_s,
+            max_retries=settings.llm_max_retries,
+        )
     if choice == "auto":
         if settings.llm_provider == "anthropic" and settings.anthropic_api_key:
             return AnthropicProvider(
                 api_key=settings.anthropic_api_key,
                 default_model=model or settings.grading_model,
+                timeout_s=settings.llm_timeout_s,
+                max_retries=settings.llm_max_retries,
             )
         if settings.openai_api_key:
             return OpenAIProvider(
                 api_key=settings.openai_api_key,
                 default_model=model or settings.grading_model,
+                timeout_s=settings.llm_timeout_s,
+                max_retries=settings.llm_max_retries,
             )
         if settings.anthropic_api_key:
             return AnthropicProvider(
                 api_key=settings.anthropic_api_key,
                 default_model=model or settings.grading_model,
+                timeout_s=settings.llm_timeout_s,
+                max_retries=settings.llm_max_retries,
             )
         return FakeLLMProvider()
     raise ValueError(f"unknown LLM provider: {provider}")

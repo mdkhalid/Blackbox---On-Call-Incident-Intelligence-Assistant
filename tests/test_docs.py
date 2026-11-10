@@ -7,6 +7,8 @@ REQUIRED = [
     "docs/retrieval-results.md",
     "docs/groundedness-results.md",
     "docs/demo-script.md",
+    "docs/scaling-and-production-readiness.md",
+    "docs/development-tracker.md",
 ]
 
 

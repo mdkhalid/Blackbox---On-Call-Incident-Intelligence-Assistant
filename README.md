@@ -22,6 +22,18 @@ tracks progress.
 | 8 | Observability, caching, hardening | ✅ |
 | 9 | Architecture diagram, demo script, submission pass | ✅ |
 
+## Production development
+
+The original assignment is complete. Work beyond it is tracked in two living documents:
+
+- [`docs/scaling-and-production-readiness.md`](docs/scaling-and-production-readiness.md) —
+  target architecture, capacity/SLOs, tenancy, retrieval/index lifecycle, Kubernetes,
+  multi-region and the phased production plan.
+- [`docs/development-tracker.md`](docs/development-tracker.md) — phase-by-phase checklist,
+  status dashboard, decision log and change log. Update this file with every production PR.
+
+Current production phase: **Phase 1 (foundations) in progress**.
+
 ## Architecture
 
 ![Blackbox architecture](docs/architecture.png)
@@ -44,7 +56,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 300 tests
+pytest -q                            # 303 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -370,14 +382,16 @@ python -m blackbox.eval.groundedness_eval --write
   reranker is used and the measured trade-off still holds.
 - **No authentication.** v1 is single-tenant by design; put it behind an authenticated
   proxy before exposing conversations or ingest publicly.
-- Request-body size is enforced after JSON parsing (`413` from the chat route). Deploy
-  behind a reverse proxy with a hard body limit as well.
+- `Content-Length` is capped before JSON parsing (`413`); chunked/streamed requests still
+  need a hard body limit at the reverse proxy.
+- Hosted LLM SDK calls receive the configured timeout/retries; a circuit-breaker/semaphore
+  wrapper is still pending (Phase 1).
 - Readiness checks the conversation store; Redis is optional and its availability is
   reported only after the runtime is initialized.
 
 ## Tests
 
-300 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+303 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

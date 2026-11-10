@@ -37,6 +37,7 @@ class AppServices:
     runtime_ready: bool = False
     storage_backend: str = ""
     cache_backend: Any | None = None
+    lock_engine: Any | None = None
 
     ingest_lock: threading.Lock = field(default_factory=threading.Lock)
     eval_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -44,6 +45,7 @@ class AppServices:
 
     _storage_lock: threading.Lock = field(default_factory=threading.Lock)
     _runtime_lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock_engine_lock: threading.Lock = field(default_factory=threading.Lock)
 
     # ---- storage ----
 
@@ -158,7 +160,11 @@ class AppServices:
         )
 
         if self.storage_backend == "postgres" and hasattr(self.conversations, "engine"):
-            lock = await acquire_postgres_lock(self.conversations.engine, conversation_id)
+            if self.lock_engine is None:
+                with self._lock_engine_lock:
+                    if self.lock_engine is None:
+                        self.lock_engine = build_lock_engine(self.settings.database_url)
+            lock = await acquire_postgres_lock(self.lock_engine, conversation_id)
             if lock is None:
                 raise ConversationBusy("conversation already has an active turn")
             return lock
@@ -197,3 +203,13 @@ def _sqlite_url(filename: str) -> str:
 
 def _backend_name(settings: Settings) -> str:
     return "postgres" if (settings.database_url or "").startswith("postgres") else "sqlite"
+
+
+def build_lock_engine(db_url: str | None):
+    """Dedicated engine for advisory locks: no pooling, no connection held from the app pool."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import NullPool
+
+    if not db_url:
+        raise ValueError("a database URL is required for Postgres advisory locks")
+    return create_engine(db_url, poolclass=NullPool, future=True)

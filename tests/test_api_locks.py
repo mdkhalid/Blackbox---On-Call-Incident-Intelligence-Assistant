@@ -7,7 +7,7 @@ from blackbox.api.locks import (
     acquire_postgres_lock,
     advisory_key,
 )
-from blackbox.api.services import AppServices
+from blackbox.api.services import AppServices, build_lock_engine
 from blackbox.config.settings import AppConfig
 
 
@@ -80,3 +80,13 @@ async def test_postgres_lock_returns_none_when_busy():
     lock = await acquire_postgres_lock(engine, "conv-1")
     assert lock is None
     assert engine.connection.closed is True
+
+
+def test_lock_engine_uses_null_pool():
+    from sqlalchemy.pool import NullPool
+
+    engine = build_lock_engine("sqlite:///:memory:")
+    try:
+        assert isinstance(engine.pool, NullPool)
+    finally:
+        engine.dispose()

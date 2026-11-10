@@ -51,6 +51,39 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class BodyLimitMiddleware(BaseHTTPMiddleware):
+    """Reject oversized API bodies before JSON parsing.
+
+    Chunked requests without Content-Length still need an ASGI/proxy limit; this guards the
+    common case and keeps a single huge chat payload from being materialized in memory.
+    """
+
+    def __init__(self, app, *, max_bytes: int = 32768) -> None:
+        super().__init__(app)
+        self.max_bytes = max(1, max_bytes)
+
+    async def dispatch(self, request: Request, call_next):
+        if (
+            request.method in {"POST", "PUT", "PATCH"}
+            and request.url.path.startswith("/api/")
+        ):
+            raw = request.headers.get("content-length")
+            if raw is not None:
+                try:
+                    length = int(raw)
+                except ValueError:
+                    return JSONResponse(
+                        {"detail": "invalid Content-Length"}, status_code=400
+                    )
+                if length > self.max_bytes:
+                    return JSONResponse(
+                        {"detail": "request body too large"},
+                        status_code=413,
+                        headers={"X-Max-Body-Bytes": str(self.max_bytes)},
+                    )
+        return await call_next(request)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """In-process sliding-window limiter per client IP.
 

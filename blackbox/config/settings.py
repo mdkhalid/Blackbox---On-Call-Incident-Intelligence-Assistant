@@ -137,6 +137,7 @@ class ChunkingConfig(BaseModel):
 
 class GuardrailsConfig(BaseModel):
     max_message_chars: int = 4000
+    max_request_bytes: int = 32768
     rate_limit_rps: int = 5
     max_llm_calls_per_turn: int = 6
     max_answer_tokens: int = 1024
@@ -144,7 +145,11 @@ class GuardrailsConfig(BaseModel):
     secret_scrub: bool = True
 
     @field_validator(
-        "max_message_chars", "rate_limit_rps", "max_llm_calls_per_turn", "max_answer_tokens"
+        "max_message_chars",
+        "max_request_bytes",
+        "rate_limit_rps",
+        "max_llm_calls_per_turn",
+        "max_answer_tokens",
     )
     @classmethod
     def positive(cls, v):
@@ -248,6 +253,22 @@ class Settings(BaseSettings):
     )
     config_path: str = Field(default="blackbox/config/config.yaml", alias="CONFIG_PATH")
     cors_origins: str = Field(default="", alias="CORS_ORIGINS")
+    llm_timeout_s: float = Field(default=30.0, alias="LLM_TIMEOUT_S")
+    llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
+
+    @field_validator("llm_timeout_s")
+    @classmethod
+    def positive_timeout(cls, v):
+        if v <= 0:
+            raise ValueError("LLM_TIMEOUT_S must be > 0")
+        return v
+
+    @field_validator("llm_max_retries")
+    @classmethod
+    def non_negative_retries(cls, v):
+        if v < 0:
+            raise ValueError("LLM_MAX_RETRIES must be >= 0")
+        return v
 
     @property
     def cors_origin_list(self) -> list[str]:
