@@ -23,9 +23,16 @@ _ADMIN_AUTH = Depends(require_roles("admin"))
 def ingest(
     payload: IngestRequest,
     request: Request,
-    _principal: Principal = _ADMIN_AUTH,
+    principal: Principal = _ADMIN_AUTH,
 ):
     services = get_services(request)
+    logger.info(
+        "audit_admin_action",
+        action="ingest",
+        tenant_id=principal.tenant_id,
+        subject=principal.subject,
+        corpus_dir=payload.corpus_dir,
+    )
     try:
         services.ensure_runtime()
     except Exception as exc:
@@ -68,9 +75,16 @@ def ingest(
 def run_evaluation(
     payload: EvalRequest,
     request: Request,
-    _principal: Principal = _ADMIN_AUTH,
+    principal: Principal = _ADMIN_AUTH,
 ):
     services = get_services(request)
+    logger.info(
+        "audit_admin_action",
+        action="eval",
+        tenant_id=principal.tenant_id,
+        subject=principal.subject,
+        k=payload.k,
+    )
     try:
         services.ensure_runtime()
     except Exception as exc:

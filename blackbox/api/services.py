@@ -48,6 +48,8 @@ class AppServices:
     _runtime_lock: threading.Lock = field(default_factory=threading.Lock)
     _lock_engine_lock: threading.Lock = field(default_factory=threading.Lock)
     _rate_limiter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _tenant_counts: dict[str, int] = field(default_factory=dict)
+    _tenant_counts_lock: threading.Lock = field(default_factory=threading.Lock)
 
     # ---- storage ----
 
@@ -97,10 +99,20 @@ class AppServices:
             from blackbox.ingestion.entity_extraction.store import SqlAlchemyEntityStore
             from blackbox.llm import build_llm_provider
             from blackbox.llm.cached import CachedLLMProvider
+            from blackbox.llm.resilient import ResilientLLMProvider
             from blackbox.retrieval import build_default_retriever
 
             cache = build_cache(self.settings, self.config)
-            retriever = build_default_retriever(settings=self.settings)
+            retrieval_config = self.config.retrieval
+            if self.settings.embedding_provider_override:
+                retrieval_config = retrieval_config.model_copy(
+                    update={
+                        "embedding_provider": self.settings.embedding_provider_override
+                    }
+                )
+            retriever = build_default_retriever(
+                settings=self.settings, retrieval_config=retrieval_config
+            )
             if cache is not None:
                 retriever.vectorstore.embedding_provider = CachedEmbeddingProvider(
                     retriever.vectorstore.embedding_provider,
@@ -111,6 +123,14 @@ class AppServices:
                 retriever.cache_ttl_s = self.config.redis.ttl_retrieval_s
 
             llm = build_llm_provider(self.settings)
+            llm = ResilientLLMProvider(
+                llm,
+                timeout_s=self.settings.llm_timeout_s,
+                max_retries=self.settings.llm_max_retries,
+                max_concurrency=self.settings.llm_max_concurrency,
+                failure_threshold=self.settings.llm_circuit_threshold,
+                reset_s=self.settings.llm_circuit_reset_s,
+            )
             if (
                 cache is not None
                 and self.settings.env != "prod"
@@ -199,6 +219,24 @@ class AppServices:
                 self.settings, self.config, fallback
             )
             return self.rate_limiter
+
+    def try_acquire_tenant(self, tenant_id: str) -> bool:
+        """Per-process admission control for concurrent turns of one tenant."""
+        limit = self.config.guardrails.max_concurrent_turns_per_tenant
+        with self._tenant_counts_lock:
+            count = self._tenant_counts.get(tenant_id, 0)
+            if count >= limit:
+                return False
+            self._tenant_counts[tenant_id] = count + 1
+            return True
+
+    def release_tenant(self, tenant_id: str) -> None:
+        with self._tenant_counts_lock:
+            count = self._tenant_counts.get(tenant_id, 0)
+            if count <= 1:
+                self._tenant_counts.pop(tenant_id, None)
+            else:
+                self._tenant_counts[tenant_id] = count - 1
 
 
 def build_services(settings: Settings) -> AppServices:

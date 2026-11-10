@@ -141,6 +141,7 @@ class GuardrailsConfig(BaseModel):
     rate_limit_rps: int = 5
     max_llm_calls_per_turn: int = 6
     max_answer_tokens: int = 1024
+    max_concurrent_turns_per_tenant: int = 8
     strict_injection_block: bool = False
     secret_scrub: bool = True
 
@@ -150,6 +151,7 @@ class GuardrailsConfig(BaseModel):
         "rate_limit_rps",
         "max_llm_calls_per_turn",
         "max_answer_tokens",
+        "max_concurrent_turns_per_tenant",
     )
     @classmethod
     def positive(cls, v):
@@ -247,6 +249,9 @@ class Settings(BaseSettings):
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     chroma_persist_dir: str = Field(default="./data/chroma", alias="CHROMA_PERSIST_DIR")
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
+    embedding_provider_override: str | None = Field(
+        default=None, alias="EMBEDDING_PROVIDER"
+    )
     generation_model: str = Field(default="gpt-4o", alias="GENERATION_MODEL")
     grading_model: str = Field(default="gpt-4o-mini", alias="GRADING_MODEL")
     rewrite_model: str = Field(default="gpt-4o-mini", alias="REWRITE_MODEL")
@@ -257,6 +262,9 @@ class Settings(BaseSettings):
     cors_origins: str = Field(default="", alias="CORS_ORIGINS")
     llm_timeout_s: float = Field(default=30.0, alias="LLM_TIMEOUT_S")
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
+    llm_max_concurrency: int = Field(default=8, alias="LLM_MAX_CONCURRENCY")
+    llm_circuit_threshold: int = Field(default=5, alias="LLM_CIRCUIT_THRESHOLD")
+    llm_circuit_reset_s: float = Field(default=30.0, alias="LLM_CIRCUIT_RESET_S")
 
     # Authentication. Disabled by default only for local development; required in prod.
     auth_enabled: bool = Field(default=False, alias="AUTH_ENABLED")
@@ -278,6 +286,20 @@ class Settings(BaseSettings):
     def non_negative_retries(cls, v):
         if v < 0:
             raise ValueError("LLM_MAX_RETRIES must be >= 0")
+        return v
+
+    @field_validator("llm_max_concurrency", "llm_circuit_threshold")
+    @classmethod
+    def positive_int(cls, v):
+        if v < 1:
+            raise ValueError("must be >= 1")
+        return v
+
+    @field_validator("llm_circuit_reset_s")
+    @classmethod
+    def non_negative_reset(cls, v):
+        if v < 0:
+            raise ValueError("LLM_CIRCUIT_RESET_S must be >= 0")
         return v
 
     @property

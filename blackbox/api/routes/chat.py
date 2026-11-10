@@ -91,6 +91,12 @@ async def chat(
 
     cache = services.cache_backend
     idempotency_cache_key: str | None = None
+    idempotency_lock_key: str | None = None
+
+    async def _release_idempotency_lock() -> None:
+        if idempotency_lock_key and cache is not None:
+            await run_in_threadpool(cache.delete, idempotency_lock_key)
+
     if idempotency_key is not None:
         if not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
             raise HTTPException(status_code=400, detail="invalid Idempotency-Key")
@@ -103,10 +109,30 @@ async def chat(
                     media_type="text/event-stream",
                     headers=_SSE_HEADERS,
                 )
+            idempotency_lock_key = f"idem-lock:{tenant_id}:{idempotency_key}"
+            acquired = await run_in_threadpool(
+                cache.set_if_absent, idempotency_lock_key, "1", 60
+            )
+            if not acquired:
+                raise HTTPException(
+                    status_code=409,
+                    detail="request with this Idempotency-Key is already in progress",
+                    headers={"Retry-After": "1"},
+                )
+
+    if not services.try_acquire_tenant(tenant_id):
+        await _release_idempotency_lock()
+        raise HTTPException(
+            status_code=429,
+            detail="tenant concurrency limit reached",
+            headers={"Retry-After": "1"},
+        )
 
     try:
         turn_lock = await services.acquire_turn_lock(conversation_id, tenant_id)
     except ConversationBusy as exc:
+        services.release_tenant(tenant_id)
+        await _release_idempotency_lock()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     try:
@@ -117,9 +143,13 @@ async def chat(
         )
     except ConversationTenantMismatch as exc:
         await turn_lock.release()
+        services.release_tenant(tenant_id)
+        await _release_idempotency_lock()
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except Exception:
         await turn_lock.release()
+        services.release_tenant(tenant_id)
+        await _release_idempotency_lock()
         raise
 
     async def event_stream():
@@ -213,6 +243,13 @@ async def chat(
                     final_payload,
                     services.config.redis.ttl_idempotency_s,
                 )
+            logger.info(
+                "audit_chat",
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                status=result.get("status"),
+                tokens=(result.get("usage") or {}).get("total_tokens"),
+            )
             yield sse_event("final", final_payload)
         except Exception as exc:
             logger.exception("chat_stream_failed", conversation_id=conversation_id)
@@ -222,6 +259,8 @@ async def chat(
             )
         finally:
             await turn_lock.release()
+            services.release_tenant(tenant_id)
+            await _release_idempotency_lock()
 
     return StreamingResponse(
         event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS

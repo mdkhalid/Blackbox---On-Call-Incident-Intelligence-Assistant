@@ -20,6 +20,10 @@ logger = get_logger(__name__)
 class CacheBackend(Protocol):
     def get(self, key: str) -> Any | None: ...
     def set(self, key: str, value: Any, ttl_s: float | None = None) -> None: ...
+    def set_if_absent(
+        self, key: str, value: Any, ttl_s: float | None = None
+    ) -> bool: ...
+    def delete(self, key: str) -> None: ...
     def clear_prefix(self, prefix: str) -> None: ...
     def clear(self) -> None: ...
 
@@ -55,6 +59,27 @@ class TTLCache:
             self._data.move_to_end(key)
             while len(self._data) > self.max_entries:
                 self._data.popitem(last=False)
+
+    def set_if_absent(
+        self, key: str, value: Any, ttl_s: float | None = None
+    ) -> bool:
+        ttl = self.default_ttl_s if ttl_s is None else float(ttl_s)
+        if ttl <= 0:
+            return False
+        now = time.monotonic()
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is not None and entry[0] > now:
+                return False
+            self._data[key] = (now + ttl, value)
+            self._data.move_to_end(key)
+            while len(self._data) > self.max_entries:
+                self._data.popitem(last=False)
+            return True
+
+    def delete(self, key: str) -> None:
+        with self._lock:
+            self._data.pop(key, None)
 
     def clear_prefix(self, prefix: str) -> None:
         with self._lock:
@@ -103,6 +128,30 @@ class RedisCache:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("cache_set_failed", error=str(exc))
+
+    def set_if_absent(
+        self, key: str, value: Any, ttl_s: float | None = None
+    ) -> bool:
+        ttl = self.default_ttl_s if ttl_s is None else float(ttl_s)
+        if ttl <= 0:
+            return False
+        try:
+            result = self.client.set(
+                self._full(key),
+                json.dumps(value, default=str),
+                nx=True,
+                ex=max(1, int(ttl)),
+            )
+        except Exception as exc:  # noqa: BLE001 - fail open for idempotency locks
+            logger.warning("cache_setnx_failed", error=str(exc))
+            return True
+        return bool(result)
+
+    def delete(self, key: str) -> None:
+        try:
+            self.client.delete(self._full(key))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cache_delete_failed", error=str(exc))
 
     def clear_prefix(self, prefix: str) -> None:
         try:

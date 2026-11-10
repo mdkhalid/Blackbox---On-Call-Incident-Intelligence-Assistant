@@ -18,6 +18,14 @@ class FakeRedis:
         self.data[key] = value
         self.ttls[key] = ttl
 
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        if ex is not None:
+            self.ttls[key] = ex
+        return True
+
     def scan_iter(self, match):
         prefix = match.rstrip("*")
         return [key for key in list(self.data) if key.startswith(prefix)]
@@ -25,6 +33,23 @@ class FakeRedis:
     def delete(self, *keys):
         for key in keys:
             self.data.pop(key, None)
+
+
+def test_ttl_set_if_absent_and_delete():
+    cache = TTLCache(default_ttl_s=60)
+    assert cache.set_if_absent("lock", "1") is True
+    assert cache.set_if_absent("lock", "2") is False
+    cache.delete("lock")
+    assert cache.set_if_absent("lock", "3") is True
+
+
+def test_redis_set_if_absent_and_delete():
+    client = FakeRedis()
+    cache = RedisCache(client, prefix="bb:")
+    assert cache.set_if_absent("lock", "1", 60) is True
+    assert cache.set_if_absent("lock", "2", 60) is False
+    cache.delete("lock")
+    assert client.get("bb:lock") is None
 
 
 def test_ttl_cache_expires(monkeypatch):

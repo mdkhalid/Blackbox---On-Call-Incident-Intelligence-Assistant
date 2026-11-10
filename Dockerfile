@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the package (and its static/config/eval data) at build time.
 COPY pyproject.toml ./
 COPY blackbox ./blackbox
-RUN pip install --upgrade pip && pip install -e ".[dev,rag,db]" 2>/dev/null || pip install -e ".[rag,db]"
+RUN pip install --upgrade pip && pip install -e ".[rag,db]"
 
 COPY seed ./seed
 COPY scripts ./scripts
@@ -24,7 +24,7 @@ COPY .env.example ./.env.example
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
 CMD ["uvicorn", "blackbox.main:app", "--host", "0.0.0.0", "--port", "8000"]

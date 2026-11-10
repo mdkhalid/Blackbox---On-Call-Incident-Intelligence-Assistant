@@ -54,6 +54,7 @@ guardrails:
   rate_limit_rps: 5
   max_llm_calls_per_turn: 6
   max_answer_tokens: 1024
+  max_concurrent_turns_per_tenant: 8
   strict_injection_block: false
   secret_scrub: true
 

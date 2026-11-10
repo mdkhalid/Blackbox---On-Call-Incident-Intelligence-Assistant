@@ -1,7 +1,7 @@
 """Retrieval layer: hybrid dense + sparse search with fusion, rerank and filtering."""
 from __future__ import annotations
 
-from blackbox.config.settings import Settings, get_config, get_settings
+from blackbox.config.settings import RetrievalConfig, Settings, get_config, get_settings
 from blackbox.ingestion.embeddings import build_embedding_provider
 from blackbox.ingestion.vectorstore import ChromaVectorStore
 from blackbox.retrieval.dense import DenseRetriever
@@ -42,6 +42,7 @@ def build_default_retriever(
     *,
     persist_dir: str | None = None,
     collection_name: str | None = None,
+    retrieval_config: RetrievalConfig | None = None,
 ) -> HybridRetriever:
     """Construct the retriever from env settings plus YAML tunables.
 
@@ -49,8 +50,7 @@ def build_default_retriever(
     pipeline and producing comparable numbers is not an accident.
     """
     settings = settings or get_settings()
-    cfg = get_config()
-    rc = cfg.retrieval
+    rc = retrieval_config if retrieval_config is not None else get_config().retrieval
 
     embedding_provider = build_embedding_provider(
         rc.embedding_provider,

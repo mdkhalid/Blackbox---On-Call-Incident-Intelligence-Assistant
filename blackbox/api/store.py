@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from sqlalchemy import JSON, Column, Integer, String, Text, create_engine, inspect, text
+from sqlalchemy import JSON, Column, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from blackbox.memory import ConversationMemory
@@ -139,23 +139,6 @@ class SqlAlchemyConversationRepository:
         method remains for fast test setup and a zero-friction local clone.
         """
         Base.metadata.create_all(self.engine)
-        # Lightweight forward migrations for stores created before these columns existed.
-        self._ensure_column(
-            "conversations", "tenant_id", "VARCHAR DEFAULT 'default' NOT NULL"
-        )
-        self._ensure_column(
-            "conversation_turns", "tenant_id", "VARCHAR DEFAULT 'default' NOT NULL"
-        )
-        self._ensure_column("conversation_turns", "chunks_json", "JSON")
-
-    def _ensure_column(self, table: str, column: str, ddl: str) -> None:
-        if not inspect(self.engine).has_table(table):
-            return
-        columns = {item["name"] for item in inspect(self.engine).get_columns(table)}
-        if column in columns:
-            return
-        with self.engine.begin() as connection:
-            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
     def _session(self) -> Session:
         return self.SessionLocal()

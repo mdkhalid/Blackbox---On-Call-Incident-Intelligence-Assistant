@@ -224,6 +224,39 @@ def test_invalid_idempotency_key_is_400(api_client):
     assert response.status_code == 400
 
 
+def test_in_flight_idempotency_key_returns_409(api_client, api_services):
+    api_services.cache_backend.set("idem-lock:default:busy-key", "1", 60)
+    response = api_client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        headers={"Idempotency-Key": "busy-key"},
+    )
+    assert response.status_code == 409
+    assert response.headers["Retry-After"] == "1"
+
+
+def test_idempotency_lock_is_released(api_client, api_services):
+    api_client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        headers={"Idempotency-Key": "lock-check"},
+    )
+    assert api_services.cache_backend.get("idem-lock:default:lock-check") is None
+
+
+def test_tenant_concurrency_limit_returns_429(api_client, api_services):
+    limit = api_services.config.guardrails.max_concurrent_turns_per_tenant
+    for _ in range(limit):
+        assert api_services.try_acquire_tenant("default")
+    try:
+        response = api_client.post("/api/chat", json={"message": "hello"})
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "1"
+    finally:
+        for _ in range(limit):
+            api_services.release_tenant("default")
+
+
 def test_unknown_conversation_returns_404(api_client):
     assert api_client.get("/api/conversations/missing").status_code == 404
     assert api_client.get("/api/conversations/missing/trace").status_code == 404
