@@ -132,6 +132,7 @@ async def chat(payload: ChatRequest, request: Request):
                 result.get("status") or "error",
                 result.get("trace") or [],
                 budget,
+                result.get("chunks") or [],
             )
 
             yield sse_event(

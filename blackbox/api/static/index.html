@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blackbox Trace Viewer</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #171e26; --panel2: #1d2632; --line: #2b3746;
+    --text: #d8e1ea; --muted: #8c9bad; --accent: #4fc3f7; --ok: #66bb6a;
+    --warn: #ffb74d; --bad: #ef5350; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header.top { padding: 14px 20px; border-bottom: 1px solid var(--line);
+               display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header.top h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  header.top .hint { color: var(--muted); font-size: 12px; }
+  .controls { display: grid; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+              background: var(--panel); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, textarea, button { background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: inherit; }
+  input { min-width: 260px; }
+  textarea { flex: 1 1 420px; min-height: 38px; resize: vertical; }
+  button { cursor: pointer; border-color: #355066; color: #cfe9f7; }
+  button:hover { background: #24384a; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: #14384c; border-color: #2f6d8f; }
+  #status { color: var(--muted); font-size: 12px; min-height: 16px; }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 150px); }
+  aside { border-right: 1px solid var(--line); padding: 14px; overflow: auto; }
+  #detail { padding: 14px 20px 40px; overflow: auto; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .09em;
+       color: var(--muted); margin: 18px 0 8px; }
+  .turn-list { display: grid; gap: 6px; }
+  .turn-btn { text-align: left; padding: 8px 10px; line-height: 1.35; }
+  .turn-btn.active { outline: 2px solid #2f6d8f; background: #1b3444; }
+  .turn-btn .u { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .turn-btn .m { color: var(--muted); font-size: 11px; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
+           border: 1px solid var(--line); color: var(--muted); }
+  .badge.answered, .badge.direct { color: var(--ok); border-color: #2e5d33; }
+  .badge.honest_failure, .badge.error { color: var(--bad); border-color: #6b2b2b; }
+  .chip { display: inline-block; padding: 3px 9px; border-radius: 12px; margin: 2px 4px 2px 0;
+          background: #16303f; border: 1px solid #2f6d8f; font-family: var(--mono); font-size: 12px; }
+  .chip.rewrite { background: #3a2f14; border-color: #7a5c1e; color: var(--warn); }
+  .chip.honest_failure, .chip.ground_check.fail { background: #3a1c1c; border-color: #7a2b2b; color: var(--bad); }
+  .chip small { color: var(--muted); margin-left: 4px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; font-size: 12px; }
+  .kv .k { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: right; }
+  th { color: var(--muted); font-weight: 600; text-align: right; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  td.mono { font-family: var(--mono); }
+  .bar { height: 8px; background: #0b1015; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin: 6px 0; }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #2f6d8f, #4fc3f7); }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono);
+        font-size: 12px; background: #0b1015; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+  .muted { color: var(--muted); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Blackbox Trace Viewer</h1>
+  <span class="hint">graph path · retrieved chunks · grading · ground check · token budget</span>
+</header>
+
+<section class="controls">
+  <div class="row">
+    <input id="cid" placeholder="conversation id (leave blank to start a new one)" autocomplete="off">
+    <button id="load">Load trace</button>
+    <button id="reload-memory" title="Reload memory and budget for this conversation">Refresh memory</button>
+  </div>
+  <form id="live-form" class="row">
+    <textarea id="message" placeholder="Ask an incident question (live SSE turn)…"></textarea>
+    <button id="ask" class="primary" type="submit">Ask live</button>
+  </form>
+  <div id="status" aria-live="polite"></div>
+</section>
+
+<main>
+  <aside>
+    <h2>Turns</h2>
+    <div id="turns" class="turn-list"><span class="muted">No conversation loaded.</span></div>
+    <h2>Memory</h2>
+    <div id="memory" class="panel muted">Entity memory, summary and working turns appear here.</div>
+  </aside>
+  <section id="detail">
+    <div class="panel muted">Enter a conversation id to replay stored turns, or ask a live question.</div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const esc = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+const fmt = (v) => (typeof v === "number" ? v.toFixed(4) : esc(v));
+const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); return node; };
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const section = (title, body) => {
+  const wrap = document.createElement("section");
+  wrap.appendChild(el("h2", null, title));
+  wrap.appendChild(body);
+  return wrap;
+};
+
+let state = { conversationId: null, turns: [], memory: null };
+
+function setStatus(text, bad) {
+  const s = $("status");
+  s.textContent = text || "";
+  s.style.color = bad ? "var(--bad)" : "var(--muted)";
+}
+
+async function getJSON(path) {
+  const response = await fetch(path, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(path + " → HTTP " + response.status);
+  return response.json();
+}
+
+async function loadConversation(id) {
+  if (!id) { setStatus("Enter or start a conversation first.", true); return; }
+  setStatus("Loading " + id + "…");
+  try {
+    const [conversation, trace, memory] = await Promise.all([
+      getJSON("/api/conversations/" + encodeURIComponent(id)),
+      getJSON("/api/conversations/" + encodeURIComponent(id) + "/trace"),
+      getJSON("/api/conversations/" + encodeURIComponent(id) + "/memory"),
+    ]);
+    state = { conversationId: id, turns: trace.turns || [], memory };
+    $("cid").value = id;
+    renderTurns();
+    renderMemory(memory, conversation);
+    const last = state.turns.length - 1;
+    if (last >= 0) renderTurn(state.turns[last], last);
+    setStatus(conversation.turns + " turn(s) · status " + esc(conversation.last_status));
+  } catch (error) {
+    setStatus(error.message, true);
+    clear($("turns")).appendChild(el("span", "muted", "No conversation found."));
+  }
+}
+
+function renderTurns() {
+  const list = clear($("turns"));
+  if (!state.turns.length) {
+    list.appendChild(el("span", "muted", "No turns stored."));
+    return;
+  }
+  state.turns.forEach((turn, index) => {
+    const button = el("button", "turn-btn");
+    button.appendChild(el("span", "u", turn.user_message || "(empty)"));
+    const meta = el("span", "m");
+    meta.textContent = "#" + (index + 1) + " · ";
+    meta.appendChild(el("span", "badge " + (turn.status || ""), turn.status || "unknown"));
+    button.appendChild(meta);
+    button.onclick = () => renderTurn(turn, index);
+    list.appendChild(button);
+  });
+}
+
+function pathChips(trace) {
+  const wrap = el("div", "panel");
+  let last = "";
+  (trace || []).forEach((event) => {
+    const name = event.node || "?";
+    if (!name) return;
+    const chip = el("span", "chip " + name);
+    let label = name;
+    if (name === "grade" && event.attempt) label += " #" + event.attempt;
+    if (name === "rewrite" && event.attempt) label += " #" + event.attempt;
+    chip.textContent = label;
+    if (name === "ground_check" && event.status !== "answered") chip.classList.add("fail");
+    if (typeof event.duration_ms === "number") {
+      const ms = el("small", null, Math.round(event.duration_ms) + "ms");
+      chip.appendChild(ms);
+    }
+    wrap.appendChild(chip);
+    last = name;
+  });
+  if (!last) wrap.appendChild(el("span", "muted", "No trace events."));
+  return wrap;
+}
+
+function chunksTable(chunks) {
+  if (!chunks || !chunks.length) return el("div", "panel muted", "No chunks retrieved for this turn.");
+  const table = el("table");
+  const head = el("tr");
+  ["chunk", "doc / section", "dense", "sparse", "fused", "rerank", "rank"].forEach((h) => head.appendChild(el("th", null, h)));
+  table.appendChild(head);
+  chunks.forEach((chunk) => {
+    const row = el("tr");
+    row.appendChild(el("td", "mono", (chunk.chunk_id || "").slice(0, 14)));
+    row.appendChild(el("td", "mono", [chunk.doc_id, chunk.section].filter(Boolean).join(" / ") || "—"));
+    row.appendChild(el("td", "mono", fmt(chunk.dense_score)));
+    row.appendChild(el("td", "mono", fmt(chunk.sparse_score)));
+    row.appendChild(el("td", "mono", fmt(chunk.fused_score)));
+    row.appendChild(el("td", "mono", fmt(chunk.rerank_score)));
+    const ranks = [chunk.fused_rank, chunk.rerank_rank].filter((r) => r !== null && r !== undefined);
+    row.appendChild(el("td", "mono", ranks.length ? ranks.join(" → ") : "—"));
+    table.appendChild(row);
+  });
+  const wrap = el("div", "panel");
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function gradingView(trace) {
+  const grades = (trace || []).filter((e) => e.node === "grade");
+  const rewrites = (trace || []).filter((e) => e.node === "rewrite");
+  const wrap = el("div", "panel");
+  if (!grades.length) {
+    wrap.appendChild(el("div", "muted", "Grading did not run (direct or entity route)."));
+    return wrap;
+  }
+  grades.forEach((grade) => {
+    const row = el("div", "kv");
+    row.appendChild(el("span", "k", "attempt " + esc(grade.attempt)));
+    const verdict = el("span", null, grade.sufficient ? "sufficient" : "insufficient");
+    verdict.style.color = grade.sufficient ? "var(--ok)" : "var(--bad)";
+    row.appendChild(verdict);
+    row.appendChild(el("span", "k", "reason"));
+    row.appendChild(el("span", null, esc(grade.reason)));
+    wrap.appendChild(row);
+  });
+  if (rewrites.length) {
+    wrap.appendChild(el("h2", null, "Rewrites"));
+    rewrites.forEach((rewrite) => {
+      const box = el("pre", null, esc(rewrite.from) + "\n→ " + esc(rewrite.rewritten));
+      wrap.appendChild(box);
+    });
+  }
+  return wrap;
+}
+
+function groundView(trace) {
+  const checks = (trace || []).filter((e) => e.node === "ground_check");
+  const failure = (trace || []).find((e) => e.node === "honest_failure");
+  const wrap = el("div", "panel");
+  if (!checks.length && !failure) {
+    wrap.appendChild(el("div", "muted", "Ground check did not run (direct route)."));
+    return wrap;
+  }
+  checks.forEach((check) => {
+    const row = el("div", "kv");
+    row.appendChild(el("span", "k", "supported claims"));
+    row.appendChild(el("span", null, esc(check.supported)));
+    row.appendChild(el("span", "k", "unsupported claims"));
+    row.appendChild(el("span", null, esc(check.unsupported)));
+    row.appendChild(el("span", "k", "result"));
+    const result = el("span", null, esc(check.status));
+    result.style.color = check.status === "answered" ? "var(--ok)" : "var(--bad)";
+    row.appendChild(result);
+    wrap.appendChild(row);
+  });
+  if (failure) {
+    wrap.appendChild(el("div", "muted", "Honest failure: " + esc(failure.reason || "retrieval exhausted")));
+  }
+  return wrap;
+}
+
+function budgetView(budget) {
+  const wrap = el("div", "panel");
+  if (!budget || !budget.buckets) {
+    wrap.appendChild(el("div", "muted", "No budget recorded for this turn."));
+    return wrap;
+  }
+  const total = budget.total_tokens || 0;
+  const cap = budget.total_cap || 0;
+  wrap.appendChild(el("div", null, "Total " + total + " / " + cap + " tokens"));
+  const bar = el("div", "bar");
+  const fill = el("span");
+  fill.style.width = cap ? Math.min(100, (total / cap) * 100) + "%" : "0%";
+  bar.appendChild(fill);
+  wrap.appendChild(bar);
+  const table = el("table");
+  const head = el("tr");
+  ["bucket", "requested", "allocated"].forEach((h) => head.appendChild(el("th", null, h)));
+  table.appendChild(head);
+  Object.entries(budget.buckets).forEach(([name, values]) => {
+    const row = el("tr");
+    row.appendChild(el("td", "mono", name));
+    row.appendChild(el("td", "mono", esc(values.requested)));
+    row.appendChild(el("td", "mono", esc(values.allocated)));
+    table.appendChild(row);
+  });
+  wrap.appendChild(table);
+  if (budget.evictions && budget.evictions.length) {
+    wrap.appendChild(el("div", "muted", "Evictions: " + budget.evictions.map((e) => e.bucket + " (" + e.reason + ")").join(", ")));
+  }
+  return wrap;
+}
+
+function renderTurn(turn, index) {
+  Array.from(document.querySelectorAll(".turn-btn")).forEach((button, i) => {
+    button.classList.toggle("active", i === index);
+  });
+  const root = clear($("detail"));
+  const header = el("div", "panel");
+  header.appendChild(el("div", "muted", "Turn #" + (index + 1) + " · " + esc(turn.created_at)));
+  const status = el("span", "badge " + (turn.status || ""), turn.status || "unknown");
+  header.appendChild(status);
+  header.appendChild(el("h2", null, "Question"));
+  header.appendChild(el("pre", null, esc(turn.user_message)));
+  header.appendChild(el("h2", null, "Answer"));
+  header.appendChild(el("pre", null, esc(turn.assistant_message)));
+  root.appendChild(header);
+  root.appendChild(section("Graph path", pathChips(turn.trace)));
+  root.appendChild(section("Retrieved chunks", chunksTable(turn.chunks)));
+  const cols = el("div", "cols");
+  cols.appendChild(section("Grading", gradingView(turn.trace)));
+  cols.appendChild(section("Ground check", groundView(turn.trace)));
+  root.appendChild(cols);
+  root.appendChild(section("Token budget", budgetView(turn.budget)));
+}
+
+function renderMemory(memory, conversation) {
+  const root = clear($("memory"));
+  root.className = "panel";
+  if (!memory) { root.textContent = "No memory stored."; return; }
+  const entity = memory.entity || {};
+  const summary = memory.summary || {};
+  root.appendChild(el("h2", null, "Summary"));
+  root.appendChild(el("pre", null, summary.text || "(empty)"));
+  root.appendChild(el("div", "muted", "compressions: " + esc(summary.compression_count) + " · since: " + esc(summary.turns_since_compression)));
+  root.appendChild(el("h2", null, "Entity memory"));
+  root.appendChild(el("pre", null, JSON.stringify(entity, null, 2)));
+  root.appendChild(el("h2", null, "Working turns"));
+  const working = memory.working || [];
+  if (!working.length) {
+    root.appendChild(el("div", "muted", "(empty)"));
+  } else {
+    working.forEach((turn, i) => {
+      root.appendChild(el("div", "muted", "#" + (i + 1) + " USER: " + turn.user));
+      root.appendChild(el("div", "muted", "    ASSISTANT: " + turn.assistant));
+    });
+  }
+  if (conversation && conversation.summary) {
+    root.appendChild(el("div", "muted", "On record: " + conversation.summary));
+  }
+}
+
+async function streamChat(payload, onEvent) {
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "text/event-stream" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error("HTTP " + response.status + ": " + text);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      let event = "message";
+      let data = null;
+      block.split("\n").forEach((line) => {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) {
+          try { data = JSON.parse(line.slice(6)); } catch (error) { data = null; }
+        }
+      });
+      onEvent(event, data);
+    }
+  }
+}
+
+async function askLive(event) {
+  event.preventDefault();
+  const message = $("message").value.trim();
+  if (!message) { setStatus("Write a question first.", true); return; }
+  const conversationId = $("cid").value.trim() || null;
+  const button = $("ask");
+  button.disabled = true;
+  setStatus("Running graph…");
+  clear($("detail"));
+  const live = el("div", "panel");
+  live.appendChild(el("h2", null, "Live graph path"));
+  const chips = el("div");
+  live.appendChild(chips);
+  live.appendChild(el("h2", null, "Streamed answer"));
+  const answer = el("pre", null, "");
+  live.appendChild(answer);
+  $("detail").appendChild(live);
+
+  try {
+    await streamChat({ message, conversation_id: conversationId }, (kind, data) => {
+      if (kind === "node" && data) {
+        const chip = el("span", "chip " + (data.node || ""));
+        chip.textContent = data.node;
+        chips.appendChild(chip);
+      } else if (kind === "token" && data) {
+        answer.textContent += data.text || "";
+      } else if (kind === "error" && data) {
+        setStatus(data.message || "The turn failed", true);
+      } else if (kind === "final" && data) {
+        if (data.conversation_id) $("cid").value = data.conversation_id;
+      }
+    });
+    const id = $("cid").value.trim();
+    if (id) {
+      await loadConversation(id);
+      setStatus("Turn complete.");
+    }
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$("load").onclick = () => loadConversation($("cid").value.trim());
+$("cid").addEventListener("keydown", (event) => { if (event.key === "Enter") loadConversation($("cid").value.trim()); });
+$("reload-memory").onclick = () => loadConversation($("cid").value.trim());
+$("live-form").addEventListener("submit", askLive);
+setStatus("Ready. Replay a conversation id or ask a live question.");
+</script>
+</body>
+</html>

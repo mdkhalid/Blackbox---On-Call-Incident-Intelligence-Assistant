@@ -4,9 +4,9 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–5 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
-three-layer memory, and the streaming API. See `docs/` for design and planning;
-`docs/phase-wise-plan.md` tracks progress.
+Phases 0–6 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
+three-layer memory, the streaming API, and the trace viewer. See `docs/` for design and
+planning; `docs/phase-wise-plan.md` tracks progress.
 
 ## Status
 
@@ -18,14 +18,15 @@ three-layer memory, and the streaming API. See `docs/` for design and planning;
 | 3 | LangGraph corrective-RAG graph: routing, grading, bounded rewrite, ground check | ✅ |
 | 4 | Three-layer memory, conflict resolution, token budget | ✅ |
 | 5 | API + SSE streaming, conversation persistence, trace endpoints | ✅ |
-| 6 | Trace viewer UI | next |
+| 6 | Trace viewer UI | ✅ |
+| 7 | Groundedness eval + final results refresh | next |
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 pip install -e ".[dev,rag]"
-pytest -q                                   # 246 tests
+pytest -q                                   # 249 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -36,6 +37,8 @@ curl -X POST localhost:8000/api/ingest \
   -H 'content-type: application/json' \
   -d '{"corpus_dir":"seed/corpus"}'
 ```
+
+Open `http://localhost:8000/` for the trace viewer.
 
 No API key is required to run retrieval. Dense embeddings fall back to Chroma's bundled
 ONNX MiniLM model, so the corpus, the tests and the eval harness all work offline. Set
@@ -238,6 +241,23 @@ unreachable the service falls back to SQLite under `data/`; in prod an unavailab
 > Token events are transport chunks of the already-verified answer, not raw provider decode
 > tokens: answer text is deliberately withheld until ground check passes.
 
+## Trace viewer
+
+Served by the same process at `/` (alias `/ui`) — no build step, no Node toolchain.
+
+- **Replay:** paste a conversation id to see every stored turn: graph path with per-node
+  timings, retrieved chunks with dense/sparse/fused/rerank scores and ranks, grading
+  attempts and reasons, rewrites, ground-check counts, and the token budget table with
+  evictions.
+- **Live:** type a question and watch the SSE stream: node chips appear as the graph
+  executes, then the ground-checked answer streams in; the persisted turn reloads on finish.
+- **Memory panel:** entity facts, cumulative incident summary and working turns for the
+  selected conversation.
+
+Chunk score trails are stored with each turn (`chunks_json`), so replay shows exactly what
+the live turn saw rather than a reconstruction. The UI builds all data with `textContent`,
+so messages, answers and entity values cannot inject HTML.
+
 ## Corpus
 
 `seed/corpus/` — 60 deterministic documents (30 postmortems, 15 runbooks, 10 architecture
@@ -246,7 +266,7 @@ document types share one service/error-code vocabulary so retrieval is measurabl
 
 ## Tests
 
-246 tests, `ruff` clean. Retrieval, graph, memory and API tests run against a small in-file
+249 tests, `ruff` clean. Retrieval, graph, memory and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

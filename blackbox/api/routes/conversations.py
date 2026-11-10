@@ -42,6 +42,7 @@ def get_trace(conversation_id: str, request: Request):
                 "status": turn.status,
                 "trace": turn.trace,
                 "budget": turn.budget,
+                "chunks": turn.chunks,
                 "created_at": turn.created_at,
             }
             for turn in turns

@@ -111,6 +111,8 @@ def test_chat_streams_nodes_tokens_and_persists(api_client):
     trace = api_client.get(f"/api/conversations/{conversation_id}/trace").json()
     assert len(trace["turns"]) == 1
     assert [e["node"] for e in trace["turns"][0]["trace"]][:2] == ["router", "retrieve"]
+    assert trace["turns"][0]["chunks"]
+    assert "fused_score" in trace["turns"][0]["chunks"][0]
 
     memory = api_client.get(f"/api/conversations/{conversation_id}/memory").json()
     assert "entity" in memory

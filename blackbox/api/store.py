@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from sqlalchemy import JSON, Column, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Column, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from blackbox.memory import ConversationMemory
@@ -40,6 +40,7 @@ class TurnRow(Base):
     status = Column(String, nullable=False)
     trace_json = Column(JSON, nullable=False)
     budget_json = Column(JSON, nullable=False)
+    chunks_json = Column(JSON, nullable=True)
     created_at = Column(String, nullable=False)
 
 
@@ -61,6 +62,7 @@ class TurnRecord:
     status: str
     trace: list[dict]
     budget: dict
+    chunks: list[dict]
     created_at: str
 
 
@@ -79,6 +81,7 @@ class ConversationRepository(Protocol):
         status: str,
         trace: list[dict],
         budget: dict,
+        chunks: list[dict] | None = None,
     ) -> TurnRecord: ...
     def get_turns(self, conversation_id: str) -> list[TurnRecord]: ...
     def last_turn(self, conversation_id: str) -> TurnRecord | None: ...
@@ -93,6 +96,15 @@ class SqlAlchemyConversationRepository:
 
     def init(self) -> None:
         Base.metadata.create_all(self.engine)
+        # Lightweight forward migration for stores created before chunk trails were added.
+        if not inspect(self.engine).has_table("conversation_turns"):
+            return
+        columns = {column["name"] for column in inspect(self.engine).get_columns("conversation_turns")}
+        if "chunks_json" not in columns:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE conversation_turns ADD COLUMN chunks_json JSON")
+                )
 
     def _session(self) -> Session:
         return self.SessionLocal()
@@ -173,6 +185,7 @@ class SqlAlchemyConversationRepository:
         status: str,
         trace: list[dict],
         budget: dict,
+        chunks: list[dict] | None = None,
     ) -> TurnRecord:
         with self._session() as session:
             now = _now()
@@ -194,6 +207,7 @@ class SqlAlchemyConversationRepository:
                 status=status,
                 trace_json=trace or [],
                 budget_json=budget or {},
+                chunks_json=chunks or [],
                 created_at=now,
             )
             session.add(row)
@@ -229,5 +243,6 @@ def _turn(row: TurnRow) -> TurnRecord:
         status=row.status,
         trace=list(row.trace_json or []),
         budget=dict(row.budget_json or {}),
+        chunks=list(row.chunks_json or []),
         created_at=row.created_at,
     )

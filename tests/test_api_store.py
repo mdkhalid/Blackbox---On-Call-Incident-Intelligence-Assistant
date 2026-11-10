@@ -43,6 +43,7 @@ def test_turns_persist_with_trace_and_budget(tmp_path):
         "answered",
         [{"node": "router", "route": "retrieval"}],
         {"total_tokens": 100},
+        [{"chunk_id": "c1", "fused_score": 0.9, "rerank_score": None}],
     )
 
     assert turn.id is not None
@@ -53,6 +54,7 @@ def test_turns_persist_with_trace_and_budget(tmp_path):
     assert turns[0].status == "answered"
     assert turns[0].trace[0]["node"] == "router"
     assert turns[0].budget["total_tokens"] == 100
+    assert turns[0].chunks[0]["chunk_id"] == "c1"
     assert repo.last_turn("conv-1").assistant == "pool exhaustion"
 
 

@@ -2,7 +2,7 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅ done. Phase 6 ⬅ next.
+Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅ done. Phase 7 ⬅ next.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -202,8 +202,32 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - **The eval endpoint reads metrics but never writes `docs/`.** Results stay reproducible via
   the documented script; the API serves the same numbers.
 
-## Phase 6 — Trace Viewer UI (2 hrs)
-- Minimal web UI (HTML/JS or small React) showing per-message: graph path, retrieved chunks with scores, grading result, ground check, budget breakdown.
+## Phase 6 — Trace Viewer UI (2 hrs) ✅ DONE
+- `api/static/index.html`: dependency-free viewer served at `/` and `/ui` by FastAPI.
+- Replay: conversation id → `/trace` + `/memory`; per turn renders the graph path, chunks
+  with dense/sparse/fused/rerank scores and ranks, grading attempts and reasons, rewrites,
+  ground-check counts, and the token budget table with evictions.
+- Live: `POST /api/chat` via `fetch` + `ReadableStream` with incremental SSE parsing; node
+  chips and answer text appear as the turn runs, then the persisted trace reloads.
+- Turn records now persist chunk score trails (`chunks_json`, with a forward migration) so
+  replay shows the same retrieval evidence as the live final event.
+- Tests: 249 total (+3), ruff clean.
+
+### Decisions
+- **One static file, no build step.** The viewer is served by the same FastAPI process, so
+  the demo is a single command and the Docker image needs no Node toolchain.
+- **DOM built with `textContent`, never `innerHTML` from model or corpus data.** Messages,
+  answers and entity values are untrusted text; the viewer must not become an XSS surface.
+- **Replay is the default; live proves streaming.** Both consume the same trace payload the
+  API persists, so the UI needs no second API.
+- **Chunk text is persisted but not rendered.** The viewer is about provenance and scores;
+  showing raw chunk text would duplicate the corpus in the UI.
+
+### Verified
+- HTTP tests confirm `/` and `/ui` serve the viewer, that it references the trace endpoints,
+  and that health still works alongside it. UI behaviour is exercised through the same API
+  contract; browser screenshot automation was skipped because `agent-browser` is not
+  installed in this environment.
 
 ## Phase 7 — Eval Harness (3 hrs) ◐ PARTIAL
 - ✅ `eval/dataset.json`: 35 questions with corpus-derived source docs (built in Phase 2).
@@ -230,23 +254,26 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - M2 (after Phase 4): memory + graph end-to-end chat works. ✅ **reached** — a multi-turn
   incident thread compresses without losing ruled-out facts and the graph consumes the
   budgeted context.
-- M3 (after Phase 7): eval harness + trace viewer. (Retrieval half done in Phase 2;
-  groundedness is unblocked by the Phase 3 graph; the API side is done in Phase 5.)
+- M3 (after Phase 7): eval harness + trace viewer. Viewer ✅ (Phase 6); groundedness and
+  the final table refresh remain in Phase 7.
 - M4 (after Phase 9): submission-ready.
 
-## Immediate next actions (Phase 6 entry)
-1. Serve a single static trace viewer from FastAPI (no build step): pick a conversation,
-   replay a turn, or watch a live turn.
-2. Per turn render: graph path, retrieved chunks with dense/sparse/fused/rerank scores,
-   grade verdict and rewrite attempts, ground-check verdicts, and the budget breakdown.
-3. Live mode consumes the same SSE stream with `fetch` + `ReadableStream` (EventSource
-   cannot POST); replay mode reads `/trace`.
-4. Keep it dependency-free HTML/JS under `blackbox/api/static/`, served by `StaticFiles` and
-   linked from `/` for the demo.
-5. Add an API test that the viewer is served and references the trace endpoint.
+## Immediate next actions (Phase 7 entry)
+1. `eval/groundedness_eval.py`: run the graph over the eval questions, then report the
+   claim-support fraction (supported / total claims) and the honest-failure rate.
+2. Use the same deterministic `verify_claims` definition the graph uses, and say so — the
+   metric measures whether answers trace to retrieved chunks, not whether they match a
+   hidden reference answer.
+3. Include the no-answer questions in the run so the honest-failure path is measured, not
+   just demonstrated.
+4. Extend `POST /api/eval/run` with a `groundedness` flag or a sibling endpoint that returns
+   the same numbers without writing files.
+5. Refresh the comparison table only from a real run; keep `--write` opt-in.
 
-## Open questions to settle before Phase 6
-- Live vs replay default: replay is deterministic for the demo; live proves streaming.
-- The trace payload is already JSON-serialisable and includes everything the viewer needs,
-  so the UI must not need a second API.
-- Conversation discovery is by id only; the demo script should print the id from `/api/chat`.
+## Open questions to settle before Phase 7
+- Full-graph groundedness over 35 questions with ONNX is slow; default to a subset and make
+  the limit explicit in output.
+- Ground truth for "no answer" questions: the eval dataset already labels them; report
+  abstention accuracy alongside claim support.
+- Keep retrieval and groundedness metrics in separate tables; mixing them hides which stage
+  regressed.
