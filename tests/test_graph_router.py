@@ -1,6 +1,19 @@
 from blackbox.graph.router import classify_route, direct_answer_node, entity_lookup_node
 
 
+def test_definition_question_routes_direct():
+    decision = classify_route("What does p99 mean?")
+    assert decision.route == "direct"
+    answer = direct_answer_node({"query": "What does p99 mean?"})["answer"]
+    assert "99th-percentile" in answer
+
+
+def test_sla_question_about_a_service_still_retrieves():
+    # "What is the SLA for X?" asks about a specific service, not the definition of SLA.
+    decision = classify_route("What is the SLA for the lunar telemetry pipeline?")
+    assert decision.route == "retrieval"
+
+
 def test_greeting_routes_direct():
     assert classify_route("hello").route == "direct"
 

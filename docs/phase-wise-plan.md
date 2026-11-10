@@ -4,7 +4,7 @@ On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
 Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅, Phase 9 ✅. **All phases complete.**
 
-Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **295 passing**, `ruff` clean.
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **300 passing**, `ruff` clean.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -96,7 +96,8 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   providers, and a deterministic offline provider that performs lexical grading, extractive
   generation and identifier-preserving rewriting. The graph runs with no API key.
 - Router: deterministic. Entity/graph only for dependency questions naming a known
-  service; direct only for greetings/capability questions; everything else retrieves.
+  service; direct only for greetings, capabilities and glossary definitions; everything
+  else retrieves.
 - Grading: cheap-model JSON verdict; malformed or missing output defaults to *insufficient*.
 - Ground check: deterministic citation tracing, not an LLM call. Each claim's terms must
   appear in its cited chunk (or the best retrieved chunk); unsupported claims are stripped,
@@ -120,8 +121,9 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   property, so an LLM judge would add cost and a new failure mode without adding evidence.
 - **Router defaults to retrieval.** A misrouted incident question loses retrieval entirely;
   entity/direct paths are taken only on unambiguous query shapes.
-- **Direct answers are restricted to meta questions** and are templated, so they cannot
-  hallucinate incident facts. Incident questions always retrieve.
+- **Direct answers are restricted to meta questions** and are templated (greetings,
+  capabilities, glossary definitions such as p99/SLO), so they cannot hallucinate incident
+  facts. Incident questions always retrieve.
 - **Streaming was designed in.** `stream_graph_events` yields per-node updates plus a final
   merged state; Phase 5 SSE and Phase 6's viewer consume the same events.
 - **The trace is the state.** Every node records its timing and decisions in one append-only
@@ -325,7 +327,22 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   - live demo over HTTP: compression preserved the ruled-out deploy, the entity hypothesis
     resolved `ruled_out → confirmed` with history, and the no-answer question took the
     honest-failure path.
-- Tests: 295 total (+9), ruff clean.
+- Tests: 300 total (295 at Phase 9 close, +5 from the audit), ruff clean.
+
+### Post-submission audit fixes
+- Entity-memory conflict matching now strips leading articles, so "The deploy was ruled
+  out" followed by "actually the deploy was the cause" updates one hypothesis instead of
+  holding two contradictions.
+- Service extraction uses an infrastructure-suffix allowlist; prose like `code-review` and
+  `read-only` no longer pollutes entity memory.
+- Memory state and the finished turn are persisted in one transaction (`record_turn`).
+- The built wheel now includes `config/config.yaml`, `eval/dataset.json` and
+  `api/static/index.html`; the Dockerfile copies the package before the editable install.
+- `/health/ready` actually checks the conversation store (503 when unavailable).
+- Router answers glossary definitions (p99, SLO, SEV1, runbook, …) directly without
+  retrieval, while "What is the SLA for X?" still retrieves.
+- Rate-limiter IP map is bounded; the offline provider labels its model `fake` rather than
+  impersonating the configured hosted model.
 
 ### Decisions
 - **The diagram is generated, not hand-drawn**, so it cannot silently drift from the docs.

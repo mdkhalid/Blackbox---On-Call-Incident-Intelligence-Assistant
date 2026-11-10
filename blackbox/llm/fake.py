@@ -52,7 +52,7 @@ class FakeLLMProvider:
         text, task = self._respond(prompt, json_mode)
         response = LLMResponse(
             text=text,
-            model=model or "fake",
+            model="fake",
             prompt_tokens=_count(f"{system} {prompt}"),
             completion_tokens=_count(text),
         )

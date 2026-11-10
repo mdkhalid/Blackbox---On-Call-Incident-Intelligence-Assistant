@@ -145,16 +145,14 @@ async def chat(payload: ChatRequest, request: Request):
                 )
 
             await run_in_threadpool(
-                services.conversations.save_state, conversation_id, memory, budget
-            )
-            await run_in_threadpool(
-                services.conversations.append_turn,
+                services.conversations.record_turn,
                 conversation_id,
+                memory,
+                budget,
                 message,
                 answer,
                 result.get("status") or "error",
                 result.get("trace") or [],
-                budget,
                 result.get("chunks") or [],
             )
 

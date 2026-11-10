@@ -1,9 +1,13 @@
 """Health endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+import asyncio
+
+from fastapi import APIRouter, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from blackbox import __version__
+from blackbox.api.services import PersistenceUnavailable
 from blackbox.config.settings import get_settings
 
 router = APIRouter(tags=["health"])
@@ -17,7 +21,22 @@ async def health(request: Request):
 
 @router.get("/health/ready")
 async def ready(request: Request):
-    # Phase 0: config loaded is sufficient. DB/Redis checks added later.
+    """Liveness of the process, readiness of the conversation store."""
     settings = getattr(request.app.state, "settings", None) or get_settings()
-    _ = settings
-    return {"status": "ok"}
+    services = getattr(request.app.state, "services", None)
+    if services is None:
+        return {"status": "ok", "env": settings.env, "storage": "not_initialized"}
+
+    try:
+        await asyncio.wait_for(run_in_threadpool(services.ensure_storage), timeout=2.0)
+    except (TimeoutError, PersistenceUnavailable) as exc:
+        raise HTTPException(status_code=503, detail="storage unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="storage unavailable") from exc
+
+    return {
+        "status": "ok",
+        "env": settings.env,
+        "storage": services.storage_backend or "unknown",
+        "cache": type(services.cache_backend).__name__ if services.cache_backend else "off",
+    }

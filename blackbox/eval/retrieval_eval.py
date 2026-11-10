@@ -35,6 +35,7 @@ from blackbox.retrieval.hybrid_retriever import HybridRetriever, build_hybrid_re
 logger = get_logger(__name__)
 
 DATASET = pathlib.Path("blackbox/eval/dataset.json")
+_PACKAGE_DATASET = pathlib.Path(__file__).resolve().parent / "dataset.json"
 RESULTS_DOC = pathlib.Path("docs/retrieval-results.md")
 
 
@@ -57,6 +58,8 @@ STRATEGIES = [
 
 
 def load_dataset(path: pathlib.Path = DATASET) -> dict:
+    if not path.exists():
+        path = _PACKAGE_DATASET
     if not path.exists():
         raise SystemExit(
             f"{path} not found. Run `python scripts/build_eval_dataset.py` first."

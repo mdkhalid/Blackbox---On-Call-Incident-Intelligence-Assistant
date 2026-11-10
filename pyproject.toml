@@ -59,6 +59,9 @@ docs = [
 where = ["."]
 include = ["blackbox*"]
 
+[tool.setuptools.package-data]
+blackbox = ["config/*.yaml", "eval/*.json", "api/static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

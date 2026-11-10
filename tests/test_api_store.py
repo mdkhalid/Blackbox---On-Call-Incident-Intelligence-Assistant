@@ -58,6 +58,29 @@ def test_turns_persist_with_trace_and_budget(tmp_path):
     assert repo.last_turn("conv-1").assistant == "pool exhaustion"
 
 
+def test_record_turn_persists_state_and_turn_atomically(tmp_path):
+    repo = _repo(tmp_path)
+    record = repo.get_or_create("conv-1")
+    record.memory.add_turn("p99 spiking", "checking")
+
+    turn = repo.record_turn(
+        "conv-1",
+        record.memory,
+        {"total_tokens": 7},
+        "p99 spiking",
+        "checking",
+        "answered",
+        [{"node": "router"}],
+        [{"chunk_id": "c1"}],
+    )
+
+    assert turn.id is not None
+    restored = repo.get("conv-1")
+    assert restored.memory.working.turns[0].user == "p99 spiking"
+    assert restored.last_budget["total_tokens"] == 7
+    assert repo.get_turns("conv-1")[0].chunks[0]["chunk_id"] == "c1"
+
+
 def test_get_or_create_is_idempotent(tmp_path):
     repo = _repo(tmp_path)
     first = repo.get_or_create("conv-1")

@@ -12,12 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python deps
+# Copy package metadata and source before installing so the editable install discovers
+# the package (and its static/config/eval data) at build time.
 COPY pyproject.toml ./
+COPY blackbox ./blackbox
 RUN pip install --upgrade pip && pip install -e ".[dev,rag,db]" 2>/dev/null || pip install -e ".[rag,db]"
 
-# Copy app
-COPY blackbox ./blackbox
 COPY seed ./seed
 COPY scripts ./scripts
 COPY .env.example ./.env.example

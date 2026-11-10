@@ -44,7 +44,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 295 tests
+pytest -q                            # 300 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -193,7 +193,7 @@ router ─┬─ entity ── entity_lookup ───────────�
 | File | Role |
 |---|---|
 | `state.py` | JSON-serialisable state; every chunk keeps its full retrieval score trail |
-| `router.py` | Deterministic routing; defaults to retrieval, entity lookup only for known-service dependency questions, direct only for greetings/capabilities |
+| `router.py` | Deterministic routing; defaults to retrieval, entity lookup for known-service dependencies, direct only for greetings, capabilities and glossary definitions |
 | `nodes.py` | Retrieve, grade, rewrite, generate, ground check, honest failure |
 | `grounding.py` | Deterministic claim→chunk tracing; unsupported claims are stripped |
 | `build.py` | Graph assembly plus sync and streaming runners |
@@ -368,10 +368,16 @@ python -m blackbox.eval.groundedness_eval --write
   reported as measured rather than tuned away.
 - The cross-encoder reranker requires the optional `rerank` extra; without it the lexical
   reranker is used and the measured trade-off still holds.
+- **No authentication.** v1 is single-tenant by design; put it behind an authenticated
+  proxy before exposing conversations or ingest publicly.
+- Request-body size is enforced after JSON parsing (`413` from the chat route). Deploy
+  behind a reverse proxy with a hard body limit as well.
+- Readiness checks the conversation store; Redis is optional and its availability is
+  reported only after the runtime is initialized.
 
 ## Tests
 
-295 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+300 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

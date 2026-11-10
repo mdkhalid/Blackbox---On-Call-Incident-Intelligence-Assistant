@@ -23,6 +23,8 @@ def settings(monkeypatch):
     monkeypatch.setenv("ENV", "dev")
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     monkeypatch.setenv("CONFIG_PATH", "blackbox/config/config.yaml")
+    # Tests must not depend on a reachable Postgres from .env.
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     return get_settings()
 
 

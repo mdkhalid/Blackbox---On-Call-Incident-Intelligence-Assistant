@@ -52,12 +52,34 @@ _CONFIRMED = [
     re.compile(r"(?P<h>[\w\s\-:]+?)\s+(?:was|is)\s+confirmed", re.IGNORECASE),
 ]
 
-# Generic hyphenated tokens that are not services.
-_NON_SERVICE_SUFFIXES = ("-diff", "-latency", "-cause", "-id", "-log", "-logs")
+# Service names in this domain end with an infrastructure suffix. Using an allowlist
+# avoids treating phrases like "code-review" or "read-only" as services.
+_SERVICE_SUFFIXES = (
+    "-service",
+    "-gateway",
+    "-api",
+    "-db",
+    "-cache",
+    "-worker",
+    "-queue",
+    "-store",
+    "-proxy",
+    "-engine",
+    "-cluster",
+)
+
+# Articles are stripped so "The deploy" and "deploy" are the same hypothesis.
+_LEADING_ARTICLES = ("the ", "a ", "an ")
 
 
 def _clean_hypothesis(value: str) -> str:
-    return value.strip(" \t\r\n.,;:!?-—")
+    cleaned = value.strip(" \t\r\n.,;:!?-—")
+    lowered = cleaned.lower()
+    for article in _LEADING_ARTICLES:
+        if lowered.startswith(article):
+            cleaned = cleaned[len(article) :]
+            break
+    return cleaned.strip(" \t\r\n.,;:!?-—")
 
 
 def _services(text: str) -> list[str]:
@@ -65,7 +87,7 @@ def _services(text: str) -> list[str]:
     seen: set[str] = set()
     for token in SERVICE_RE.findall(text):
         lowered = token.lower()
-        if lowered.endswith(_NON_SERVICE_SUFFIXES):
+        if not lowered.endswith(_SERVICE_SUFFIXES):
             continue
         if lowered not in seen:
             seen.add(lowered)
@@ -161,4 +183,7 @@ def update_entity_memory(
 
 
 def _normalized(text: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9_]+", text.lower()))
+    tokens = re.findall(r"[a-z0-9_]+", text.lower())
+    while tokens and tokens[0] in {"the", "a", "an"}:
+        tokens.pop(0)
+    return " ".join(tokens)

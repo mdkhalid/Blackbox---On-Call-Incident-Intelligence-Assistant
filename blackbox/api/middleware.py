@@ -85,4 +85,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 },
             )
         hits.append(now)
+        if len(self._hits) > 4096:  # keep the per-IP map bounded
+            self._hits = {ip: values for ip, values in self._hits.items() if values}
         return await call_next(request)

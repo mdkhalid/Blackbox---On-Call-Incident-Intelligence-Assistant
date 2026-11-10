@@ -83,6 +83,17 @@ class ConversationRepository(Protocol):
         budget: dict,
         chunks: list[dict] | None = None,
     ) -> TurnRecord: ...
+    def record_turn(
+        self,
+        conversation_id: str,
+        memory: ConversationMemory,
+        last_budget: dict,
+        user: str,
+        assistant: str,
+        status: str,
+        trace: list[dict],
+        chunks: list[dict] | None = None,
+    ) -> TurnRecord: ...
     def get_turns(self, conversation_id: str) -> list[TurnRecord]: ...
     def last_turn(self, conversation_id: str) -> TurnRecord | None: ...
 
@@ -207,6 +218,50 @@ class SqlAlchemyConversationRepository:
                 status=status,
                 trace_json=trace or [],
                 budget_json=budget or {},
+                chunks_json=chunks or [],
+                created_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return _turn(row)
+
+    def record_turn(
+        self,
+        conversation_id: str,
+        memory: ConversationMemory,
+        last_budget: dict,
+        user: str,
+        assistant: str,
+        status: str,
+        trace: list[dict],
+        chunks: list[dict] | None = None,
+    ) -> TurnRecord:
+        """Persist the updated memory and the finished turn in one transaction."""
+        with self._session() as session:
+            now = _now()
+            conversation = session.get(ConversationRow, conversation_id)
+            if conversation is None:
+                conversation = ConversationRow(
+                    id=conversation_id,
+                    memory_json=memory.to_dict(),
+                    last_budget_json=last_budget or {},
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(conversation)
+            else:
+                conversation.memory_json = memory.to_dict()
+                conversation.last_budget_json = last_budget or {}
+                conversation.updated_at = now
+
+            row = TurnRow(
+                conversation_id=conversation_id,
+                user_message=user,
+                assistant_message=assistant,
+                status=status,
+                trace_json=trace or [],
+                budget_json=last_budget or {},
                 chunks_json=chunks or [],
                 created_at=now,
             )

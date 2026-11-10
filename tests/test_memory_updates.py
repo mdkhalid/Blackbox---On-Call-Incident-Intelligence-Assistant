@@ -48,9 +48,20 @@ def test_services_error_codes_timeline_and_actions_are_recorded():
     assert any(event.startswith("service:") for event in events)
 
 
+def test_leading_article_does_not_split_a_hypothesis():
+    entity = EntityMemory()
+    update_entity_memory(entity, user_message="The deploy was ruled out.")
+    update_entity_memory(entity, user_message="Actually the deploy was the cause.")
+
+    assert len(entity.hypotheses) == 1
+    assert entity.hypotheses[0].status == "confirmed"
+
+
 def test_non_service_hyphenated_tokens_are_ignored():
     entity = EntityMemory()
-    update_entity_memory(entity, user_message="The code-diff was empty.")
+    update_entity_memory(
+        entity, user_message="The code-review found a read-only cache issue."
+    )
     assert entity.services == []
 
 
