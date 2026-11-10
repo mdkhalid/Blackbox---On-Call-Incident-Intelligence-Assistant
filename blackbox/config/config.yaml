@@ -3,13 +3,13 @@ retrieval:
   candidate_pool: 30
   fusion_method: rrf
   fusion_k: 60
-  # Swept empirically (docs/retrieval-results.md): 0.74-0.80 is a flat MRR plateau at
+  # Swept empirically (docs/retrieval-results.md): 0.75-0.80 is a flat MRR plateau at
   # k=5, and the sparse-heavy end of it also maximises recall@5. 0.75 sits mid-plateau
   # rather than on the exact argmax, because the extra BM25 weight protects the
   # exact-token queries this system exists for.
   dense_weight: 0.75
   sparse_weight: 0.25
-  # Measured off by default: reranking lowered MRR 0.9095 -> 0.8857 on the eval set.
+  # Measured off by default: reranking lowered MRR 0.9214 -> 0.8643 on the eval set.
   # See docs/retrieval-results.md; enable per-request or by flipping this flag.
   rerank: false
   rerank_provider: auto
@@ -18,6 +18,13 @@ retrieval:
   retrieval_timeout_ms: 5000
   collection_name: blackbox_chunks
   embedding_provider: auto
+
+graph:
+  # Claim terms must appear in a retrieved chunk at this rate to count as grounded.
+  ground_check_min_overlap: 0.34
+  # Direct answers are restricted to greetings/capability questions; incident questions
+  # always go through retrieval.
+  direct_answers: true
 
 memory:
   working_turns: 6

@@ -43,3 +43,24 @@ def test_pipeline_idempotent(tmp_path):
     count2 = vs.count()
     assert count1 == count2
     assert all(r["status"] == "skipped" for r in r2)
+
+
+def test_pipeline_reingests_when_vector_store_was_rebuilt(tmp_path):
+    """A surviving entity DB must not suppress ingestion into an empty vector store.
+
+    This is the Chroma-corruption recovery path: the store is recreated, but the ingest
+    ledger (content hashes) survives. Skipping on the hash alone leaves retrieval empty.
+    """
+    _corpus(tmp_path)
+    root = tmp_path / "corpus"
+    es = SqlAlchemyEntityStore(f"sqlite:///{tmp_path / 'e.db'}")
+    es.init()
+
+    vs1 = ChromaVectorStore(str(tmp_path / "chroma1"), "coll", FakeEmbeddingProvider(dim=4))
+    IngestionPipeline(vs1, es, batch_size=10).ingest_directory(root)
+
+    vs2 = ChromaVectorStore(str(tmp_path / "chroma2"), "coll", FakeEmbeddingProvider(dim=4))
+    results = IngestionPipeline(vs2, es, batch_size=10).ingest_directory(root)
+
+    assert vs2.count() == vs1.count()
+    assert all(result["status"] == "ingested" for result in results)

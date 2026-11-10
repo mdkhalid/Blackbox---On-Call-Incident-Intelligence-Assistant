@@ -62,6 +62,18 @@ class RetrievalConfig(BaseModel):
         return self
 
 
+class GraphConfig(BaseModel):
+    ground_check_min_overlap: float = 0.34
+    direct_answers: bool = True
+
+    @field_validator("ground_check_min_overlap")
+    @classmethod
+    def overlap_range(cls, v):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("ground_check_min_overlap must be in [0,1]")
+        return v
+
+
 class MemoryConfig(BaseModel):
     working_turns: int = 6
     summary_trigger_turns: int = 8
@@ -117,6 +129,7 @@ class IngestionConfig(BaseModel):
 
 class AppConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    graph: GraphConfig = Field(default_factory=GraphConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)

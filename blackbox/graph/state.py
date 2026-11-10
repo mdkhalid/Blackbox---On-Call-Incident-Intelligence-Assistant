@@ -1,0 +1,59 @@
+"""Typed graph state.
+
+Every field is JSON-serialisable rather than a domain object, because the same state is
+streamed to the API (Phase 5), persisted per turn, and rendered by the trace viewer. The
+score trail from retrieval survives the trip: chunks keep each stage's score and rank.
+"""
+from __future__ import annotations
+
+import operator
+from typing import Annotated, Any, TypedDict
+
+
+class GraphState(TypedDict, total=False):
+    query: str
+    original_query: str
+    rewritten_query: str
+    filters: dict[str, Any]
+
+    route: str
+    route_reason: str
+
+    chunks: list[dict[str, Any]]
+    grade: dict[str, Any]
+    grade_history: list[dict[str, Any]]
+    rewrite_count: int
+
+    answer: str
+    claims: list[dict[str, Any]]
+    ground_check: dict[str, Any]
+
+    status: str
+    error: str | None
+
+    llm_calls: int
+    usage: dict[str, int]
+    timings: dict[str, float]
+
+    trace: Annotated[list[dict[str, Any]], operator.add]
+
+
+def initial_state(
+    query: str,
+    *,
+    filters: dict[str, Any] | None = None,
+    original_query: str | None = None,
+) -> GraphState:
+    return GraphState(
+        query=query,
+        original_query=original_query if original_query is not None else query,
+        filters=dict(filters or {}),
+        chunks=[],
+        grade_history=[],
+        rewrite_count=0,
+        llm_calls=0,
+        usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        timings={},
+        trace=[],
+        error=None,
+    )

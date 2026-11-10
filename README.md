@@ -4,8 +4,9 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–2 complete: scaffolding, corpus + ingestion, and the retrieval layer.
-See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks progress.
+Phases 0–3 complete: scaffolding, corpus + ingestion, the retrieval layer, and the
+corrective-RAG graph. See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks
+progress.
 
 ## Status
 
@@ -14,14 +15,15 @@ See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks progress.
 | 0 | Scaffolding, config, logging, health endpoints | ✅ |
 | 1 | 60-document corpus, structure-aware chunking, entity extraction | ✅ |
 | 2 | Hybrid retrieval, fusion, reranking, metadata filtering, eval harness | ✅ |
-| 3 | LangGraph corrective-RAG pipeline | next |
+| 3 | LangGraph corrective-RAG graph: routing, grading, bounded rewrite, ground check | ✅ |
+| 4 | Three-layer memory, conflict resolution, token budget | next |
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 pip install -e ".[dev,rag]"
-pytest -q                                   # 164 tests
+pytest -q                                   # 205 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -87,14 +89,14 @@ per-category breakdown and the fusion weight sweep are in
 
 | Strategy | MRR | Recall@5 | Precision@5 |
 |---|---|---|---|
-| dense-only | 0.8548 | 0.8581 | 0.4662 |
-| sparse-only (BM25) | 0.8571 | 0.8510 | 0.3738 |
-| hybrid (RRF) | **0.9214** | **0.9162** | **0.4910** |
-| hybrid + rerank | 0.8643 | 0.9219 | 0.4771 |
+| dense-only | 0.8548 | 0.8581 | 0.4433 |
+| sparse-only (BM25) | 0.8571 | 0.8510 | 0.3510 |
+| hybrid (RRF) | **0.9214** | **0.9067** | **0.4548** |
+| hybrid + rerank | 0.8667 | 0.9219 | 0.4543 |
 
 Two results are reported as measured rather than as hoped:
 
-- **Reranking is disabled by default.** It lowered MRR by 0.057 on this corpus while
+- **Reranking is disabled by default.** It lowered MRR by 0.055 on this corpus while
   raising recall. It is implemented and selectable per request.
 - **Dense-only beats BM25 on exact-token queries here** (0.90 vs 0.85), contrary to the
   usual expectation. The seeded documents are short and templated, so identifiers appear in
@@ -108,6 +110,53 @@ python scripts/build_eval_dataset.py          # derive the question set from the
 python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep
 ```
 
+## Graph
+
+`blackbox/graph/` — a corrective-RAG pipeline built as a LangGraph `StateGraph`:
+
+```
+router ─┬─ entity ── entity_lookup ─────────────────┐
+        ├─ direct ── direct_answer ── END           │
+        └─ retrieve ── grade ─┬─ sufficient ────────┤
+                    ▲         ├─ rewrite ── retrieve│
+                    └─────────┴─ cap reached ── honest_failure
+                                                       │
+                        generate ── ground_check ──────┤
+                                    └─ ungrounded ─────┘
+```
+
+| File | Role |
+|---|---|
+| `state.py` | JSON-serialisable state; every chunk keeps its full retrieval score trail |
+| `router.py` | Deterministic routing; defaults to retrieval, entity lookup only for known-service dependency questions, direct only for greetings/capabilities |
+| `nodes.py` | Retrieve, grade, rewrite, generate, ground check, honest failure |
+| `grounding.py` | Deterministic claim→chunk tracing; unsupported claims are stripped |
+| `build.py` | Graph assembly plus sync and streaming runners |
+
+Every node appends a timing/decision event to `state["trace"]`, and
+`stream_graph_events()` yields those events as they happen for the API and trace viewer.
+Rewrites are bounded by `retrieval.rewrite_cap` (default 2); hitting the cap produces an
+honest failure that states the query, filters and what was searched.
+
+```python
+from blackbox.graph import build_graph, initial_state, run_graph
+from blackbox.retrieval import build_default_retriever
+
+retriever = build_default_retriever()
+graph = build_graph(retriever)          # offline provider when no API key is set
+result = run_graph(graph, initial_state("What caused ERR_POOL_EXHAUSTED in checkout-service?"))
+
+print(result["status"])                 # answered | honest_failure | direct
+print(result["answer"])
+print([event["node"] for event in result["trace"]])
+```
+
+`blackbox/llm/` is the provider seam: `complete()` is the only method the graph calls,
+with OpenAI and Anthropic implementations plus a deterministic offline provider (lexical
+grading, extractive generation, identifier-preserving rewriting). `LLM_PROVIDER=openai`,
+`anthropic`, `fake` or `auto` selects it; `auto` falls back to the offline provider when no
+key is present in dev and fails loudly in prod.
+
 ## Corpus
 
 `seed/corpus/` — 60 deterministic documents (30 postmortems, 15 runbooks, 10 architecture
@@ -116,8 +165,9 @@ document types share one service/error-code vocabulary so retrieval is measurabl
 
 ## Tests
 
-164 tests, `ruff` clean. Retrieval tests run against a small in-file corpus with a
-deterministic hashing embedder, so they need no network and no model download.
+205 tests, `ruff` clean. Retrieval and graph tests run against a small in-file corpus with
+a deterministic hashing embedder and the offline LLM provider, so they need no network and
+no model download.
 
 ```bash
 pytest -q

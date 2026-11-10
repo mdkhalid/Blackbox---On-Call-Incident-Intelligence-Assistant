@@ -38,6 +38,16 @@ class ChromaVectorStore:
     def count(self) -> int:
         return self.collection.count()
 
+    def has_doc(self, doc_id: str) -> bool:
+        """Whether any chunk for this document is actually present in the collection."""
+        try:
+            result = self.collection.get(
+                where={"doc_id": doc_id}, limit=1, include=["metadatas"]
+            )
+        except Exception:  # noqa: BLE001 - an empty/missing collection means "not present"
+            return False
+        return bool(result.get("ids"))
+
     def query(self, text: str, top_k: int = 5, where: dict | None = None):
         emb = self.embedding_provider.embed([text])[0]
         res = self.collection.query(query_embeddings=[emb], n_results=top_k, where=where)

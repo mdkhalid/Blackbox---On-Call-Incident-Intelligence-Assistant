@@ -190,3 +190,16 @@ def vectorstore(tmp_path, embedder, mini_corpus):
     vs.upsert_chunks(mini_corpus)
     return vs
 
+
+@pytest.fixture
+def entity_store():
+    from blackbox.ingestion.entity_extraction.store import SqlAlchemyEntityStore
+
+    store = SqlAlchemyEntityStore("sqlite:///:memory:")
+    store.init()
+    store.upsert_service("checkout-service")
+    store.upsert_service("payment-gateway")
+    store.upsert_service("auth-service")
+    store.upsert_dependency("checkout-service", "payment-gateway")
+    return store
+

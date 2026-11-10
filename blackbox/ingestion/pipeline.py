@@ -64,7 +64,11 @@ class IngestionPipeline:
         doc.metadata["doc_type"] = doc_type
         h = content_hash(doc.raw)
         existing = self.es.get_ingested(doc.doc_id)
-        if existing is not None and existing.content_hash == h:
+        if (
+            existing is not None
+            and existing.content_hash == h
+            and self.vs.has_doc(doc.doc_id)
+        ):
             return {"doc_id": doc.doc_id, "status": "skipped", "chunks": 0}
 
         # delete old
