@@ -14,7 +14,22 @@ from blackbox.llm.base import LLMResponse
 from blackbox.text import content_tokens, split_sentences
 
 _EVIDENCE_LINE = re.compile(r"^\[([^\]]+)\]\s+(.*)$")
-_FIELD_LINE = re.compile(r"^(QUESTION|QUERY|ATTEMPT):\s*(.*)$")
+_FIELD_LINE = re.compile(r"^(QUESTION|QUERY|ATTEMPT|EXISTING_SUMMARY):\s*(.*)$")
+_SUMMARY_MARKERS = (
+    "ruled out",
+    "confirmed",
+    "root cause",
+    "checked",
+    "action",
+    "timeline",
+    "deploy",
+    "err_",
+    "service",
+    "p99",
+    "latency",
+    "incident",
+    "because",
+)
 
 
 class FakeLLMProvider:
@@ -52,6 +67,8 @@ class FakeLLMProvider:
             return self._grade(prompt), "grade"
         if "TASK: REWRITE" in prompt:
             return self._rewrite(prompt), "rewrite"
+        if "TASK: SUMMARIZE" in prompt:
+            return self._summarize(prompt), "summarize"
         if "TASK: GENERATE" in prompt:
             return self._generate(prompt), "generate"
         if json_mode:
@@ -124,6 +141,26 @@ class FakeLLMProvider:
             }
         )
 
+    def _summarize(self, prompt: str) -> str:
+        existing = _field(prompt, "EXISTING_SUMMARY") or ""
+        turns_block = ""
+        if "TURNS:" in prompt:
+            turns_block = prompt.split("TURNS:", 1)[1].split("Return the updated", 1)[0]
+
+        kept: list[str] = []
+        if existing.strip() and existing.strip() != "(none)":
+            kept.append(existing.strip())
+        for line in turns_block.splitlines():
+            for sentence in split_sentences(line.strip()) or [line.strip()]:
+                if not sentence:
+                    continue
+                lowered = sentence.lower()
+                if any(marker in lowered for marker in _SUMMARY_MARKERS):
+                    entry = f"- {sentence}"
+                    if entry not in kept:
+                        kept.append(entry)
+        return "\n".join(kept)
+
 
 def _count(text: str) -> int:
     return len((text or "").split())
@@ -145,11 +182,12 @@ def _evidence(prompt: str) -> list[tuple[str, str]]:
         return []
     out: list[tuple[str, str]] = []
     for line in lines[start + 1 :]:
-        match = _EVIDENCE_LINE.match(line.strip())
+        stripped = line.strip()
+        if stripped.startswith(("Return", "Answer", "QUESTION:", "QUERY:", "ATTEMPT:")):
+            break
+        match = _EVIDENCE_LINE.match(stripped)
         if match:
             out.append((match.group(1), match.group(2)))
-        elif out and line.strip() and not line.strip().startswith(("Return", "Answer")):
-            out[-1] = (out[-1][0], f"{out[-1][1]} {line.strip()}")
-        elif line.strip().startswith(("Return", "Answer")):
-            break
+        elif out and stripped:
+            out[-1] = (out[-1][0], f"{out[-1][1]} {stripped}")
     return out

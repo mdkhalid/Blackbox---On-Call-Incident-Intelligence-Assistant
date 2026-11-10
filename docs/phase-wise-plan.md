@@ -2,7 +2,7 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅ done. Phase 4 ⬅ next.
+Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅ done. Phase 5 ⬅ next.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -125,12 +125,41 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - **The trace is the state.** Every node records its timing and decisions in one append-only
   list, so there is no separate instrumentation path that can drift from execution.
 
-## Phase 4 — Memory (4 hrs)
-- Working memory: recent turns verbatim.
-- Summary memory: incident-aware compression prompt + trigger policy.
-- Entity memory: structured facts + conflict resolution.
-- Budget: allocation + eviction order; `/budget` API.
-- Injection on every turn separate from history.
+## Phase 4 — Memory (4 hrs) ✅ DONE
+- `memory/models.py`: `Turn`, `Hypothesis`, `Action` and `EntityMemory` with in-place
+  conflict resolution. A contradicted hypothesis updates its status and keeps an audit
+  entry; two active states never coexist.
+- `memory/working.py`: last N exchanges verbatim (default 6), oldest-first overflow.
+- `memory/summary.py` + `memory/prompts.py`: cumulative, incident-aware compression with an
+  explicit preservation contract (ruled-out hypotheses + reason, confirmed facts, actions
+  and outcomes, timeline anchors, identifiers) and a token-capped output.
+- `memory/conversation.py`: trigger policy (`summary_trigger_turns`, default 8) and
+  cumulative compression; JSON round-trip for Phase 5 persistence.
+- `memory/context.py`: budgeted assembly in injection order entity → summary → recent
+  turns → chunks → question. Eviction order: oldest recent turns → lowest-score chunks →
+  summary compression → entity essentials; the system prompt is never evicted. Emits the
+  report `/budget` will serve.
+- `memory/tokens.py`: tiktoken counting/truncation with an offline fallback.
+- Graph: `initial_state(context=..., budget=...)`; `generate` injects the assembled memory
+  context as its own section, separate from retrieved evidence and from history.
+- Tests: 229 total (+24), ruff clean.
+
+### Verified offline against the seeded corpus
+- Four-turn incident thread compresses to a summary that still contains "deploy ruled out";
+  entity memory renders confirmed pool exhaustion beside the ruled-out deploy, plus the
+  timeline anchor and error code.
+- Real corpus turn: 616/6024 tokens, no evictions; the generate prompt contains both
+  `ENTITY MEMORY` and `INCIDENT SUMMARY`; the graph still answers with grounded evidence.
+
+### Decisions
+- **Entity memory is a conversation-state field**, not its own store. Phase 5 persists the
+  whole state; keeping the graph pure avoided a second source of truth.
+- **The preservation list is a prompt contract backed by a test**, because "incident-aware"
+  is only credible if a ruled-out hypothesis provably survives compression.
+- **Enforcement and reporting share one token counter**, so `/budget` cannot disagree with
+  the limit that was actually enforced.
+- **Context is injected separately from history and evidence**, so provenance stays visible
+  in the trace and retrieved chunks are never duplicated into the memory block.
 
 ## Phase 5 — API + Streaming (3 hrs)
 - FastAPI routes per spec.
@@ -164,31 +193,31 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 ## Milestones
 - M1 (after Phase 2): retrieval works, eval numbers exist. ✅ **reached** —
   hybrid MRR 0.9214 vs 0.8548/0.8571 for the single retrievers, on 35 questions.
-- M2 (after Phase 4): memory + graph end-to-end chat works. Graph half ✅ (Phase 3);
-  memory is the remaining half.
+- M2 (after Phase 4): memory + graph end-to-end chat works. ✅ **reached** — a multi-turn
+  incident thread compresses without losing ruled-out facts and the graph consumes the
+  budgeted context.
 - M3 (after Phase 7): eval harness + trace viewer. (Retrieval half done in Phase 2;
   groundedness is unblocked by the Phase 3 graph.)
 - M4 (after Phase 9): submission-ready.
 
-## Immediate next actions (Phase 4 entry)
-1. Write the incident-aware summary test first: a ruled-out hypothesis must survive
-   compression. That test is the requirement, not a nice-to-have.
-2. `memory/working.py` — bounded recent turns, verbatim.
-3. `memory/summary.py` — incident-aware compression prompt + trigger policy, cumulative
-   and capped; reuse the grading model tier.
-4. `memory/entity.py` — structured facts with upsert-on-conflict (ruled_out → confirmed
-   updates in place and records history) instead of appending both states.
-5. `memory/budget.py` — the configured allocation and the documented eviction order;
-   expose the last allocation for `/budget`.
-6. Feed the assembled context (system → entity → summary → recent → chunks → question)
-   into the graph's generate node; keep injection separate from history.
-7. The graph state is already JSON-serialisable, so conversation state can be carried
-   beside it without changing node signatures.
+## Immediate next actions (Phase 5 entry)
+1. `api/routes/chat.py`: conversation id in, `ConversationMemory` loaded, context assembled,
+   graph run, turn persisted.
+2. SSE endpoint streaming `stream_graph_events()` node updates, then token events.
+3. `/trace` returns the stored per-turn trace; `/memory` and `/budget` return the entity /
+   summary / working layers and the last allocation.
+4. Persist conversation state, turns, traces and `last_budget` in Postgres; fail fast with a
+   clear 503 when the DB is unavailable.
+5. Update entity memory each turn from the graph's grounded claims plus explicit
+   service/error-code matches — no extra LLM call.
+6. `/ingest` and `/eval/run`; serialize eval runs (409) and invalidate the BM25/reranker
+   indexes after ingest.
+7. Groundedness eval can now be built directly from `ground_check.verdicts`.
 
-## Open questions to settle before Phase 4
-- Does entity memory need its own store, or is it a field in conversation state? (Leaning
-  state field + Postgres persistence in Phase 5, so the graph stays pure.)
-- Summarisation must be demonstrably incident-aware. Needs a test that a ruled-out
-  hypothesis survives compression — write it as a failing test first.
-- Phase 3 made `generate` the only place context is assembled; Phase 4 should replace its
-  bare prompt with a budgeted assembler rather than adding a second prompt path.
+## Open questions to settle before Phase 5
+- One active graph run per conversation: enforce with a Postgres advisory lock or a Redis
+  lock; decide before the first concurrent request.
+- Redis is optional in this phase; the DB is the source of truth. The cache should be
+  additive, never required for correctness.
+- Entity updates: trust grounded claims for facts, but infer hypothesis status changes only
+  from explicit user statements, so the graph cannot silently "confirm" its own guess.

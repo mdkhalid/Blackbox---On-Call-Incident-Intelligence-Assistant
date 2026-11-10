@@ -212,7 +212,7 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
 
     response = deps.llm.complete(
         system=GENERATE_SYSTEM,
-        prompt=generate_prompt(query, chunks),
+        prompt=generate_prompt(query, chunks, context=state.get("context") or None),
         model=deps.settings.generation_model,
         temperature=0.2,
         max_tokens=deps.config.guardrails.max_answer_tokens,

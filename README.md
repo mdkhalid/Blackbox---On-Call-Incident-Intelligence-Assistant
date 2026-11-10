@@ -4,9 +4,9 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–3 complete: scaffolding, corpus + ingestion, the retrieval layer, and the
-corrective-RAG graph. See `docs/` for design and planning; `docs/phase-wise-plan.md` tracks
-progress.
+Phases 0–4 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
+and three-layer memory. See `docs/` for design and planning; `docs/phase-wise-plan.md`
+tracks progress.
 
 ## Status
 
@@ -16,14 +16,15 @@ progress.
 | 1 | 60-document corpus, structure-aware chunking, entity extraction | ✅ |
 | 2 | Hybrid retrieval, fusion, reranking, metadata filtering, eval harness | ✅ |
 | 3 | LangGraph corrective-RAG graph: routing, grading, bounded rewrite, ground check | ✅ |
-| 4 | Three-layer memory, conflict resolution, token budget | next |
+| 4 | Three-layer memory, conflict resolution, token budget | ✅ |
+| 5 | API + SSE streaming, conversation persistence, trace endpoints | next |
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 pip install -e ".[dev,rag]"
-pytest -q                                   # 205 tests
+pytest -q                                   # 229 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -157,6 +158,45 @@ grading, extractive generation, identifier-preserving rewriting). `LLM_PROVIDER=
 `anthropic`, `fake` or `auto` selects it; `auto` falls back to the offline provider when no
 key is present in dev and fails loudly in prod.
 
+## Memory
+
+`blackbox/memory/` — three layers plus one shared token budget:
+
+| File | Role |
+|---|---|
+| `models.py` | `EntityMemory`: facts, actions, timeline; hypotheses update in place on contradiction and keep an audit history |
+| `working.py` | Last N exchanges verbatim |
+| `summary.py` / `prompts.py` | Cumulative incident-aware compression; explicitly preserves ruled-out hypotheses, confirmed facts, actions and timeline anchors |
+| `conversation.py` | Trigger policy (`summary_trigger_turns`) and layering; JSON round-trip |
+| `context.py` | Budgeted assembly and the documented eviction order |
+| `tokens.py` | tiktoken counting/truncation with an offline fallback |
+
+```python
+from blackbox.memory import ConversationMemory, build_context
+
+memory = ConversationMemory(config.memory)
+memory.entity.upsert_hypothesis("01:15 deploy", status="ruled_out", evidence="no code diff")
+memory.add_turn("checkout p99 is spiking", "checking pool metrics")
+memory.maybe_compress(llm, model=settings.grading_model)
+
+bundle = build_context(
+    system_prompt=SYSTEM_PROMPT,
+    memory=memory,
+    chunks=hits,
+    question=question,
+    budget=config.budget,
+)
+result = run_graph(
+    graph, initial_state(question, context=bundle.render(), budget=bundle.report)
+)
+```
+
+Injection order is entity → summary → recent turns → retrieved chunks → question. On
+overflow the eviction order is oldest recent turns → lowest-score chunks → summary
+compression → entity essentials; the system prompt is never evicted. `bundle.report` is the
+same accounting exposed by `/budget` in Phase 5, and `ConversationMemory.to_dict()` is the
+persistence shape.
+
 ## Corpus
 
 `seed/corpus/` — 60 deterministic documents (30 postmortems, 15 runbooks, 10 architecture
@@ -165,9 +205,9 @@ document types share one service/error-code vocabulary so retrieval is measurabl
 
 ## Tests
 
-205 tests, `ruff` clean. Retrieval and graph tests run against a small in-file corpus with
-a deterministic hashing embedder and the offline LLM provider, so they need no network and
-no model download.
+229 tests, `ruff` clean. Retrieval, graph and memory tests run against a small in-file
+corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
+network and no model download.
 
 ```bash
 pytest -q

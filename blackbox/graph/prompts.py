@@ -54,11 +54,13 @@ def rewrite_prompt(query: str, attempt: int) -> str:
     )
 
 
-def generate_prompt(query: str, chunks: list[dict]) -> str:
+def generate_prompt(query: str, chunks: list[dict], context: str | None = None) -> str:
+    context_block = f"CONTEXT:\n{context}\n\n" if context else ""
     return (
         "TASK: GENERATE\n"
-        f"QUESTION: {query}\n"
+        f"{context_block}"
         "EVIDENCE:\n"
         f"{evidence_lines(chunks)}\n\n"
+        f"QUESTION: {query}\n\n"
         'Return JSON: {"answer": "...", "claims": [{"text": "...", "sources": ["<chunk_id>"]}]}'
     )
