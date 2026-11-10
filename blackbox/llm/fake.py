@@ -131,9 +131,26 @@ class FakeLLMProvider:
         evidence = _evidence(prompt)
         if not evidence:
             return json.dumps({"answer": "", "claims": []})
-        chunk_id, text = evidence[0]
-        sentences = split_sentences(text)
-        claim = sentences[0] if sentences else text
+
+        question = _field(prompt, "QUESTION") or _field(prompt, "QUERY") or ""
+        question_terms = set(content_tokens(question))
+
+        # Extractive baseline: ground the answer in the evidence sentence that actually
+        # matches the question, not merely the first sentence of the first chunk. Taking
+        # the first sentence makes a runbook step like "1." look like a hallucination and
+        # turns an answerable question into a false honest failure.
+        best: tuple[int, str, str] | None = None
+        fallback: tuple[int, str, str] | None = None
+        for chunk_id, text in evidence:
+            sentences = split_sentences(text) or [text]
+            for sentence in sentences:
+                overlap = len(question_terms & set(content_tokens(sentence)))
+                candidate = (overlap, chunk_id, sentence)
+                if fallback is None:
+                    fallback = candidate
+                if best is None or overlap > best[0]:
+                    best = candidate
+        _, chunk_id, claim = best or fallback
         return json.dumps(
             {
                 "answer": f"{claim} [{chunk_id}]",

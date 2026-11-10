@@ -93,6 +93,26 @@ def test_eval_run_returns_serialised_metrics(operations_client, monkeypatch):
     assert body["strategies"]["hybrid (RRF)"]["mrr"] == 0.5
 
 
+def test_eval_run_includes_groundedness_when_requested(operations_client, monkeypatch):
+    def fake_run_all(retriever, dataset, *, k=5, strategies=None):
+        return {"hybrid (RRF)": (Metrics(count=1, mrr=0.5), [])}
+
+    def fake_groundedness(graph, dataset, *, limit=None):
+        return {"draft_claim_support": 0.75, "abstention_accuracy": 1.0}
+
+    monkeypatch.setattr("blackbox.api.routes.operations.run_all", fake_run_all)
+    monkeypatch.setattr(
+        "blackbox.api.routes.operations.evaluate_dataset", fake_groundedness
+    )
+    response = operations_client.post(
+        "/api/eval/run", json={"k": 5, "groundedness": True}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["groundedness"]["draft_claim_support"] == 0.75
+    assert body["groundedness"]["abstention_accuracy"] == 1.0
+
+
 def test_eval_run_rejects_a_concurrent_run(operations_client, operations_services):
     assert operations_services.eval_lock.acquire(blocking=False)
     try:

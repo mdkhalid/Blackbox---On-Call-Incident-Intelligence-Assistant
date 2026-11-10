@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from blackbox.api.deps import get_services
 from blackbox.api.schemas import EvalRequest, IngestRequest
+from blackbox.eval.groundedness_eval import evaluate_dataset
 from blackbox.eval.retrieval_eval import fusion_sweep, load_dataset, run_all
 from blackbox.ingestion.pipeline import IngestionPipeline
 from blackbox.logging_setup import get_logger
@@ -89,6 +90,10 @@ def run_evaluation(payload: EvalRequest, request: Request):
                 {"dense_weight": dense, "sparse_weight": sparse, "mrr": mrr}
                 for dense, sparse, mrr in sweep
             ]
+        if payload.groundedness:
+            body["groundedness"] = evaluate_dataset(
+                services.graph, dataset, limit=payload.limit
+            )
         return body
     finally:
         services.eval_lock.release()

@@ -4,9 +4,9 @@ Ask questions against a corpus of past incidents, runbooks, architecture docs an
 definitions: *"checkout p99 is spiking and the DB connection pool looks saturated — has this
 happened before?"*
 
-Phases 0–6 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
-three-layer memory, the streaming API, and the trace viewer. See `docs/` for design and
-planning; `docs/phase-wise-plan.md` tracks progress.
+Phases 0–7 complete: scaffolding, corpus + ingestion, retrieval, the corrective-RAG graph,
+three-layer memory, the streaming API, the trace viewer, and the eval harness. See `docs/`
+for design and planning; `docs/phase-wise-plan.md` tracks progress.
 
 ## Status
 
@@ -19,7 +19,8 @@ planning; `docs/phase-wise-plan.md` tracks progress.
 | 4 | Three-layer memory, conflict resolution, token budget | ✅ |
 | 5 | API + SSE streaming, conversation persistence, trace endpoints | ✅ |
 | 6 | Trace viewer UI | ✅ |
-| 7 | Groundedness eval + final results refresh | next |
+| 7 | Groundedness eval + abstention measurement | ✅ |
+| 8 | Observability, caching, hardening | next |
 
 ## Quick start
 
@@ -31,7 +32,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 249 tests
+pytest -q                            # 254 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -129,6 +130,29 @@ Reproduce:
 ```bash
 python scripts/build_eval_dataset.py          # derive the question set from the corpus
 python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep
+```
+
+### Groundedness and abstention
+
+Full results in [`docs/groundedness-results.md`](docs/groundedness-results.md).
+
+| Metric | Value |
+|---|---|
+| Answer rate (35 answerable) | **0.8857** (31/35) |
+| Abstention accuracy (5 unanswerable) | **1.0000** (5/5) |
+| Draft claim support | **1.0000** (31/31) |
+| Unsupported claims stripped | 0 |
+
+Draft claim support is measured on the claims the generator drafted, *before* the ground
+check strips unsupported ones — otherwise the metric would be a tautology. The offline
+extractive provider is grounded by construction, so the 1.0 here is a floor; re-run with a
+hosted model to measure real overreach. All four answer failures are `paraphrase` questions,
+matching the retrieval-table finding for this templated corpus.
+
+Reproduce:
+
+```bash
+python -m blackbox.eval.groundedness_eval --write
 ```
 
 ## Graph
@@ -229,7 +253,7 @@ persistence shape.
 | `GET /api/conversations/:id/memory` | Entity facts, summary, working turns |
 | `GET /api/conversations/:id/budget` | Last turn's token allocation |
 | `POST /api/ingest` | Idempotent corpus ingest (`{"corpus_dir","refresh"}`) |
-| `POST /api/eval/run` | Retrieval eval as JSON (`{"k","fusion_sweep"}`) |
+| `POST /api/eval/run` | Retrieval metrics; `groundedness:true` adds claim-support/abstention |
 
 ```bash
 curl -N -X POST localhost:8000/api/chat \
@@ -274,7 +298,7 @@ document types share one service/error-code vocabulary so retrieval is measurabl
 
 ## Tests
 
-249 tests, `ruff` clean. Retrieval, graph, memory and API tests run against a small in-file
+254 tests, `ruff` clean. Retrieval, graph, memory and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

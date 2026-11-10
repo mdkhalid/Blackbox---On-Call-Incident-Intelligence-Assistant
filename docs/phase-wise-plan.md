@@ -2,7 +2,9 @@
 
 On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
-Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅ done. Phase 7 ⬅ next.
+Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅ done. Phase 8 ⬅ next.
+
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **254 passing**, `ruff` clean.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -229,24 +231,71 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
   contract; browser screenshot automation was skipped because `agent-browser` is not
   installed in this environment.
 
-## Phase 7 — Eval Harness (3 hrs) ◐ PARTIAL
-- ✅ `eval/dataset.json`: 35 questions with corpus-derived source docs (built in Phase 2).
+## Phase 7 — Eval Harness ✅ DONE
+- ✅ `eval/dataset.json`: 35 questions with corpus-derived source docs (Phase 2).
 - ✅ `retrieval_eval.py`: MRR/P@k/R@k across dense/sparse/hybrid/hybrid+rerank (Phase 2).
-- ✅ Results written to `docs/retrieval-results.md`; reproduction command in README (Phase 2).
-- ⬜ `groundedness_eval.py`: claim support fraction — the Phase 3 generator now exists, so
-  this is unblocked; `ground_check` already emits per-claim verdicts to build it from.
-- ⬜ Final table refresh once the graph produces real answers (Phase 5 API `/eval/run`).
+- ✅ Results written to `docs/retrieval-results.md`; reproduction command in README.
+- ✅ Retrieval metrics exposed as JSON through `POST /api/eval/run` (Phase 5).
+- ✅ `groundedness_eval.py`: draft claim support, answer rate, abstention accuracy and a
+  5-question unanswerable set; generated `docs/groundedness-results.md`.
+- ✅ `POST /api/eval/run` accepts `groundedness:true` (and `limit`) and returns the same
+  summary under the existing eval lock.
+- ✅ Final results refreshed from real runs; no hand-written numbers.
 
-## Phase 8 — Observability, Caching, Hardening (2 hrs)
-- LangChain callbacks: latency + token counts per LLM call/retrieval/chain.
-- LLM response caching (dev).
-- Structured JSON logging with request id (partial done in Phase 0).
-- Config validation.
-- Redis cache integration for retrieval/embedding caches.
+### Measured outcome (offline provider, seeded corpus)
+| Metric | Value |
+|---|---|
+| Answer rate (35 answerable) | 0.8857 (31/35) |
+| Abstention accuracy (5 unanswerable) | 1.0000 (5/5) |
+| False-answer rate (unanswerable) | 0.0000 |
+| Draft claim support | 1.0000 (31/31) |
+| Unsupported claims stripped | 0 |
 
-## Phase 9 — Docs & Submission (1 hr)
-- Write the four required docs files + README with setup/architecture/comparison table.
-- Demo video script (multi-turn conversation triggering compression + no-answer question).
+- All four answer failures are `paraphrase` questions, consistent with the retrieval
+  table's finding on this templated corpus — they abstain rather than invent precedent.
+- Claim support is computed on drafted claims before stripping. Reporting the shipped
+  claims would always be 1.0 by construction and would measure nothing.
+- The offline provider is extractive, so its 1.0 is a floor. The same harness and checker
+  produce the generator's real overreach with a hosted model.
+
+### Bug found while measuring
+- The offline generator took the *first sentence of the first* evidence chunk (often a
+  runbook's "1." step), which looked like a hallucination and caused false honest failures.
+  It now selects the best-matching evidence sentence. That moved the offline answer rate
+  from 0.7429 to 0.8857 and draft support from 0.8387 to 1.0000 by removing the artifact,
+  not by loosening the checker.
+
+## Phase 8 — Observability, Caching, Hardening ⬜ TODO
+- ⬜ LangChain callbacks: latency + token counts per LLM call, retrieval and chain step.
+  (The graph records per-node timings and token usage today, but not via callbacks.)
+- ⬜ LLM response caching for development (identical prompts).
+- ◐ Structured JSON logging with request id — done in Phase 0; add graph-level context.
+- ◐ Config validation — pydantic validators exist for retrieval/graph/budget; add
+  cross-field checks and prod-only requirements.
+- ⬜ Redis cache integration for retrieval/embedding caches, invalidated on ingest.
+- ⬜ Rate limiting and CORS allowlist from `docs/guardrails.md` / `api-security.md`.
+- ⬜ Prompt-injection detection (log/flag in dev, optional block in strict mode).
+- ⬜ Postgres advisory lock for per-conversation turns when running more than one instance.
+
+## Phase 9 — Docs & Submission ⬜ TODO
+- ◐ README — covers setup, architecture, both results tables, API, memory and viewer;
+  final polish remains.
+- ✅ `docs/chunking-strategy.md`, `docs/memory-design.md`, `docs/retrieval-results.md`,
+  `docs/groundedness-results.md` — generated from current code.
+- ⬜ `docs/architecture.png` (diagram; the repo currently has textual diagrams only).
+- ⬜ Demo video script: multi-turn conversation that triggers summary compression and ends
+  with a genuine no-answer question.
+- ⬜ Final submission pass: reproduce tests + eval from a clean `.venv`, tag/commit.
+
+## Remaining work (as of Phase 7 close)
+| Phase | State | Remaining deliverables |
+|---|---|---|
+| 8 — Observability & Hardening | ⬜ | LangChain callbacks; LLM cache; Redis cache; rate limiting + CORS; prompt-injection detection; Postgres advisory lock; finish logging/config polish |
+| 9 — Docs & Submission | ⬜ | `docs/architecture.png`; demo video script; final README polish; clean-room test + eval verification; final commit |
+
+Bottom line: **two phases remain** (8 and 9). Phase 8 is the largest remaining block;
+Phase 9 is documentation/submission. The eval harness is complete, so submission numbers are
+already generated from real runs.
 
 ## Milestones
 - M1 (after Phase 2): retrieval works, eval numbers exist. ✅ **reached** —
@@ -254,26 +303,32 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - M2 (after Phase 4): memory + graph end-to-end chat works. ✅ **reached** — a multi-turn
   incident thread compresses without losing ruled-out facts and the graph consumes the
   budgeted context.
-- M3 (after Phase 7): eval harness + trace viewer. Viewer ✅ (Phase 6); groundedness and
-  the final table refresh remain in Phase 7.
+- M3 (after Phase 7): eval harness + trace viewer. ✅ **reached** — viewer (Phase 6),
+  ground-checked answers, groundedness and abstention measured from real runs (Phase 7).
 - M4 (after Phase 9): submission-ready.
 
-## Immediate next actions (Phase 7 entry)
-1. `eval/groundedness_eval.py`: run the graph over the eval questions, then report the
-   claim-support fraction (supported / total claims) and the honest-failure rate.
-2. Use the same deterministic `verify_claims` definition the graph uses, and say so — the
-   metric measures whether answers trace to retrieved chunks, not whether they match a
-   hidden reference answer.
-3. Include the no-answer questions in the run so the honest-failure path is measured, not
-   just demonstrated.
-4. Extend `POST /api/eval/run` with a `groundedness` flag or a sibling endpoint that returns
-   the same numbers without writing files.
-5. Refresh the comparison table only from a real run; keep `--write` opt-in.
+## Immediate next actions (Phase 8 entry)
+1. LangChain callback handler: log latency + token counts for every LLM call, retrieval and
+   chain step; keep the existing per-node trace as the user-facing view (no double counting).
+2. Dev-only LLM response cache keyed by (provider, model, prompt, temperature, max_tokens,
+   json_mode); disabled or TTL-bounded outside dev.
+3. Redis caches for retrieval/embedding with the configured TTLs; `invalidate()` on ingest;
+   a Redis outage must degrade to uncached, never fail the turn.
+4. Rate limiting per IP/conversation from `guardrails.rate_limit_rps` (429 + Retry-After)
+   and a CORS allowlist.
+5. Prompt-injection detection: log/flag in dev, optional block under
+   `guardrails.strict_injection_block`.
+6. Config validation: cross-field checks (e.g. trigger >= working turns) and prod-only
+   requirements; fail at startup, not on the first request.
+7. Postgres advisory lock for per-conversation turns; document the single-process fallback.
+8. Tests for cache hit/miss, Redis-down degradation, rate-limit 429, injection flag and
+   invalid-config startup.
 
-## Open questions to settle before Phase 7
-- Full-graph groundedness over 35 questions with ONNX is slow; default to a subset and make
-  the limit explicit in output.
-- Ground truth for "no answer" questions: the eval dataset already labels them; report
-  abstention accuracy alongside claim support.
-- Keep retrieval and groundedness metrics in separate tables; mixing them hides which stage
-  regressed.
+## Open questions to settle before Phase 8
+- Cache keys must include every generation parameter; a model or temperature change must not
+  return a stale stored answer.
+- Callbacks are for operators, the trace is for the product. Keep them separate rather than
+  turning one into a projection of the other.
+- Rate limiting and locks are in-process today. Multi-instance correctness needs Postgres or
+  Redis; document which guarantee applies where.
+- Keep caching off in the eval harness so measured numbers are not flattered by cache hits.

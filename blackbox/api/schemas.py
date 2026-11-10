@@ -20,3 +20,5 @@ class IngestRequest(BaseModel):
 class EvalRequest(BaseModel):
     k: int = Field(default=5, ge=1, le=50)
     fusion_sweep: bool = False
+    groundedness: bool = False
+    limit: int | None = Field(default=None, ge=1, le=100)
