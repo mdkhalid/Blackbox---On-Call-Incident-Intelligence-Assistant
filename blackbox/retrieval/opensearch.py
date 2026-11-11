@@ -7,19 +7,75 @@ into the query rather than applied to a candidate set in Python.
 The adapter is behind the same `SparseStore` protocol as the in-process BM25 index, so
 the fusion, the rerank, the graph and the API do not know which one is in use.
 
+**Token parity is deliberate.** Lucene's standard analyzer splits `ERR_POOL_EXHAUSTED`
+into three tokens, which would break the one property this retriever exists for:
+`ERR_AUTH_FAILED` and `ERR_AUTH_TIMEOUT` must not match each other through a shared
+`err`/`auth` fragment. So the chunks are indexed with a pre-tokenized `tokens` field
+built by the *same* `tokenize` function the BM25 adapter uses, and the query is
+tokenized the same way. The two adapters therefore agree on which documents match,
+which is what the contract test asserts.
+
 The client library is imported lazily: the package is an optional dependency, and the
 offline path must work without it.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
+from blackbox.ingestion.models import Chunk
 from blackbox.logging_setup import get_logger
 from blackbox.retrieval.filters import MetadataFilter
 from blackbox.retrieval.models import RetrievedChunk
+from blackbox.retrieval.sparse import tokenize
 from blackbox.retrieval.stores import opensearch_clauses
 
 logger = get_logger(__name__)
+
+# Fields that the metadata filter compiles against. They are lifted to the top level of
+# the document so the compiled clauses can address them directly.
+FILTER_FIELDS = (
+    "doc_type",
+    "doc_id",
+    "severity",
+    "section",
+    "services",
+    "error_codes",
+)
+
+INDEX_MAPPING: dict[str, Any] = {
+    "settings": {
+        "index": {"number_of_shards": 1, "number_of_replicas": 0},
+        # The BM25 parameters of the in-process adapter, so the two score the same
+        # corpus the same way. `rank_bm25` defaults to k1=1.5, b=0.75; Lucene's
+        # default is k1=1.2, which would order the results differently.
+        "similarity": {"blackbox_bm25": {"type": "BM25", "k1": 1.5, "b": 0.75}},
+    },
+    "mappings": {
+        "properties": {
+            "chunk_id": {"type": "keyword"},
+            # The pre-tokenized text. The whitespace analyzer keeps each token whole, so
+            # the indexed terms are exactly the terms the BM25 adapter scores.
+            "tokens": {
+                "type": "text",
+                "analyzer": "whitespace",
+                "similarity": "blackbox_bm25",
+            },
+            # The raw text, kept for display and for the standard-analyzed secondary
+            # match.
+            "text": {"type": "text", "analyzer": "standard"},
+            "doc_type": {"type": "keyword"},
+            "doc_id": {"type": "keyword"},
+            "severity": {"type": "keyword"},
+            "section": {"type": "keyword"},
+            "services": {"type": "keyword"},
+            "error_codes": {"type": "keyword"},
+            "date_ord": {"type": "long"},
+            # Stored but not indexed: it is only ever read back for the trace viewer.
+            "metadata": {"type": "object", "enabled": False},
+        }
+    },
+}
 
 
 class OpenSearchUnavailable(RuntimeError):
@@ -39,6 +95,7 @@ class OpenSearchSparseStore:
         verify_certs: bool = True,
         ca_certs: str | None = None,
         text_field: str = "text",
+        tokens_field: str = "tokens",
         chunk_id_field: str = "chunk_id",
     ) -> None:
         self.hosts = [host.strip() for host in hosts.split(",") if host.strip()]
@@ -48,6 +105,7 @@ class OpenSearchSparseStore:
         self.verify_certs = verify_certs
         self.ca_certs = ca_certs
         self.text_field = text_field
+        self.tokens_field = tokens_field
         self.chunk_id_field = chunk_id_field
         self._client: Any = None
         self._async_client: Any = None
@@ -107,6 +165,18 @@ class OpenSearchSparseStore:
     def rebuild(self) -> None:
         """Nothing to rebuild: the index is maintained by the cluster."""
 
+    def ensure_index(self) -> None:
+        """Create the index with its mapping if it does not exist yet."""
+        if self.client.indices.exists(index=self.index):
+            return
+        self.client.indices.create(index=self.index, body=INDEX_MAPPING)
+        logger.info("opensearch_index_created", index=self.index)
+
+    def drop_index(self) -> None:
+        """Delete the index. Used by the tests and by a full reindex."""
+        if self.client.indices.exists(index=self.index):
+            self.client.indices.delete(index=self.index)
+
     @property
     def size(self) -> int:
         try:
@@ -116,6 +186,61 @@ class OpenSearchSparseStore:
             return 0
         return int(response.get("count", 0))
 
+    # ---- write path ----
+
+    def upsert_chunks(self, chunks: Iterable[Chunk]) -> int:
+        """Index chunks into the search index.
+
+        The index is refreshed before returning, so a search that follows an ingest
+        sees the new chunks. That costs a refresh per call, which is the right trade
+        for an ingest that runs on a background job and must be searchable when it
+        reports completion.
+        """
+        from opensearchpy import helpers
+
+        batch = list(chunks)
+        if not batch:
+            return 0
+        self.ensure_index()
+        actions = [self._action(chunk) for chunk in batch]
+        success, _failed = helpers.bulk(self.client, actions, chunk_size=500, refresh=True)
+        return int(success)
+
+    def delete_by_doc(self, doc_id: str) -> None:
+        """Remove every chunk belonging to a document."""
+        if not self.client.indices.exists(index=self.index):
+            return
+        self.client.delete_by_query(
+            index=self.index,
+            body={"query": {"term": {"doc_id": doc_id}}},
+            refresh=True,
+        )
+
+    def _action(self, chunk: Chunk) -> dict[str, Any]:
+        metadata = dict(chunk.metadata or {})
+        document: dict[str, Any] = {
+            self.chunk_id_field: chunk.chunk_id,
+            self.tokens_field: " ".join(tokenize(chunk.text or "")),
+            self.text_field: chunk.text or "",
+            "metadata": metadata,
+        }
+        for field in FILTER_FIELDS:
+            value = metadata.get(field)
+            if value is None:
+                continue
+            # The value keeps its shape: a scalar stays a scalar and a list stays a
+            # list. A `terms` query matches either form.
+            document[field] = value
+        date_ord = metadata.get("date_ord")
+        if date_ord is not None:
+            document["date_ord"] = int(date_ord)
+        return {
+            "_op_type": "index",
+            "_index": self.index,
+            "_id": chunk.chunk_id,
+            "_source": document,
+        }
+
     # ---- search ----
 
     def search(
@@ -124,7 +249,9 @@ class OpenSearchSparseStore:
         top_k: int,
         filter: MetadataFilter | None = None,
     ) -> list[RetrievedChunk]:
-        response = self.client.search(index=self.index, body=self._body(query, top_k, filter))
+        response = self.client.search(
+            index=self.index, body=self._body(query, top_k, filter)
+        )
         return self._parse(response)
 
     async def asearch(
@@ -155,21 +282,33 @@ class OpenSearchSparseStore:
     def _body(
         self, query: str, top_k: int, filter: MetadataFilter | None
     ) -> dict[str, Any]:
+        """Build the query body.
+
+        The query is tokenized with the same function the index used, so the terms the
+        cluster scores are exactly the terms the BM25 adapter would have scored.
+        """
+        tokens = tokenize(query or "")
         body: dict[str, Any] = {
             "size": top_k,
             "query": {
                 "bool": {
                     "must": [
-                        {
-                            "multi_match": {
-                                "query": query,
-                                "fields": [self.text_field],
-                            }
-                        }
+                        {"match": {self.tokens_field: " ".join(tokens)}},
                     ]
                 }
             },
+            # Equal scores are broken by document id and then by chunk id, both taken
+            # from the chunk itself. The in-process adapter computes the same order,
+            # so the two backends rank identically.
+            "sort": [
+                {"_score": {"order": "desc"}},
+                {"doc_id": {"order": "asc", "missing": "_last"}},
+                {self.chunk_id_field: {"order": "asc"}},
+            ],
         }
+        if not tokens:
+            # An empty query would match everything; an empty filter clause must not.
+            body["query"]["bool"]["must"] = [{"match_none": {}}]
         clauses = opensearch_clauses(filter)
         if clauses:
             body["query"]["bool"]["filter"] = clauses

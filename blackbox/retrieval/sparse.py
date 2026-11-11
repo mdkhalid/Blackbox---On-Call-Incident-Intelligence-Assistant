@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,10 @@ from blackbox.retrieval.models import RetrievedChunk
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+# Sorts after every real document id, so a chunk without one lands last. The
+# OpenSearch adapter asks for the same with `missing: _last`.
+_MISSING_DOC_ID = "￿"
 
 
 def tokenize(text: str) -> list[str]:
@@ -68,6 +73,12 @@ class _Corpus:
     metas: list[dict]
     by_id: dict[str, int]
     bm25: Any
+
+
+def _doc_id(metadata: dict) -> str:
+    """The document id, or a sentinel that sorts last."""
+    value = (metadata or {}).get("doc_id")
+    return str(value) if value else _MISSING_DOC_ID
 
 
 class SparseRetriever:
@@ -152,6 +163,25 @@ class SparseRetriever:
             metadata=dict(corpus.metas[index]),
         )
 
+    # ---- write path ----
+
+    def upsert_chunks(self, chunks: Iterable[Any]) -> int:
+        """Accept a write; the corpus itself comes from the dense store.
+
+        This adapter derives its corpus from the vector store, which the ingestion
+        pipeline writes to first, so there is nothing to store here. The write only
+        marks the index stale, and the next `rebuild` picks up the new corpus. The
+        OpenSearch adapter, which owns its index, really does store the chunks.
+        """
+        count = sum(1 for _ in chunks)
+        if count:
+            self.invalidate()
+        return count
+
+    def delete_by_doc(self, doc_id: str) -> None:
+        """Accept a delete; the corpus itself comes from the dense store."""
+        self.invalidate()
+
     # ---- search ----
 
     def search(
@@ -180,7 +210,16 @@ class SparseRetriever:
                 continue
             candidates.append((i, float(score)))
 
-        candidates.sort(key=lambda pair: pair[1], reverse=True)
+        # Equal scores are broken by document id and then by chunk id. Both come from
+        # the chunk itself, so the ranking does not depend on the dense store's
+        # internal id order, and the OpenSearch adapter can compute the same order.
+        candidates.sort(
+            key=lambda pair: (
+                -pair[1],
+                _doc_id(corpus.metas[pair[0]]),
+                corpus.ids[pair[0]],
+            )
+        )
 
         out: list[RetrievedChunk] = []
         for rank, (i, score) in enumerate(candidates[:top_k], start=1):

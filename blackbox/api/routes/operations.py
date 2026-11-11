@@ -52,6 +52,7 @@ async def ingest(
         pipeline = IngestionPipeline(
             services.retriever.vectorstore,
             services.entity_store,
+            sparse_store=services.retriever.sparse,
             batch_size=services.config.ingestion.batch_size_chunks,
         )
         results = pipeline.ingest_directory(root, force=payload.refresh)

@@ -41,6 +41,10 @@ rag = [
 rerank = [
     "sentence-transformers>=3.0",
 ]
+# optional: the sparse retrieval backend that scales past a single pod
+search = [
+    "opensearch-py>=3.0",
+]
 db = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",

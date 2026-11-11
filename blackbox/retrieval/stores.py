@@ -12,8 +12,10 @@ a candidate set in Python.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol, runtime_checkable
 
+from blackbox.ingestion.models import Chunk
 from blackbox.retrieval.filters import MetadataFilter
 from blackbox.retrieval.models import RetrievedChunk
 
@@ -37,6 +39,9 @@ class SparseStore(Protocol):
     `rebuild` exists so the corpus-derived index can be rebuilt off the request path:
     the ingestion worker rebuilds it and publishes it, and the request path only ever
     reads an index that already exists.
+
+    `upsert_chunks` and `delete_by_doc` are the write path. The ingestion pipeline
+    writes the dense collection and the sparse index together, so the two never drift.
     """
 
     def search(
@@ -47,6 +52,10 @@ class SparseStore(Protocol):
     ) -> list[RetrievedChunk]: ...
 
     def get_chunk(self, chunk_id: str) -> RetrievedChunk | None: ...
+
+    def upsert_chunks(self, chunks: Iterable[Chunk]) -> int: ...
+
+    def delete_by_doc(self, doc_id: str) -> None: ...
 
     def invalidate(self) -> None: ...
 

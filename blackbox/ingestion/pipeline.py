@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from blackbox.ingestion.chunkers import (
     chunk_alert,
@@ -41,9 +42,19 @@ def content_hash(text: str) -> str:
 
 
 class IngestionPipeline:
-    def __init__(self, vectorstore: ChromaVectorStore, entity_store: SqlAlchemyEntityStore, batch_size: int = 64):
+    def __init__(
+        self,
+        vectorstore: ChromaVectorStore,
+        entity_store: SqlAlchemyEntityStore,
+        sparse_store: Any | None = None,
+        batch_size: int = 64,
+    ):
         self.vs = vectorstore
         self.es = entity_store
+        # The sparse leg's store, when it is a real one (OpenSearch). The dense
+        # collection and the sparse index are written together so the two cannot
+        # drift apart.
+        self.sparse = sparse_store
         self.batch_size = batch_size
 
     def _loader_chunker(self, doc_type: str):
@@ -75,6 +86,8 @@ class IngestionPipeline:
         # delete old
         if existing is not None:
             self.vs.delete_by_doc(doc.doc_id)
+            if self.sparse is not None:
+                self.sparse.delete_by_doc(doc.doc_id)
             self.es.delete_doc_entities(doc.doc_id)
 
         # extract entities
@@ -103,6 +116,8 @@ class IngestionPipeline:
         for i in range(0, len(chunks), self.batch_size):
             batch = chunks[i : i + self.batch_size]
             n = self.vs.upsert_chunks(batch)
+            if self.sparse is not None:
+                self.sparse.upsert_chunks(batch)
             total += n
         self.es.record_ingested(doc.doc_id, h, [c.chunk_id for c in chunks])
         return {"doc_id": doc.doc_id, "status": "ingested", "chunks": total}
