@@ -18,7 +18,7 @@ Last updated: 2026-11-11
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 388 passing, `ruff` clean, `mypy` clean |
+| Tests | 395 passing, `ruff` clean, `mypy` clean |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
@@ -62,7 +62,7 @@ and the filter compilation are in place, so the adapters can be built against th
 
 ### Resume point (next session)
 
-State: clean working tree; **388 tests green**, `ruff` clean, `mypy` clean; Docker available;
+State: clean working tree; **395 tests green**, `ruff` clean, `mypy` clean; Docker available;
 Phase 1 closed and the audit remediation closed. Nothing is uncommitted.
 
 **First Phase 2 package (do this next):**
@@ -300,6 +300,8 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-11 | Audit finding 5: async graph nodes, async providers, concurrent retrieval legs, bounded pool | ✅ | `03c72f4` |
 | 2026-11-11 | Audit finding 8: ingest and eval answer `202 {job_id}` and run on a background worker | ✅ | `12514ce` |
 | 2026-11-11 | Audit finding 6: `SparseStore` protocol, OpenSearch adapter, off-path index rebuild | ✅ | `0ba7279` |
+| 2026-11-11 | Audit remediation documented across the tracker, audit and README | ✅ | `739a491` |
+| 2026-11-11 | Stale local schema broke startup with no explanation; detected and recreated outside prod | ✅ | `266f809` |
 
 ## 12. Update protocol
 

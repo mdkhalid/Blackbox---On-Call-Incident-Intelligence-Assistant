@@ -39,7 +39,7 @@ Related documents:
 | [8](#8-ingest-and-eval-block-the-worker-) | 🟡 | Scaling | Operational endpoints run synchronously instead of `202` + job | ✅ `12514ce` |
 | [9](#9-mypy-errors-with-no-type-check-gate-) | 🟡 | Quality | 35 type errors, CI never runs mypy | ✅ `b01f724` |
 
-**After the fixes:** 388 tests green, `ruff` clean, `mypy` clean, CI gates on all three.
+**After the fixes:** 395 tests green, `ruff` clean, `mypy` clean, CI gates on all three.
 
 ### What is genuinely good
 
@@ -793,9 +793,9 @@ At audit time (commit `d568250`):
   OS temp directory; the scripts were deleted afterwards and no reproduction artefacts were
   left in the repository.
 
-After the fixes (commit `0ba7279`):
+After the fixes (commit `266f809`):
 
-- `pytest -q` — **388 passed**.
+- `pytest -q` — **395 passed**.
 - `ruff check blackbox tests scripts alembic` — **clean**.
 - `mypy blackbox` — **clean** (92 source files checked).
 - CI runs lint, mypy, tests and the migration check.
@@ -804,3 +804,27 @@ After the fixes (commit `0ba7279`):
 - The in-memory SQLite bug that the async work exposed was confirmed with a direct
   reproduction: a table created on the main thread is *not* visible to a worker thread on
   `sqlite:///:memory:`.
+- A server smoke test against a real uvicorn (not the TestClient) confirmed the SSE
+  ordering end to end: `node -> token -> final`, with every token event after the node
+  that finalises the answer.
+
+## Appendix C — One more bug, found by the smoke test
+
+The server smoke test was run against a real uvicorn rather than the test client, and it
+failed where the test suite passed. The cause was not a regression but a pre-existing defect
+that the test client could not see.
+
+**A local database written by an older version of the models broke the app.**
+`create_all` creates missing tables but never alters an existing one, so a `data/blackbox.db`
+written before Phase 1's `tenant_id` column kept its old columns, and every query against
+the new column failed with `no such column: conversations.tenant_id`. The app could not be
+started at all against such a database, and nothing in the logs explained why.
+
+Fixed in `266f809`: a local SQLite database whose schema no longer matches the models is
+detected and recreated — outside production only, because production owns its schema with
+Alembic. `blackbox/db.py` holds the detection; `AppServices._recreate_if_stale` holds the
+policy.
+
+The smoke test also confirmed that the refactors did not change retrieval behaviour: the
+measured MRR on the seeded corpus is unchanged at 0.9214 for hybrid RRF and 0.8667 with
+reranking, the same numbers `docs/retrieval-results.md` reports.
