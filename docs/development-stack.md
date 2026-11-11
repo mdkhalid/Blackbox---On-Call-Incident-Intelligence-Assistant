@@ -23,7 +23,7 @@
 - Redis (redis-py) for: LLM response cache, retrieval cache, embedding cache, session state (optional but recommended).
 
 ## Keyword Search
-- BM25 in-process via `rank_bm25` (fine for corpus size). Alternative: Postgres full-text.
+- BM25 in-process, computed locally with Lucene's formula (fine for corpus size). Alternative: Postgres full-text.
 
 ## Observability
 - structlog (JSON logging)

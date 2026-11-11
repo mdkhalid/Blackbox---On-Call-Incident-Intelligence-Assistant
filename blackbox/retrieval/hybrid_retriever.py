@@ -445,7 +445,7 @@ class HybridRetriever(BaseRetriever):
     async def aretrieve(self, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         """Async entry point; dense and sparse run concurrently in threads.
 
-        Chroma and rank_bm25 are blocking, so each leg goes to a worker thread while
+        Chroma and the BM25 index are blocking, so each leg goes to a worker thread while
         the async wrapper enforces the real deadline.
         """
         from blackbox.retrieval.timeout import with_timeout

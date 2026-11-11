@@ -19,8 +19,10 @@ Two properties matter for the request path:
 """
 from __future__ import annotations
 
+import math
 import re
 import threading
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -79,6 +81,69 @@ def _doc_id(metadata: dict) -> str:
     """The document id, or a sentinel that sorts last."""
     value = (metadata or {}).get("doc_id")
     return str(value) if value else _MISSING_DOC_ID
+
+
+class BM25Index:
+    """Lucene's BM25, computed locally.
+
+    `rank_bm25` is a different implementation of the same idea: it uses
+    `log((N - df + 0.5) / (df + 0.5))` where Lucene uses
+    `log(1 + (N - df + 0.5) / (df + 0.5))`, and it replaces a negative inverse
+    document frequency with an epsilon. The two rank the same corpus slightly
+    differently.
+
+    That difference matters here. The OpenSearch adapter scores with Lucene, so an
+    adapter built on `rank_bm25` was not measuring the system the production backend
+    actually runs, and every measurement taken against it was a measurement of
+    something else. Computing Lucene's formula locally makes the two adapters produce
+    the same scores, which is what lets the migration be shown to be
+    behaviour-preserving rather than merely close.
+    """
+
+    def __init__(
+        self, corpus: list[list[str]], *, k1: float = 1.5, b: float = 0.75
+    ) -> None:
+        self.k1 = k1
+        self.b = b
+        self.doc_count = len(corpus)
+        self.lengths: list[int] = []
+        postings: dict[str, list[tuple[int, int]]] = {}
+        doc_freqs: Counter[str] = Counter()
+        for index, tokens in enumerate(corpus):
+            self.lengths.append(len(tokens))
+            counts = Counter(tokens)
+            for term, freq in counts.items():
+                postings.setdefault(term, []).append((index, freq))
+                doc_freqs[term] += 1
+        self.postings = postings
+        self.total_length = sum(self.lengths)
+        self.avg_length = (self.total_length / self.doc_count) if self.doc_count else 0.0
+        # Lucene's inverse document frequency. It is always positive, which is one of
+        # the places `rank_bm25` differs.
+        self.idf = {
+            term: math.log(1.0 + (self.doc_count - df + 0.5) / (df + 0.5))
+            for term, df in doc_freqs.items()
+        }
+
+    def scores(self, query_terms: list[str]) -> list[float]:
+        """The BM25 score of every document for the query."""
+        out = [0.0] * self.doc_count
+        if not self.doc_count or not query_terms or not self.avg_length:
+            return out
+        for term, query_freq in Counter(query_terms).items():
+            idf = self.idf.get(term)
+            if idf is None:
+                continue
+            for index, freq in self.postings.get(term, ()):
+                length = self.lengths[index]
+                norm = 1.0 - self.b + self.b * (length / self.avg_length)
+                out[index] += (
+                    query_freq
+                    * idf
+                    * (freq * (self.k1 + 1.0))
+                    / (freq + self.k1 * norm)
+                )
+        return out
 
 
 class SparseRetriever:
@@ -141,11 +206,7 @@ class SparseRetriever:
         metas = [dict(m or {}) for m in (data.get("metadatas") or [])]
         by_id = {chunk_id: index for index, chunk_id in enumerate(ids)}
 
-        bm25 = None
-        if ids:
-            from rank_bm25 import BM25Okapi
-
-            bm25 = BM25Okapi([tokenize(text or "") for text in texts])
+        bm25 = BM25Index([tokenize(text or "") for text in texts]) if ids else None
         return _Corpus(ids=ids, texts=texts, metas=metas, by_id=by_id, bm25=bm25)
 
     @property
@@ -198,7 +259,7 @@ class SparseRetriever:
         if not query_tokens:
             return []
 
-        scores = corpus.bm25.get_scores(query_tokens)
+        scores = corpus.bm25.scores(query_tokens)
 
         # Metadata scoping happens before ranking, so the returned top-k is drawn from the
         # filtered candidate set rather than the whole corpus.

@@ -177,12 +177,122 @@ def fusion_sweep(
     """
     rows: list[tuple[float, float, float]] = []
     steps = round(1.0 / step)
-    for i in range(steps + 1):
-        d = round(i * step, 2)
-        strategy = Strategy("sweep", rerank=False, dense_weight=d, sparse_weight=round(1 - d, 2))
-        metrics, _ = run_strategy(retriever, dataset["questions"], strategy, k=k)
-        rows.append((d, round(1 - d, 2), metrics.mrr))
+    # The sweep drives the retriever's own config, so the original has to be restored:
+    # leaving it mutated would silently turn every later measurement into a
+    # dense-only one.
+    original = retriever.config
+    try:
+        for i in range(steps + 1):
+            d = round(i * step, 2)
+            strategy = Strategy(
+                "sweep", rerank=False, dense_weight=d, sparse_weight=round(1 - d, 2)
+            )
+            metrics, _ = run_strategy(retriever, dataset["questions"], strategy, k=k)
+            rows.append((d, round(1 - d, 2), metrics.mrr))
+    finally:
+        retriever.config = original
     return rows
+
+
+def tiebreak_sweep(
+    retriever: HybridRetriever, dataset: dict, *, k: int
+) -> list[tuple[str, float, float]]:
+    """Measure how much the metrics move when only the tie-break changes.
+
+    The BM25 leg returns groups of documents that score *identically*. The order
+    inside a group is therefore decided entirely by the tie-break policy, not by the
+    retrieval model. If the metric moves when only the policy changes, the metric is
+    partly measuring the policy.
+
+    This is worth knowing before reading anything into a third decimal place, so it
+    is measured rather than asserted.
+    """
+    from blackbox.retrieval.models import RetrievedChunk
+    from blackbox.retrieval.sparse import tokenize
+
+    policies = ("doc_id_asc", "chunk_id_asc", "chunk_id_desc", "date_asc", "date_desc")
+    rows: list[tuple[str, float, float]] = []
+    sparse = retriever.sparse
+    original = sparse.search
+    original_config = retriever.config
+
+    def search_with(policy):
+        def search(query, top_k, filter=None):
+            corpus = sparse._current()
+            if corpus.bm25 is None:
+                return []
+            query_tokens = tokenize(query)
+            if not query_tokens:
+                return []
+            scores = corpus.bm25.scores(query_tokens)
+            candidates = []
+            for i, score in enumerate(scores):
+                if score <= 0.0:
+                    continue
+                if filter is not None and not filter.matches(corpus.metas[i]):
+                    continue
+                candidates.append((i, float(score)))
+
+            def doc_id(index):
+                value = corpus.metas[index].get("doc_id")
+                return str(value) if value else ""
+
+            def date(index):
+                value = corpus.metas[index].get("date_ord")
+                return value if isinstance(value, int) else -1
+
+            if policy == "doc_id_asc":
+                candidates.sort(
+                    key=lambda p: (-p[1], doc_id(p[0]), corpus.ids[p[0]])
+                )
+            elif policy == "chunk_id_asc":
+                candidates.sort(key=lambda p: (-p[1], corpus.ids[p[0]]))
+            elif policy == "chunk_id_desc":
+                candidates.sort(key=lambda p: (-p[1], _Reversed(corpus.ids[p[0]])))
+            elif policy == "date_asc":
+                candidates.sort(
+                    key=lambda p: (-p[1], date(p[0]), corpus.ids[p[0]])
+                )
+            else:
+                candidates.sort(
+                    key=lambda p: (-p[1], -date(p[0]), corpus.ids[p[0]])
+                )
+
+            out = []
+            for rank, (i, score) in enumerate(candidates[:top_k], start=1):
+                out.append(
+                    RetrievedChunk(
+                        chunk_id=corpus.ids[i],
+                        text=corpus.texts[i],
+                        metadata=dict(corpus.metas[i]),
+                        sparse_score=score,
+                        sparse_rank=rank,
+                    )
+                )
+            return out
+
+        return search
+
+    try:
+        for policy in policies:
+            sparse.search = search_with(policy)
+            strategy = Strategy("tiebreak", rerank=False)
+            metrics, _ = run_strategy(retriever, dataset["questions"], strategy, k=k)
+            rows.append((policy, metrics.mrr, metrics.recall))
+    finally:
+        sparse.search = original
+        retriever.config = original_config
+    return rows
+
+
+class _Reversed(str):
+    """A string that sorts in the opposite direction."""
+
+    def __lt__(self, other):
+        return str.__gt__(self, other)
+
+    def __gt__(self, other):
+        return str.__lt__(self, other)
 
 
 def render_markdown(
@@ -193,6 +303,7 @@ def render_markdown(
     sweep: list[tuple[float, float, float]] | None,
     reranker_name: str,
     embedder_name: str,
+    tiebreak: list[tuple[str, float, float]] | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# Retrieval Results — Blackbox")
@@ -270,6 +381,34 @@ def render_markdown(
                 " a weight that wins by a single question is not a finding. Extra sparse weight"
                 " within the plateau is preferred since exact-token queries are the product's"
                 " reason to exist."
+            )
+            lines.append("")
+
+    if tiebreak:
+        lines.append("## Tie-break sensitivity")
+        lines.append("")
+        lines.append(
+            "The BM25 leg returns groups of documents that score *identically*. The order"
+            " inside a group is decided entirely by the tie-break policy, not by the"
+            " retrieval model. This table re-runs the hybrid strategy with only the"
+            " tie-break changed."
+        )
+        lines.append("")
+        lines.append(f"| Tie-break | MRR | Recall@{k} |")
+        lines.append("|---|---|---|")
+        for policy, mrr, recall in tiebreak:
+            lines.append(f"| {policy} | {mrr:.4f} | {recall:.4f} |")
+        lines.append("")
+        mrrs = [row[1] for row in tiebreak]
+        if len(mrrs) > 1:
+            lines.append(
+                f"MRR moves by {max(mrrs) - min(mrrs):.4f} across tie-break policies that"
+                " are all equally reasonable. The shipped policy is `doc_id_asc`, because"
+                " it is the only one derived from the chunk's own content rather than from"
+                " a store's internal ordering: it makes the ranking reproducible and"
+                " identical across sparse backends. The spread is the honest precision of"
+                " this metric on this corpus, and it is larger than most of the"
+                " differences in the comparison table above."
             )
             lines.append("")
 
@@ -402,6 +541,11 @@ def main() -> None:
     parser.add_argument("--persist-dir", default=None)
     parser.add_argument("--refresh", action="store_true", help="re-ingest the corpus first")
     parser.add_argument("--fusion-sweep", action="store_true", help="also sweep fusion weights")
+    parser.add_argument(
+        "--tie-break-sweep",
+        action="store_true",
+        help="also measure how much the metrics move under different tie-break policies",
+    )
     parser.add_argument("--write", action="store_true", help="write docs/retrieval-results.md")
     parser.add_argument("--json-out", default=None, help="dump raw results to this path")
     args = parser.parse_args()
@@ -414,6 +558,9 @@ def main() -> None:
 
     results = run_all(retriever, dataset, k=args.k)
     sweep = fusion_sweep(retriever, dataset, k=args.k) if args.fusion_sweep else None
+    tiebreak = (
+        tiebreak_sweep(retriever, dataset, k=args.k) if args.tie_break_sweep else None
+    )
 
     print()
     print(f"{'strategy':<22} {'MRR':>8} {'R@k':>8} {'P@k':>8} {'hit':>8} {'ms':>8}")
@@ -434,6 +581,7 @@ def main() -> None:
         sweep=sweep,
         reranker_name=reranker_name,
         embedder_name=embedder_name,
+        tiebreak=tiebreak,
     )
     if args.write:
         RESULTS_DOC.write_text(markdown, encoding="utf-8")
