@@ -160,6 +160,10 @@ def build_context(
         "total_cap": budget.total_cap_tokens,
         "input_cap": input_cap,
         "output_headroom": budget.output_headroom_tokens,
+        # The exact size of the prompt handed to the provider. It is `None` here
+        # because no prompt has been built yet; the generation node fills it in, and a
+        # turn that never generates (an honest failure) leaves it `None`.
+        "prompt_tokens": None,
         # What is left of the input ceiling for retrieved chunks. The graph fills this
         # once the chunks are known and reports the real figure back.
         "chunk_allowance": max(0, input_cap - total()),

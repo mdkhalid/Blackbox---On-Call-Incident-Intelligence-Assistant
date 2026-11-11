@@ -5,7 +5,7 @@ need to get one detail right: what an in-memory SQLite database actually is.
 """
 from __future__ import annotations
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, MetaData, create_engine, inspect
 from sqlalchemy.pool import StaticPool
 
 
@@ -38,3 +38,27 @@ def build_engine(db_url: str, **kwargs) -> Engine:
         )
     connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
     return create_engine(db_url, future=True, connect_args=connect_args, **kwargs)
+
+
+def schema_is_current(engine: Engine, metadata: MetaData) -> bool:
+    """Whether the database's tables match the models.
+
+    `create_all` creates missing tables but never alters an existing one, so a
+    database written by an older version of the models keeps its old columns and
+    every query against a new column fails with "no such column".
+    """
+    inspector = inspect(engine)
+    for table in metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            return False
+        actual = {column["name"] for column in inspector.get_columns(table.name)}
+        expected = {column.name for column in table.columns}
+        if not expected <= actual:
+            return False
+    return True
+
+
+def recreate(engine: Engine, metadata: MetaData) -> None:
+    """Drop and recreate the tables. Destroys everything stored in them."""
+    metadata.drop_all(engine)
+    metadata.create_all(engine)

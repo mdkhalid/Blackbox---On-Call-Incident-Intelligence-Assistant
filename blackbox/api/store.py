@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from sqlalchemy import JSON, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from blackbox.db import build_engine
+from blackbox.db import build_engine, recreate, schema_is_current
 from blackbox.memory import ConversationMemory
 
 DEFAULT_TENANT = "default"
@@ -143,6 +143,19 @@ class SqlAlchemyConversationRepository:
         method remains for fast test setup and a zero-friction local clone.
         """
         Base.metadata.create_all(self.engine)
+
+    def schema_is_current(self) -> bool:
+        """Whether the database's tables match the models.
+
+        `create_all` creates missing tables but never alters an existing one, so a
+        database written by an older version of the models keeps its old columns and
+        every query against a new column fails with "no such column".
+        """
+        return schema_is_current(self.engine, Base.metadata)
+
+    def recreate(self) -> None:
+        """Drop and recreate the tables. Destroys the stored conversations."""
+        recreate(self.engine, Base.metadata)
 
     def _session(self) -> Session:
         return self.SessionLocal()

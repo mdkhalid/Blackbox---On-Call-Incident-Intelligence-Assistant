@@ -140,18 +140,20 @@ class JobQueue:
         _safe_log("job_started", job_id=job.id, kind=self.kind)
         try:
             result = _invoke(fn)
-            with self._lock:
-                job.result = result if isinstance(result, dict) else {"value": result}
-                job.status = SUCCEEDED
-            _safe_log("job_succeeded", job_id=job.id, kind=self.kind)
         except BaseException as exc:  # noqa: BLE001 - a failed job must not kill the worker
             with self._lock:
-                job.status = FAILED
+                # The error and the finish time are published *before* the terminal
+                # status, so a reader that sees "failed" also sees why.
                 job.error = f"{type(exc).__name__}: {exc}"
-            _safe_log("job_failed", job_id=job.id, kind=self.kind, exc_info=True)
-        finally:
-            with self._lock:
                 job.finished_at = _now()
+                job.status = FAILED
+            _safe_log("job_failed", job_id=job.id, kind=self.kind)
+            return
+        with self._lock:
+            job.result = result if isinstance(result, dict) else {"value": result}
+            job.finished_at = _now()
+            job.status = SUCCEEDED
+        _safe_log("job_succeeded", job_id=job.id, kind=self.kind)
 
 
 def _safe_log(event: str, **fields: Any) -> None:

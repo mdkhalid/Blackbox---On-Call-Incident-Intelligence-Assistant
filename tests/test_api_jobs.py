@@ -19,6 +19,24 @@ def _wait(job, *, timeout_s: float = 10.0):
     raise AssertionError(f"job did not finish: {job.status}")
 
 
+def test_a_failed_job_publishes_its_error_with_its_status():
+    """A reader that sees "failed" must also see why it failed."""
+    queue = JobQueue("test")
+
+    def boom():
+        raise RuntimeError("the corpus is corrupt")
+
+    job = queue.submit(boom, tenant_id="t", subject="s")
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and job.status != FAILED:
+        time.sleep(0.01)
+    assert job.status == FAILED
+    assert job.error is not None
+    assert "RuntimeError" in job.error
+    assert "the corpus is corrupt" in job.error
+    assert job.finished_at is not None
+
+
 def test_a_job_runs_and_reports_its_result():
     queue = JobQueue("test")
     job = queue.submit(lambda: {"documents": 60}, tenant_id="t", subject="s")

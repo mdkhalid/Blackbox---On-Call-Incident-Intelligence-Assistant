@@ -60,6 +60,7 @@ class AppServices:
                 return
             try:
                 self.conversations.init()
+                self._recreate_if_stale(self.conversations)
                 self.storage_ready = True
                 if not self.storage_backend:
                     self.storage_backend = _backend_name(self.settings)
@@ -78,11 +79,39 @@ class AppServices:
                     fallback_url, memory_config=self.config.memory
                 )
                 self.conversations.init()
+                self._recreate_if_stale(self.conversations)
                 self.storage_ready = True
                 self.storage_backend = fallback_url
             except Exception as exc:
                 logger.error("conversation_store_fallback_failed", error=str(exc))
                 raise PersistenceUnavailable("conversation store is unavailable") from exc
+
+    def _recreate_if_stale(self, repository) -> None:
+        """Recreate a stale local development database.
+
+        `create_all` creates missing tables but never alters an existing one, so a
+        database written by an older version of the models keeps its old columns and
+        every query against a new column fails with "no such column". A developer
+        whose local database predates a schema change would otherwise find the app
+        failing at the first query, with nothing in the logs to explain it.
+
+        The local development database holds scratch conversations, so it is recreated
+        rather than left broken. This never applies to Postgres, and never in
+        production, where Alembic owns the schema.
+        """
+        if self.settings.env == "prod":
+            return
+        url = str(repository.engine.url)
+        if not url.startswith("sqlite"):
+            return
+        if repository.schema_is_current():
+            return
+        logger.warning(
+            "conversation_store_schema_stale",
+            url=url,
+            action="recreated",
+        )
+        repository.recreate()
 
     # ---- runtime ----
 
