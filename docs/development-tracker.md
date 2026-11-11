@@ -6,6 +6,7 @@ next.
 
 - **Architecture and production contract:** [`scaling-and-production-readiness.md`](scaling-and-production-readiness.md)
 - **Completed assignment phases:** [`phase-wise-plan.md`](phase-wise-plan.md)
+- **Open bugs & scaling gaps (audit):** [`code-audit-findings.md`](code-audit-findings.md)
 - **Status legend:** ✅ done · ◐ in progress · ⬜ not started · ⚠ blocked
 
 Last updated: 2026-11-10

@@ -8,6 +8,23 @@ from langchain_core.documents import Document
 
 
 @dataclass
+class RetrievalResult:
+    """Chunks plus the timing and count trail of one retrieval.
+
+    Timings travel with the result instead of being stashed on the retriever instance.
+    The retriever is a process-wide singleton shared by every request, so instance state
+    is shared state: one request's latencies end up attributed to whichever concurrent
+    request happened to publish last. Returning them per call removes the whole class of
+    cross-contaminated trace data.
+    """
+
+    chunks: list[RetrievedChunk] = field(default_factory=list)
+    timings: dict[str, float] = field(default_factory=dict)
+    counts: dict[str, int] = field(default_factory=dict)
+    cached: bool = False
+
+
+@dataclass
 class RetrievedChunk:
     """A single chunk with the score trail from every retrieval stage.
 

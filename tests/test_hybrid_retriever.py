@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -34,8 +37,7 @@ def test_hybrid_finds_exact_error_code_cross_section(retriever):
 
 
 def test_hybrid_pulls_from_both_retrievers(retriever):
-    retriever.retrieve("checkout connection pool", top_k=5)
-    counts = retriever.last_counts
+    counts = retriever.retrieve_detailed("checkout connection pool", top_k=5).counts
     assert counts["dense"] > 0
     assert counts["sparse"] > 0
     assert counts["fused"] > 0
@@ -119,11 +121,54 @@ def test_score_floor_keeps_strong_matches(vectorstore, retrieval_config):
 
 
 def test_timings_are_recorded_per_stage(retriever):
-    retriever.retrieve("checkout pool", top_k=3)
-    timings = retriever.last_timings
+    timings = retriever.retrieve_detailed("checkout pool", top_k=3).timings
     for stage in ("dense_ms", "sparse_ms", "fuse_ms", "rerank_ms", "total_ms"):
         assert stage in timings
         assert timings[stage] >= 0
+
+
+def test_retriever_keeps_no_shared_per_request_state(retriever):
+    """Timings must not be published on the retriever instance.
+
+    The retriever is a process-wide singleton, so instance state is shared by every
+    in-flight request. The audit found two concurrent requests reading each other's
+    latencies because the timings were stashed on the instance.
+    """
+    assert not hasattr(retriever, "last_timings")
+    assert not hasattr(retriever, "last_counts")
+
+
+def test_concurrent_retrievals_keep_their_own_timings(retriever, monkeypatch):
+    """Two concurrent retrievals must not overwrite each other's timings."""
+    slow_query = "ERR_POOL_EXHAUSTED checkout-service"
+    fast_query = "pool saturation p99 latency"
+    delays = {slow_query: 0.3, fast_query: 0.0}
+
+    original_search = retriever.dense.search
+
+    def slow_dense_search(query, **kwargs):
+        time.sleep(delays.get(query, 0.0))
+        return original_search(query, **kwargs)
+
+    monkeypatch.setattr(retriever.dense, "search", slow_dense_search)
+
+    results: dict[str, object] = {}
+
+    def run(query: str) -> None:
+        results[query] = retriever.retrieve_detailed(query, top_k=3)
+
+    threads = [threading.Thread(target=run, args=(query,)) for query in delays]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    slow = results[slow_query]
+    fast = results[fast_query]
+    assert slow.timings is not fast.timings
+    # The slow leg really did take longer, so a shared timings dict would have given
+    # both requests the same number.
+    assert fast.timings["dense_ms"] < slow.timings["dense_ms"]
 
 
 def test_timeout_guard_raises(vectorstore):

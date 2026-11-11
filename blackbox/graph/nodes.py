@@ -17,6 +17,7 @@ from blackbox.graph.prompts import (
     GENERATE_SYSTEM,
     GRADE_SYSTEM,
     REWRITE_SYSTEM,
+    evidence_lines,
     generate_prompt,
     grade_prompt,
     rewrite_prompt,
@@ -25,6 +26,7 @@ from blackbox.llm.base import LLMProvider, LLMResponse
 from blackbox.logging_setup import get_logger
 from blackbox.memory.tokens import count_tokens
 from blackbox.observability.callbacks import log_llm_call
+from blackbox.retrieval.models import RetrievalResult
 
 logger = get_logger(__name__)
 
@@ -47,18 +49,18 @@ def retrieve_node(state: dict, deps: GraphDeps) -> dict:
     filters = state.get("filters") or None
 
     chunks: list[dict] = []
+    timings: dict[str, float] = dict(state.get("timings") or {})
     error = state.get("error")
     try:
-        hits = deps.retriever.retrieve(
-            query, top_k=deps.config.retrieval.top_k, filter=filters
+        result = _retrieve(
+            deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters
         )
-        chunks = [_serialize_chunk(hit) for hit in hits]
+        chunks = [_serialize_chunk(hit) for hit in result.chunks]
+        timings.update(result.timings)
     except Exception as exc:  # noqa: BLE001 - a store failure must become an honest answer
         error = f"retrieval_failed:{type(exc).__name__}"
         logger.warning("retrieve_node_failed", query=query[:120], error=error)
 
-    timings = dict(state.get("timings") or {})
-    timings.update(getattr(deps.retriever, "last_timings", {}) or {})
     timings["last_retrieve_ms"] = _elapsed(started)
 
     return {
@@ -203,9 +205,41 @@ def rewrite_node(state: dict, deps: GraphDeps) -> dict:
 def generate_node(state: dict, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
-    chunks = _fit_chunks(
-        state.get("chunks") or [], deps.config.budget.retrieved_chunks_tokens
+    context = state.get("context") or ""
+    report = dict(state.get("budget") or {})
+    all_chunks = list(state.get("chunks") or [])
+
+    # The chunk room is the smaller of the configured chunk allocation and whatever the
+    # memory side left of the input ceiling. Measuring the prompt that is actually
+    # built - rather than the retrieval result - is what makes the reported budget
+    # match the request the provider received.
+    ceiling = max(
+        0,
+        deps.config.budget.total_cap_tokens - deps.config.budget.output_headroom_tokens,
     )
+    allowance = min(
+        deps.config.budget.retrieved_chunks_tokens,
+        int(report.get("chunk_allowance", deps.config.budget.retrieved_chunks_tokens)),
+    )
+
+    # The prompt scaffolding (task header, context and evidence labels, the JSON
+    # instruction) is part of the request, so it is measured before the evidence is
+    # added rather than discovered afterwards.
+    base_tokens = count_tokens(
+        GENERATE_SYSTEM + generate_prompt(query, [], context=context or None)
+    )
+    allowance = max(0, min(allowance, ceiling - base_tokens))
+
+    chunks = _fit_chunks(all_chunks, allowance)
+    prompt = generate_prompt(query, chunks, context=context or None)
+    prompt_tokens = count_tokens(GENERATE_SYSTEM + prompt)
+
+    evictions: list[dict] = []
+    while prompt_tokens > ceiling and chunks:
+        chunks.pop()
+        evictions.append({"bucket": "retrieved_chunks", "reason": "prompt_cap"})
+        prompt = generate_prompt(query, chunks, context=context or None)
+        prompt_tokens = count_tokens(GENERATE_SYSTEM + prompt)
 
     if _over_budget(state, deps):
         return {
@@ -225,7 +259,7 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
     call_started = time.perf_counter()
     response = deps.llm.complete(
         system=GENERATE_SYSTEM,
-        prompt=generate_prompt(query, chunks, context=state.get("context") or None),
+        prompt=prompt,
         model=deps.settings.generation_model,
         temperature=0.2,
         max_tokens=deps.config.guardrails.max_answer_tokens,
@@ -244,6 +278,16 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
     return {
         "answer": answer,
         "claims": claims,
+        "budget": _budget_report(
+            report,
+            chunks=chunks,
+            all_chunks=all_chunks,
+            context=context,
+            query=query,
+            prompt_tokens=prompt_tokens,
+            ceiling=ceiling,
+            evictions=evictions,
+        ),
         "llm_calls": int(state.get("llm_calls", 0)) + 1,
         "usage": _merge_usage(state, response),
         "trace": [
@@ -397,16 +441,86 @@ def _serialize_chunk(chunk: Any) -> dict:
     return trail
 
 
+def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any) -> RetrievalResult:
+    """Retrieve chunks together with the timings of *this* call.
+
+    `retrieve_detailed` is the primary API because the retriever is a process-wide
+    singleton: timings kept on the instance are shared by every concurrent request, so
+    one request's trace ends up carrying another's latencies. A retriever that only
+    implements `retrieve` still works; it simply contributes no stage timings.
+    """
+    detailed = getattr(retriever, "retrieve_detailed", None)
+    if callable(detailed):
+        return detailed(query, top_k=top_k, filter=filter)
+    chunks = list(retriever.retrieve(query, top_k=top_k, filter=filter))
+    return RetrievalResult(chunks=chunks)
+
+
 def _fit_chunks(chunks: list[dict], token_cap: int) -> list[dict]:
+    """Fit chunks into the token cap, measuring the evidence as it is rendered.
+
+    The rendered evidence block is what the provider receives, so it is what the cap
+    has to be measured against. A chunk that does not fit on its own is dropped rather
+    than truncated: half an incident section is worse than no evidence at all.
+    """
     kept: list[dict] = []
     used = 0
     for chunk in chunks:
-        size = count_tokens(chunk.get("text") or "")
-        if kept and used + size > token_cap:
+        size = count_tokens(evidence_lines([chunk]))
+        if used + size > token_cap:
             break
         kept.append(chunk)
         used += size
     return kept
+
+
+def _budget_report(
+    report: dict,
+    *,
+    chunks: list[dict],
+    all_chunks: list[dict],
+    context: str,
+    query: str,
+    prompt_tokens: int,
+    ceiling: int,
+    evictions: list[dict],
+) -> dict:
+    """Report the allocation of the request that was actually sent.
+
+    The numbers here are measured on the real strings: the rendered context, the
+    rendered evidence and the prompt handed to the provider. A budget report that
+    estimates a different request than the one that was sent is worse than no report
+    at all, because it gives false confidence that the context window is respected.
+    """
+    buckets = {name: dict(values) for name, values in (report.get("buckets") or {}).items()}
+    sent_evidence = count_tokens(evidence_lines(chunks))
+    requested_evidence = count_tokens(evidence_lines(all_chunks))
+    buckets["retrieved_chunks"] = {
+        "requested": requested_evidence,
+        "allocated": sent_evidence,
+    }
+
+    content_total = (
+        count_tokens(GENERATE_SYSTEM)
+        + count_tokens(context)
+        + sent_evidence
+        + count_tokens(query)
+    )
+
+    merged = dict(report)
+    merged["buckets"] = buckets
+    merged["total_tokens"] = content_total
+    merged["prompt_tokens"] = prompt_tokens
+    merged["input_cap"] = ceiling
+    merged["chunk_allowance"] = max(0, ceiling - content_total)
+    merged["over_cap"] = prompt_tokens > ceiling
+    if evictions:
+        merged["evictions"] = [*(report.get("evictions") or []), *evictions]
+    if sent_evidence < requested_evidence:
+        merged.setdefault("evictions", []).append(
+            {"bucket": "retrieved_chunks", "reason": "generation_fit"}
+        )
+    return merged
 
 
 def _elapsed(started: float) -> float:

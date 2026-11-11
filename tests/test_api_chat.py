@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,14 +14,79 @@ from blackbox.config.settings import (
     RetrievalConfig,
 )
 from blackbox.graph.build import build_graph
+from blackbox.graph.prompts import CHAT_SYSTEM_PROMPT
 from blackbox.ingestion.entity_extraction.store import SqlAlchemyEntityStore
 from blackbox.llm import FakeLLMProvider
+from blackbox.llm.base import LLMResponse
 from blackbox.main import create_app
+from blackbox.memory import count_tokens
 from blackbox.retrieval.hybrid_retriever import build_hybrid_retriever
+from blackbox.text import split_sentences
+
+_EVIDENCE_RE = re.compile(r"^\[([^\]]+)\]\s+(.*)$")
 
 
-@pytest.fixture
-def api_services(tmp_path, vectorstore, settings):
+def _evidence_lines(prompt: str) -> list[tuple[str, str]]:
+    """Parse the EVIDENCE block the same way the offline provider does."""
+    lines = prompt.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == "EVIDENCE:")
+    except StopIteration:
+        return []
+    out: list[tuple[str, str]] = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped.startswith(("Return", "Answer", "QUESTION:", "QUERY:", "ATTEMPT:")):
+            break
+        match = _EVIDENCE_RE.match(stripped)
+        if match:
+            out.append((match.group(1), match.group(2)))
+        elif out and stripped:
+            out[-1] = (out[-1][0], f"{out[-1][1]} {stripped}")
+    return out
+
+
+class UngroundedAnswerProvider(FakeLLMProvider):
+    """Returns one supported claim and one fabricated claim.
+
+    The fabricated sentence shares no content term with any retrieved chunk, so the
+    ground check must strip it. It is the shape of answer the safety requirement is
+    about: a claim that cannot be traced to evidence must never be shipped.
+    """
+
+    FABRICATION = "The moon landing was faked in 1969 by NASA contractors."
+
+    def complete(self, **kwargs):
+        prompt = kwargs.get("prompt", "")
+        if "TASK: GENERATE" not in prompt:
+            return super().complete(**kwargs)
+
+        evidence = _evidence_lines(prompt)
+        if not evidence:
+            return super().complete(**kwargs)
+
+        chunk_id, text = evidence[0]
+        supported = split_sentences(text)[0].rstrip(".")
+        body = json.dumps(
+            {
+                "answer": f"{supported} [{chunk_id}]. {self.FABRICATION}",
+                "claims": [
+                    {"text": supported, "sources": [chunk_id]},
+                    {"text": self.FABRICATION, "sources": [chunk_id]},
+                ],
+            }
+        )
+        response = LLMResponse(
+            text=body, model="fake", prompt_tokens=10, completion_tokens=10
+        )
+        self.calls.append({"task": "generate", "prompt": prompt, "response": body})
+        self.usage["prompt_tokens"] += response.prompt_tokens
+        self.usage["completion_tokens"] += response.completion_tokens
+        self.usage["total_tokens"] += response.total_tokens
+        return response
+
+
+def _make_services(tmp_path, vectorstore, settings, llm) -> AppServices:
     retrieval = RetrievalConfig(
         top_k=3, candidate_pool=10, rerank=False, rerank_provider="none", rewrite_cap=2
     )
@@ -36,7 +102,6 @@ def api_services(tmp_path, vectorstore, settings):
     entity_store = SqlAlchemyEntityStore(f"sqlite:///{tmp_path / 'entities.db'}")
     entity_store.init()
     retriever = build_hybrid_retriever(vectorstore, retrieval)
-    llm = FakeLLMProvider()
     graph = build_graph(
         retriever=retriever,
         llm=llm,
@@ -60,8 +125,19 @@ def api_services(tmp_path, vectorstore, settings):
 
 
 @pytest.fixture
+def api_services(tmp_path, vectorstore, settings):
+    return _make_services(tmp_path, vectorstore, settings, FakeLLMProvider())
+
+
+@pytest.fixture
 def api_client(settings, api_services):
     return TestClient(create_app(settings, services=api_services))
+
+
+@pytest.fixture
+def ungrounded_client(settings, tmp_path, vectorstore):
+    services = _make_services(tmp_path, vectorstore, settings, UngroundedAnswerProvider())
+    return TestClient(create_app(settings, services=services))
 
 
 def parse_sse(body: str) -> list[dict]:
@@ -137,12 +213,57 @@ def test_chat_honest_failure_is_streamed_and_persisted(api_client):
     assert final["status"] == "honest_failure"
     assert "didn't find" in final["answer"]
     assert "didn't find" in streamed_answer(events)
+    # The streamed text and the final answer are the same string: the client never saw
+    # a different answer than the one the server stands behind.
+    assert streamed_answer(events) == final["answer"]
 
     conversation_id = final["conversation_id"]
     trace = api_client.get(f"/api/conversations/{conversation_id}/trace").json()
     nodes = [e["node"] for e in trace["turns"][0]["trace"]]
     assert "rewrite" in nodes
     assert nodes[-1] == "honest_failure"
+
+
+def test_ungrounded_claims_never_reach_the_client(ungrounded_client):
+    """The ground check must run before any answer text is exposed.
+
+    The graph produces the answer in `generate` and strips unsupported claims in
+    `ground_check`. If the token stream is emitted from the `generate` node, the
+    fabricated sentence is on the wire before the check removes it.
+    """
+    events, final = chat(
+        ungrounded_client, "What caused ERR_POOL_EXHAUSTED in checkout-service?"
+    )
+
+    assert final["status"] == "answered"
+    streamed = streamed_answer(events)
+
+    # The fabricated claim was stripped from the answer the server returns...
+    assert UngroundedAnswerProvider.FABRICATION not in final["answer"]
+    # ...and it never appeared on the wire, not even in part.
+    assert UngroundedAnswerProvider.FABRICATION not in streamed
+    for fragment in ("moon", "NASA", "contractors", "1969"):
+        assert fragment not in streamed
+
+    # What the client rendered is exactly what the server stands behind.
+    assert streamed == final["answer"]
+
+
+def test_token_events_start_after_the_ground_check(ungrounded_client):
+    """Token events must not precede the node that finalises the answer."""
+    events, final = chat(
+        ungrounded_client, "What caused ERR_POOL_EXHAUSTED in checkout-service?"
+    )
+
+    kinds = [event["event"] for event in events]
+    node_names = [event["data"]["node"] for event in events if event["event"] == "node"]
+    first_token = kinds.index("token")
+    last_node = len(kinds) - 1 - kinds[::-1].index("node")
+
+    assert "ground_check" in node_names
+    assert last_node < first_token
+    assert kinds[-1] == "final"
+    assert final["answer"]
 
 
 def test_multi_turn_conversation_updates_memory_and_summary(api_client):
@@ -280,3 +401,61 @@ def test_invalid_conversation_id_is_rejected(api_client):
         "/api/chat", json={"message": "hello", "conversation_id": "../../etc/passwd"}
     )
     assert response.status_code == 400
+
+
+def _generate_prompt(api_services) -> str:
+    return next(
+        call["prompt"]
+        for call in api_services.llm.calls
+        if "TASK: GENERATE" in call["prompt"]
+    )
+
+
+def _evidence_block(prompt: str) -> str:
+    start = prompt.index("EVIDENCE:\n") + len("EVIDENCE:\n")
+    end = prompt.index("\n\nQUESTION:")
+    return prompt[start:end]
+
+
+def test_reported_budget_matches_the_prompt_that_was_sent(api_client, api_services):
+    """The budget endpoint must describe the request the provider actually received."""
+    _events, final = chat(
+        api_client, "What caused ERR_POOL_EXHAUSTED in checkout-service?"
+    )
+    report = api_client.get(f"/api/conversations/{final['conversation_id']}/budget").json()
+
+    prompt = _generate_prompt(api_services)
+    sent = CHAT_SYSTEM_PROMPT + prompt
+    assert report["prompt_tokens"] == count_tokens(sent)
+    assert report["buckets"]["retrieved_chunks"]["allocated"] == count_tokens(
+        _evidence_block(prompt)
+    )
+    assert not report["over_cap"]
+
+
+def test_the_real_prompt_never_exceeds_the_input_ceiling(api_client, api_services):
+    """Memory is budgeted before the chunks are retrieved.
+
+    The evidence is added afterwards, so the ceiling has to be enforced on the
+    assembled prompt. A budget checked against the memory side alone lets the real
+    prompt exceed the cap by the size of the evidence.
+    """
+    budget = api_services.config.budget
+    budget.system_prompt_tokens = 200
+    budget.entity_memory_tokens = 100
+    budget.summary_tokens = 100
+    budget.recent_turns_tokens = 100
+    budget.retrieved_chunks_tokens = 2000
+    budget.output_headroom_tokens = 100
+    budget.total_cap_tokens = 700
+
+    _events, final = chat(
+        api_client, "What caused ERR_POOL_EXHAUSTED in checkout-service?"
+    )
+    report = api_client.get(f"/api/conversations/{final['conversation_id']}/budget").json()
+
+    sent = CHAT_SYSTEM_PROMPT + _generate_prompt(api_services)
+    assert report["prompt_tokens"] == count_tokens(sent)
+    assert report["prompt_tokens"] <= budget.total_cap_tokens - budget.output_headroom_tokens
+    assert not report["over_cap"]
+    assert report["input_cap"] == budget.total_cap_tokens - budget.output_headroom_tokens

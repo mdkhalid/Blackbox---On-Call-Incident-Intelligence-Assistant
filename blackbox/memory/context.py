@@ -45,10 +45,24 @@ def build_context(
     question: str,
     budget: BudgetConfig,
 ) -> ContextBundle:
+    """Assemble the memory side of the prompt within the budget.
+
+    The output headroom is reserved, so the *input* ceiling is
+    `total_cap_tokens - output_headroom_tokens`. The headroom is the room reserved for
+    the answer; without the subtraction the context could legally fill the whole cap and
+    the answer would then have nowhere to go.
+
+    An empty `chunks` list means the chunks have not been retrieved yet. In that case
+    their allocation is reserved up front, because the API assembles memory before the
+    graph retrieves. Reserving it is what keeps the *whole* prompt - memory plus
+    evidence - inside the ceiling.
+    """
     entity_text = memory.entity.render()
     summary_text = memory.summary.text or ""
     recent = list(memory.working.recent())
     chunks = [dict(chunk) for chunk in chunks]
+
+    input_cap = max(0, budget.total_cap_tokens - budget.output_headroom_tokens)
 
     requested = {
         "system": count_tokens(system_prompt),
@@ -83,6 +97,9 @@ def build_context(
     chunks, dropped_chunks = _fit_chunks(chunks, allocations["retrieved_chunks"])
     trimmed["retrieved_chunks"] = dropped_chunks
 
+    # Room promised to chunks that have not been retrieved yet.
+    chunk_reserve = 0 if chunks else allocations["retrieved_chunks"]
+
     evictions: list[dict] = []
     entity_reduced = False
 
@@ -96,7 +113,7 @@ def build_context(
             + count_tokens(question)
         )
 
-    while total() > budget.total_cap_tokens:
+    while total() + chunk_reserve > input_cap:
         changed = False
         for bucket in EVICTION_ORDER:
             if bucket == "recent_turns" and recent:
@@ -141,10 +158,14 @@ def build_context(
         "question_tokens": count_tokens(question),
         "total_tokens": total(),
         "total_cap": budget.total_cap_tokens,
+        "input_cap": input_cap,
         "output_headroom": budget.output_headroom_tokens,
+        # What is left of the input ceiling for retrieved chunks. The graph fills this
+        # once the chunks are known and reports the real figure back.
+        "chunk_allowance": max(0, input_cap - total()),
         "trimmed": trimmed,
         "evictions": evictions,
-        "over_cap": total() > budget.total_cap_tokens,
+        "over_cap": total() > input_cap,
     }
     return ContextBundle(
         system_prompt=system_prompt,

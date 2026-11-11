@@ -1,11 +1,16 @@
+import threading
+import time
+
 import pytest
 
 from blackbox.config.settings import AppConfig, GuardrailsConfig, RetrievalConfig
 from blackbox.graph.build import build_graph, run_graph, stream_graph_events
+from blackbox.graph.nodes import GraphDeps, retrieve_node
 from blackbox.graph.state import initial_state
 from blackbox.llm import FakeLLMProvider
 from blackbox.llm.base import LLMResponse
 from blackbox.retrieval.hybrid_retriever import build_hybrid_retriever
+from blackbox.retrieval.models import RetrievalResult, RetrievedChunk
 
 
 @pytest.fixture
@@ -79,6 +84,97 @@ def test_trace_includes_the_retrieval_score_trail(graph_retriever, graph_config,
     out = run_graph(graph, initial_state("checkout connection pool exhaustion"))
     assert out["chunks"]
     assert any(chunk.get("fused_rank") is not None for chunk in out["chunks"])
+
+
+def test_retrieve_node_reports_this_request_timings(
+    graph_retriever, graph_config, settings
+):
+    """The trace must carry the timings of the request it belongs to.
+
+    The retriever is shared by every request, so timings read back from the instance
+    would be whichever concurrent request published last.
+    """
+    deps = GraphDeps(
+        retriever=graph_retriever,
+        llm=FakeLLMProvider(),
+        config=graph_config,
+        settings=settings,
+    )
+    out = retrieve_node({"query": "checkout connection pool exhaustion"}, deps)
+    assert "dense_ms" in out["timings"]
+    assert "sparse_ms" in out["timings"]
+    assert out["timings"]["last_retrieve_ms"] >= 0
+
+
+def test_concurrent_retrieve_nodes_keep_their_own_timings(
+    graph_retriever, graph_config, settings
+):
+    """Two in-flight requests must not see each other's retrieval latencies."""
+    deps = GraphDeps(
+        retriever=graph_retriever,
+        llm=FakeLLMProvider(),
+        config=graph_config,
+        settings=settings,
+    )
+    slow_query = "ERR_POOL_EXHAUSTED checkout-service"
+    fast_query = "pool saturation p99 latency"
+    delays = {slow_query: 0.3, fast_query: 0.0}
+
+    original_search = graph_retriever.dense.search
+
+    def slow_dense_search(query, **kwargs):
+        time.sleep(delays.get(query, 0.0))
+        return original_search(query, **kwargs)
+
+    graph_retriever.dense.search = slow_dense_search
+
+    results: dict[str, dict] = {}
+
+    def run(query: str) -> None:
+        results[query] = retrieve_node({"query": query}, deps)
+
+    threads = [threading.Thread(target=run, args=(query,)) for query in delays]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert results[fast_query]["timings"]["dense_ms"] < results[slow_query]["timings"][
+        "dense_ms"
+    ]
+
+
+def test_retrieve_node_takes_the_timings_of_its_own_call(graph_config, settings):
+    """The node must read the timings off the result it just received.
+
+    This is the deterministic form of the concurrency guard: a retriever that published
+    its timings on the instance and let the node read them back would attribute
+    whichever request published last to this one.
+    """
+
+    class StubRetriever:
+        def retrieve_detailed(self, query, *, top_k, filter):
+            return RetrievalResult(
+                chunks=[
+                    RetrievedChunk(
+                        chunk_id=f"{query}::0",
+                        text="evidence",
+                        metadata={"doc_id": query},
+                    )
+                ],
+                timings={"marker": query, "dense_ms": 1.0},
+            )
+
+    deps = GraphDeps(
+        retriever=StubRetriever(),
+        llm=FakeLLMProvider(),
+        config=graph_config,
+        settings=settings,
+    )
+    out = retrieve_node({"query": "checkout connection pool exhaustion"}, deps)
+    assert out["timings"]["marker"] == "checkout connection pool exhaustion"
+    assert out["timings"]["dense_ms"] == 1.0
+    assert out["chunks"][0]["chunk_id"] == "checkout connection pool exhaustion::0"
 
 
 def test_graph_honest_failure_after_rewrite_cap(graph_retriever, graph_config, settings):

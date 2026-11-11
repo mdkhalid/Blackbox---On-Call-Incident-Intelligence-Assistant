@@ -115,3 +115,51 @@ def test_dropped_chunks_are_the_lowest_scored():
     kept = [chunk["chunk_id"] for chunk in bundle.chunks]
     assert "c0" in kept
     assert "c9" not in kept
+
+
+def test_the_output_headroom_is_reserved_from_the_input_ceiling():
+    """The ceiling applies to the input, because the headroom is the answer's room."""
+    budget = BudgetConfig()
+    bundle = build_context(
+        system_prompt="system " * 10,
+        memory=_memory(),
+        chunks=_chunks(),
+        question="what changed?",
+        budget=budget,
+    )
+    report = bundle.report
+    assert report["input_cap"] == budget.total_cap_tokens - budget.output_headroom_tokens
+    assert report["total_tokens"] <= report["input_cap"]
+    assert not report["over_cap"]
+
+
+def test_the_chunk_room_is_reserved_when_the_chunks_are_not_retrieved_yet():
+    """Memory is assembled before the graph retrieves.
+
+    The chunk allocation has to be reserved up front, otherwise the evidence is added
+    on top of an already-full context and the real prompt exceeds the cap.
+    """
+    budget = BudgetConfig()
+    bundle = build_context(
+        system_prompt="system " * 10,
+        memory=_memory(),
+        chunks=[],
+        question="what changed?",
+        budget=budget,
+    )
+    assert bundle.report["chunk_allowance"] >= budget.retrieved_chunks_tokens
+    assert bundle.report["total_tokens"] <= bundle.report["input_cap"]
+
+
+def test_supplied_chunks_are_counted_against_the_ceiling():
+    """When the chunks are known they are part of the total, not an extra on top."""
+    budget = BudgetConfig(retrieved_chunks_tokens=40)
+    bundle = build_context(
+        system_prompt="sys",
+        memory=_memory(),
+        chunks=_chunks(10),
+        question="q",
+        budget=budget,
+    )
+    assert bundle.report["total_tokens"] <= bundle.report["input_cap"]
+    assert bundle.report["buckets"]["retrieved_chunks"]["allocated"] <= 40

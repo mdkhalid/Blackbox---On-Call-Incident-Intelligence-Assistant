@@ -34,7 +34,7 @@ from blackbox.logging_setup import get_logger
 from blackbox.retrieval.dense import DenseRetriever
 from blackbox.retrieval.filters import MetadataFilter, parse_filter
 from blackbox.retrieval.fusion import FusionConfig, fuse
-from blackbox.retrieval.models import RetrievedChunk
+from blackbox.retrieval.models import RetrievalResult, RetrievedChunk
 from blackbox.retrieval.rerank import build_reranker
 from blackbox.retrieval.sparse import SparseRetriever
 from blackbox.retrieval.timeout import Deadline
@@ -58,8 +58,6 @@ class HybridRetriever(BaseRetriever):
 
     _dense: DenseRetriever = PrivateAttr(default=None)
     _sparse: SparseRetriever = PrivateAttr(default=None)
-    _last_timings: dict[str, float] = PrivateAttr(default_factory=dict)
-    _last_counts: dict[str, int] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, /, __context: Any) -> None:
         self._dense = DenseRetriever(self.vectorstore)
@@ -120,6 +118,34 @@ class HybridRetriever(BaseRetriever):
 
         `dense_only` / `sparse_only` exist so the eval harness compares the four
         strategies through identical code rather than reimplementing them.
+
+        Callers that need this call's timings use `retrieve_detailed` instead.
+        """
+        return self.retrieve_detailed(
+            query,
+            top_k=top_k,
+            filter=filter,
+            use_rerank=use_rerank,
+            dense_only=dense_only,
+            sparse_only=sparse_only,
+        ).chunks
+
+    def retrieve_detailed(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        filter: MetadataFilter | dict[str, Any] | None = None,
+        use_rerank: bool | None = None,
+        dense_only: bool = False,
+        sparse_only: bool = False,
+    ) -> RetrievalResult:
+        """Run the full pipeline and return the chunks with this call's own timings.
+
+        The timings and counts belong to this call. They are returned rather than
+        published on the instance because the retriever is a shared singleton: instance
+        state would let concurrent requests overwrite and then read each other's
+        latency numbers, which is precisely what the trace viewer must not show.
         """
         k = top_k or self.top_k or self.config.top_k
         md_filter = self._coerce_filter(filter)
@@ -144,17 +170,20 @@ class HybridRetriever(BaseRetriever):
             if isinstance(cached, list):
                 results = [RetrievedChunk.from_cache_dict(item) for item in cached]
                 elapsed = round((time.perf_counter() - started) * 1000, 2)
-                self._last_timings = {"cache_ms": elapsed, "total_ms": elapsed}
-                self._last_counts = {
-                    "dense": 0,
-                    "sparse": 0,
-                    "fused": 0,
-                    "returned": len(results),
-                }
                 logger.info(
                     "retrieval_cache_hit", query=query[:120], returned=len(results)
                 )
-                return results
+                return RetrievalResult(
+                    chunks=results,
+                    timings={"cache_ms": elapsed, "total_ms": elapsed},
+                    counts={
+                        "dense": 0,
+                        "sparse": 0,
+                        "fused": 0,
+                        "returned": len(results),
+                    },
+                    cached=True,
+                )
 
         pool = max(self.config.candidate_pool, k)
 
@@ -223,8 +252,7 @@ class HybridRetriever(BaseRetriever):
             )
 
         timings["total_ms"] = round(sum(v for kk, v in timings.items()), 2)
-        self._last_timings = timings
-        self._last_counts = {
+        counts = {
             "dense": len(dense_hits),
             "sparse": len(sparse_hits),
             "fused": len(fused),
@@ -237,7 +265,7 @@ class HybridRetriever(BaseRetriever):
             reranked=bool(wants_rerank and self.reranker is not None),
             **timings,
         )
-        return results
+        return RetrievalResult(chunks=results, timings=timings, counts=counts)
 
     async def aretrieve(self, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         """Async entry point; dense and sparse run concurrently in threads.
@@ -331,14 +359,6 @@ class HybridRetriever(BaseRetriever):
         )
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         return f"ret:{digest}"
-
-    @property
-    def last_timings(self) -> dict[str, float]:
-        return getattr(self, "_last_timings", {})
-
-    @property
-    def last_counts(self) -> dict[str, int]:
-        return getattr(self, "_last_counts", {})
 
     # ---- LangChain interface ----
 
