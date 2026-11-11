@@ -398,7 +398,7 @@ re-runnable eval scripts.
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
-pytest -q                            # 395 tests
+pytest -q                            # 410 tests
 python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep --tie-break-sweep
 python -m blackbox.eval.groundedness_eval --write
 uvicorn blackbox.main:app --reload   # then POST /api/ingest and open /

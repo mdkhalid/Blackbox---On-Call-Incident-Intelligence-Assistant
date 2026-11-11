@@ -67,7 +67,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 395 tests
+pytest -q                            # 410 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -431,7 +431,7 @@ python -m blackbox.eval.groundedness_eval --write
 
 ## Tests
 
-395 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+410 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

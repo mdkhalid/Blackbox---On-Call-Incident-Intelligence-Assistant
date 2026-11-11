@@ -18,7 +18,7 @@ Last updated: 2026-11-11
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 395 passing, `ruff` clean, `mypy` clean |
+| Tests | 410 passing, `ruff` clean, `mypy` clean |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
@@ -62,7 +62,7 @@ and the filter compilation are in place, so the adapters can be built against th
 
 ### Resume point (next session)
 
-State: clean working tree; **395 tests green**, `ruff` clean, `mypy` clean; Docker available;
+State: clean working tree; **410 tests green**, `ruff` clean, `mypy` clean; Docker available;
 Phase 1 closed, the audit remediation closed, and Phase 2 item 1 (the OpenSearch sparse
 backend) closed.
 

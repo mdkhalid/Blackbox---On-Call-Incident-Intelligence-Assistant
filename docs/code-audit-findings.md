@@ -39,7 +39,7 @@ Related documents:
 | [8](#8-ingest-and-eval-block-the-worker-) | 🟡 | Scaling | Operational endpoints run synchronously instead of `202` + job | ✅ `12514ce` |
 | [9](#9-mypy-errors-with-no-type-check-gate-) | 🟡 | Quality | 35 type errors, CI never runs mypy | ✅ `b01f724` |
 
-**After the fixes:** 395 tests green, `ruff` clean, `mypy` clean, CI gates on all three.
+**After the fixes:** 410 tests green, `ruff` clean, `mypy` clean, CI gates on all three.
 
 ### What is genuinely good
 
@@ -797,7 +797,7 @@ At audit time (commit `d568250`):
 
 After the fixes (commit `266f809`):
 
-- `pytest -q` — **395 passed**.
+- `pytest -q` — **410 passed**.
 - `ruff check blackbox tests scripts alembic` — **clean**.
 - `mypy blackbox` — **clean** (92 source files checked).
 - CI runs lint, mypy, tests and the migration check.

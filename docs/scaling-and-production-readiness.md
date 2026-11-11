@@ -18,7 +18,7 @@ The current application is a correct, measured, single-process corrective-RAG se
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
 - Local Chroma for dense vectors; in-process BM25; Redis-shared rate limits and Postgres
   advisory turn locks; JWT/RBAC with tenant-scoped conversations.
-- 395 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- 410 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
 
 It is suitable for a demo or a small internal team. It is **not** horizontally scalable as
 written: the dense retrieval index is node-local, tenant admission control is per pod, the
