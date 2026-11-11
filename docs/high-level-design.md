@@ -34,16 +34,21 @@ FastAPI (api/)
    +-- ingestion layer (ingestion/): loaders, chunkers, entity_extraction, pipeline
    |
    v
-Stores: Chroma (vectors), Postgres (structured + entity graph + conversations), Redis (cache)
+Stores: Chroma (vectors), Postgres (structured + entity graph + conversations), Redis (cache),
+        OpenSearch (sparse index, optional — the in-process BM25 index is the default)
 ```
 
 ## Component Responsibilities
 
 - **Ingestion**: parse docs by type, structure-aware chunk, extract entities, upsert idempotently.
+  It writes the dense collection and the sparse index together, on a background worker.
 - **Retrieval**: hybrid dense+sparse, RRF fusion, metadata filter, rerank, timeout, custom retriever.
+  The dense and sparse legs run concurrently, and the sparse leg is a store behind a
+  protocol, so it can be the in-process BM25 index or an OpenSearch index.
 - **Graph**: corrective RAG with routing, grading, bounded rewrite, ground check, honest failure, streaming.
+  Every node is a coroutine, so a hosted LLM round trip does not occupy a worker thread.
 - **Memory**: three layers + conflict resolution + token budgeting + eviction.
-- **API**: REST + SSE, persistence, trace, memory, budget, ingest, eval.
+- **API**: REST + SSE, persistence, trace, memory, budget, ingest, eval, background jobs.
 - **UI**: trace viewer.
 
 ## Data Flow — Chat Turn

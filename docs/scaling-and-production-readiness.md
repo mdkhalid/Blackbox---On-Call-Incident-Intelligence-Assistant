@@ -18,11 +18,11 @@ The current application is a correct, measured, single-process corrective-RAG se
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
 - Local Chroma for dense vectors; in-process BM25; Redis-shared rate limits and Postgres
   advisory turn locks; JWT/RBAC with tenant-scoped conversations.
-- 333 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- 395 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
 
 It is suitable for a demo or a small internal team. It is **not** horizontally scalable as
-written: the retrieval indexes are node-local, the graph is synchronous, long SSE turns still
-run in a threadpool, tenant admission control is per pod, and data-plane tenant filters/RLS are
+written: the dense retrieval index is node-local, tenant admission control is per pod, the
+background job queue is in-process, and data-plane tenant filters/RLS are
 not yet in the stores.
 
 The target separates state from compute:
@@ -85,7 +85,7 @@ capacity test that replaces these estimates with measured numbers.
 |---|---|---|---|
 | Dense store | **Qdrant** cluster | pgvector, Milvus, Weaviate | Payload filters, snapshots, shard/replica model, predictable 10M+ behavior |
 | Sparse store | **OpenSearch** | Postgres FTS, Elasticsearch | Mature BM25, analyzers, independent scaling, cross-cluster replication |
-| Fusion | App-side **RRF/weighted** | Store-native hybrid | Preserves measured 0.9214 MRR; stores scale independently |
+| Fusion | App-side **RRF/weighted** | Store-native hybrid | Preserves measured 0.9167 MRR; stores scale independently |
 | Relational | **PostgreSQL + PgBouncer** | Aurora Serverless, Cloud SQL | JSONB, partitions, RLS, mature ops |
 | Cache/limits | **Redis cluster** | Memcached, in-process | Shared token buckets, idempotency, cache, short TTLs |
 | Turn lock | **Postgres lease/advisory lock, dedicated NullPool engine** | Redis Redlock | Correctness; no pooled connection held during SSE |
@@ -178,8 +178,16 @@ cross-tenant tests (read/chat → 404, admin actions → 403).
 
 ### Gate
 
-Hybrid MRR ≥ 0.9214 (or a documented new baseline), recall/precision not lower, groundedness
+Hybrid MRR ≥ 0.9167 (or a documented new baseline), recall/precision not lower, groundedness
 unchanged, tenant filters proven, p95 within SLO at target concurrency.
+
+> **The baseline was re-measured on 2026-11-11** and is now the one the gate uses: dense 0.8548,
+> sparse 0.8714, hybrid 0.9167, hybrid+rerank 0.8857. The previous figures were taken with
+> `rank_bm25`, whose inverse document frequency differs from Lucene's — and Lucene is what
+> the OpenSearch backend scores with. Re-scoring with the formula the production backend
+> actually uses moved the sparse leg up by 0.0143 and the hybrid down by 0.0047, a difference
+> six times smaller than the metric's own sensitivity to tie-breaking (0.0286, measured by
+> `--tie-break-sweep`). The last decimal place of the hybrid MRR is not a finding.
 
 ---
 

@@ -47,8 +47,8 @@ Worth stating plainly, because it is the majority of the codebase:
 
 - **Hybrid retrieval is real and correctly justified.** RRF with config-driven weights, and the
   fusion sweep in `docs/retrieval-results.md` is a 21-point *measured* plateau, not intuition.
-- **Reranking is disabled by default because the measurement said so** (MRR 0.9214 → 0.8667).
-  The docs report that dense beats BM25 on exact-token queries *contrary to the assignment's
+- **Reranking is disabled by default because the measurement said so** (MRR 0.9167 → 0.8857).
+  The docs report that dense and BM25 *tie* on exact-token queries *contrary to the assignment's
   expectation*, and explain the corpus shape that causes it, rather than relabelling it.
   This is exactly the intellectual honesty the rubric rewards.
 - **The ground check itself is correct** — deterministic, structural, cannot hallucinate. Only
@@ -744,9 +744,11 @@ expose it as a read-only property.
   rather than `dict` (which is also what `StateGraph` requires), `PrivateAttr` defaults are
   typed as optional, the grounding and fake-LLM provider have explicit None handling, and the
   Chroma result types are cast at the boundary rather than lying about them.
-- Optional dependencies (`openai`, `anthropic`, `chromadb`, `opensearchpy`, `rank_bm25`,
+- Optional dependencies (`openai`, `anthropic`, `chromadb`, `opensearchpy`,
   `sentence_transformers`, `yaml`, `redis`) are imported lazily and are exempted from the
   missing-stub check in `pyproject.toml`, because the package installs them optionally.
+  (`rank_bm25` was in this list until Phase 2 replaced it with a local BM25 that scores
+  exactly like Lucene; see `docs/development-tracker.md`.)
 
 Guarded by `tests/test_docs.py::test_ci_gates_on_lint_types_and_tests`, which asserts the
 workflow runs ruff, mypy and pytest.
@@ -825,6 +827,15 @@ detected and recreated — outside production only, because production owns its 
 Alembic. `blackbox/db.py` holds the detection; `AppServices._recreate_if_stale` holds the
 policy.
 
-The smoke test also confirmed that the refactors did not change retrieval behaviour: the
-measured MRR on the seeded corpus is unchanged at 0.9214 for hybrid RRF and 0.8667 with
-reranking, the same numbers `docs/retrieval-results.md` reports.
+The smoke test also confirmed that the audit remediation did not change retrieval
+behaviour: the measured MRR on the seeded corpus was unchanged at 0.9214 for hybrid RRF and
+0.8667 with reranking, the same numbers `docs/retrieval-results.md` reported at the time.
+
+> **Later, in Phase 2, those numbers moved.** The sparse leg now scores with Lucene's BM25
+> formula — the formula the OpenSearch backend uses — instead of `rank_bm25`'s slightly
+> different one, and equal scores are broken by document id rather than by the dense
+> store's internal id order. The re-measured figures are dense 0.8548, sparse 0.8714,
+> hybrid 0.9167 and hybrid+rerank 0.8857. The sparse leg gained 0.0143 and the hybrid lost
+> 0.0047, a difference six times smaller than the metric's own sensitivity to tie-breaking
+> (0.0286). The Phase 2 gate was re-baselined to 0.9167 accordingly; the reasoning is in
+> `docs/development-tracker.md`.

@@ -57,6 +57,20 @@ def chunk_document(path) -> Iterator[Chunk]:
 - Job state persisted in Postgres (`ingest_jobs` table): status, progress, error, started_at, finished_at.
 - Idempotent: re-running a job with same content hash skips.
 
+> **Built (2026-11-11).** `POST /api/ingest` and `POST /api/eval/run` answer `202 {job_id}`
+> and run on a dedicated worker thread; `GET /api/jobs/:id`, `GET /api/ingest/:id` and
+> `GET /api/eval/:id` report the job's status and result. Two jobs of the same kind are
+> queued rather than refused.
+>
+> The worker is a **thread**, not a task on the request's event loop: a request's loop does
+> not outlive the request, so a task-based worker would be cancelled the moment the response
+> was sent.
+>
+> Still to come from this section: the job state is in-process, so it does not survive a
+> restart and is not shared between replicas — that is the Postgres `ingest_jobs` table and
+> an ARQ/Celery/RQ worker. The SSE progress stream is not implemented either; a job reports
+> its state when polled.
+
 ## Progress Streaming (SSE)
 Events during ingestion:
 - `{"stage": "upload_received", "bytes": N}`

@@ -10,7 +10,7 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
-pytest -q                            # 333 tests
+pytest -q                            # 395 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -20,6 +20,19 @@ In a second terminal, seed the corpus once (idempotent):
 curl -X POST localhost:8000/api/ingest \
   -H 'content-type: application/json' \
   -d '{"corpus_dir":"seed/corpus"}'
+```
+
+Ingestion is a background job, so the call answers `202` with a job id rather than the
+ingest result. Poll the job to watch it finish:
+
+```bash
+curl -X POST localhost:8000/api/ingest \
+  -H 'content-type: application/json' \
+  -d '{"corpus_dir":"seed/corpus"}'
+# -> {"job_id":"...","kind":"ingest","status":"queued","status_url":"/api/ingest/..."}
+
+curl localhost:8000/api/ingest/<job_id>
+# -> {"status":"succeeded","result":{"documents":60,"chunks":315,...}}
 ```
 
 Open `http://localhost:8000/` for the trace viewer.
@@ -74,7 +87,7 @@ python -m blackbox.eval.groundedness_eval
 ```
 
 Show the tables in `docs/retrieval-results.md` and `docs/groundedness-results.md`:
-hybrid MRR 0.9214 vs 0.8548/0.8571 for dense/sparse; answer rate 0.8857; abstention 1.0.
+hybrid MRR 0.9167 vs 0.8548/0.8714 for dense/sparse; answer rate 0.8857; abstention 1.0.
 
 ## 6. Closing talking points
 

@@ -67,19 +67,23 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 333 tests
+pytest -q                            # 395 tests
 uvicorn blackbox.main:app --reload
 ```
 
 `db` is required locally as well as in Docker: the conversation store and entity store use
 SQLAlchemy, and `postgresql://` resolves to psycopg 3.
 
-Then seed the corpus once (idempotent):
+Then seed the corpus once (idempotent). Ingestion is a background job, so the call
+answers `202` with a job id:
 
 ```bash
 curl -X POST localhost:8000/api/ingest \
   -H 'content-type: application/json' \
   -d '{"corpus_dir":"seed/corpus"}'
+# -> {"job_id":"...","kind":"ingest","status":"queued","status_url":"/api/ingest/..."}
+
+curl localhost:8000/api/ingest/<job_id>   # -> {"status":"succeeded","result":{...}}
 ```
 
 Open `http://localhost:8000/` for the trace viewer.
@@ -155,24 +159,28 @@ per-category breakdown and the fusion weight sweep are in
 | Strategy | MRR | Recall@5 | Precision@5 |
 |---|---|---|---|
 | dense-only | 0.8548 | 0.8581 | 0.4433 |
-| sparse-only (BM25) | 0.8571 | 0.8510 | 0.3510 |
-| hybrid (RRF) | **0.9214** | **0.9067** | **0.4548** |
-| hybrid + rerank | 0.8667 | 0.9219 | 0.4543 |
+| sparse-only (BM25) | 0.8714 | 0.8510 | 0.3786 |
+| hybrid (RRF) | **0.9167** | **0.8867** | **0.4348** |
+| hybrid + rerank | 0.8857 | 0.9219 | 0.4543 |
 
 Two results are reported as measured rather than as hoped:
 
-- **Reranking is disabled by default.** It lowered MRR by 0.055 on this corpus while
+- **Reranking is disabled by default.** It lowered MRR by 0.031 on this corpus while
   raising recall. It is implemented and selectable per request.
-- **Dense-only beats BM25 on exact-token queries here** (0.90 vs 0.85), contrary to the
-  usual expectation. The seeded documents are short and templated, so identifiers appear in
-  tight, repeated contexts that MiniLM encodes well. The reasoning and the data are in
-  `docs/retrieval-results.md`.
+- **Dense-only and BM25 tie on exact-token queries here** (0.90 vs 0.90), rather than the
+  usual expectation that only BM25 can match an identifier literally. The seeded documents
+  are short and templated, so identifiers appear in tight, repeated contexts that MiniLM
+  encodes well. The reasoning and the data are in `docs/retrieval-results.md`.
+- **The metric's last decimal place is not a finding.** The BM25 leg returns groups of
+  documents that score identically, and the order inside a group is decided by the
+  tie-break. Re-running with only the tie-break changed moves MRR by 0.0286, which is
+  larger than most of the differences in the table above.
 
 Reproduce:
 
 ```bash
 python scripts/build_eval_dataset.py          # derive the question set from the corpus
-python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep
+python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep --tie-break-sweep
 ```
 
 ### Groundedness and abstention
@@ -295,8 +303,11 @@ persistence shape.
 | `GET /api/conversations/:id/trace` | Per-turn graph trace with chunk scores and budgets |
 | `GET /api/conversations/:id/memory` | Entity facts, summary, working turns |
 | `GET /api/conversations/:id/budget` | Last turn's token allocation |
-| `POST /api/ingest` | Idempotent corpus ingest (`{"corpus_dir","refresh"}`) |
-| `POST /api/eval/run` | Retrieval metrics; `groundedness:true` adds claim-support/abstention |
+| `POST /api/ingest` | Idempotent corpus ingest (`{"corpus_dir","refresh"}`); `202` + job id |
+| `POST /api/eval/run` | Retrieval metrics; `groundedness:true` adds claim-support/abstention; `202` + job id |
+| `GET /api/jobs/:id` | Background job status and result |
+| `GET /api/ingest/:id` | Ingest job status and result |
+| `GET /api/eval/:id` | Eval job status and result |
 
 ```bash
 curl -N -X POST localhost:8000/api/chat \
@@ -407,14 +418,20 @@ python -m blackbox.eval.groundedness_eval --write
 - `Content-Length` is capped before JSON parsing (`413`); chunked/streamed requests still
   need a hard body limit at the reverse proxy.
 - Hosted LLM SDK calls receive the configured timeout/retries; a circuit breaker, jittered
-  retries and bounded concurrency wrap the provider. The provider interface is still
-  synchronous; an async path is Phase 3.
+  retries and bounded concurrency wrap the provider. The provider interface is async, and
+  every graph node is a coroutine, so a hosted round trip does not occupy a worker thread.
 - Readiness checks the conversation store; Redis is optional and its availability is
   reported only after the runtime is initialized.
+- The rate limiter keys on the client address. Behind an ingress every request arrives from
+  the proxy, so `X-Forwarded-For` is honoured — but only from a configured trusted proxy
+  (`TRUSTED_PROXY_CIDRS`), so the header cannot be spoofed to dodge the limit.
+- Ingestion and evaluation are background jobs: `POST /api/ingest` and `POST /api/eval/run`
+  answer `202 {job_id}` and run on a worker, with status endpoints. The job state is
+  in-process, so a shared queue is still on the backlog.
 
 ## Tests
 
-333 tests, `ruff` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+395 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 
