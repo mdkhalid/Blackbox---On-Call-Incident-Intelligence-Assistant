@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from blackbox.graph.state import GraphState
+
 _GREETING_RE = re.compile(
     r"^(hi|hello|hey|yo|good morning|good afternoon|good evening|thanks|thank you)[!. ]*$",
     re.IGNORECASE,
@@ -133,7 +135,7 @@ def find_service(query: str, entity_store: Any) -> str | None:
 
 
 def router_node(
-    state: dict,
+    state: GraphState,
     *,
     entity_store: Any | None = None,
     direct_answers: bool = True,
@@ -156,7 +158,7 @@ def router_node(
     }
 
 
-def entity_lookup_node(state: dict, *, entity_store: Any | None = None) -> dict:
+def entity_lookup_node(state: GraphState, *, entity_store: Any | None = None) -> dict:
     """Answer a dependency question from the structured graph, as evidence chunks.
 
     Emitting regular evidence keeps the rest of the graph uniform: the same grading,
@@ -167,7 +169,7 @@ def entity_lookup_node(state: dict, *, entity_store: Any | None = None) -> dict:
     service = find_service(query, entity_store) if entity_store is not None else None
 
     chunks: list[dict] = []
-    if service:
+    if service and entity_store is not None:
         dependents = entity_store.services_depending_on(service)
         if dependents:
             text = (
@@ -204,7 +206,7 @@ def entity_lookup_node(state: dict, *, entity_store: Any | None = None) -> dict:
     }
 
 
-def direct_answer_node(state: dict) -> dict:
+def direct_answer_node(state: GraphState) -> dict:
     started = time.perf_counter()
     query = state.get("query", "")
     term = definition_term(query)

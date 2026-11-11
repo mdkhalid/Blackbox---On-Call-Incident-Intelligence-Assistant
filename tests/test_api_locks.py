@@ -65,6 +65,42 @@ async def test_local_turn_lock_is_exclusive_and_releases(settings):
     await again.release()
 
 
+async def test_idle_turn_locks_are_pruned_from_the_registry(settings):
+    """The lock registry must not grow without bound.
+
+    A long-lived process serving thousands of distinct conversations would otherwise
+    hold one lock object per conversation for the lifetime of the process.
+    """
+    services = AppServices(
+        settings=settings,
+        config=AppConfig(),
+        conversations=None,
+        storage_backend="sqlite",
+    )
+    for index in range(50):
+        lock = await services.acquire_turn_lock(f"conv-{index}")
+        await lock.release()
+
+    assert services.conversation_locks == {}
+
+
+async def test_a_busy_turn_keeps_its_lock_registered(settings):
+    services = AppServices(
+        settings=settings,
+        config=AppConfig(),
+        conversations=None,
+        storage_backend="sqlite",
+    )
+    lock = await services.acquire_turn_lock("conv-1")
+    assert "default:conv-1" in services.conversation_locks
+
+    with pytest.raises(ConversationBusy):
+        await services.acquire_turn_lock("conv-1")
+
+    await lock.release()
+    assert "default:conv-1" not in services.conversation_locks
+
+
 async def test_postgres_lock_uses_advisory_lock_and_closes_connection():
     engine = FakeEngine(acquired=True)
     lock = await acquire_postgres_lock(engine, "conv-1")

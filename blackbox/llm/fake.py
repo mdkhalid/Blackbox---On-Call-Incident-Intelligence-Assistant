@@ -150,7 +150,11 @@ class FakeLLMProvider:
                     fallback = candidate
                 if best is None or overlap > best[0]:
                     best = candidate
-        _, chunk_id, claim = best or fallback
+        chosen = best or fallback
+        if chosen is None:
+            # No evidence at all: an empty answer is the honest response.
+            return json.dumps({"answer": "", "claims": []})
+        _, chunk_id, claim = chosen
         return json.dumps(
             {
                 "answer": f"{claim} [{chunk_id}]",

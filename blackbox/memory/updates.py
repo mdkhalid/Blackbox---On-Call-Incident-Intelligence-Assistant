@@ -160,9 +160,9 @@ def update_entity_memory(
 
     for match in ACTION_RE.finditer(user_message):
         action = f"{match.group(1)} {match.group(2)}".strip()
-        before = {(item.action, item.outcome) for item in entity.actions}
+        prior_actions = {(item.action, item.outcome) for item in entity.actions}
         entity.add_action(action)
-        if (action, "") not in before:
+        if (action, "") not in prior_actions:
             events.append(f"action:{action}")
 
     for hypothesis, status in extract_hypotheses(user_message):

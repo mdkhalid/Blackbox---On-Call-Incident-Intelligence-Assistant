@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
-from sqlalchemy import JSON, Column, Integer, String, Text, create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy import JSON, Integer, String, Text, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from blackbox.memory import ConversationMemory
 
@@ -29,27 +29,31 @@ class Base(DeclarativeBase):
 class ConversationRow(Base):
     __tablename__ = "conversations"
 
-    id = Column(String, primary_key=True)
-    tenant_id = Column(String, nullable=False, default=DEFAULT_TENANT, index=True)
-    memory_json = Column(JSON, nullable=False)
-    last_budget_json = Column(JSON, nullable=True)
-    created_at = Column(String, nullable=False)
-    updated_at = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_TENANT, index=True
+    )
+    memory_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    last_budget_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class TurnRow(Base):
     __tablename__ = "conversation_turns"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    conversation_id = Column(String, index=True, nullable=False)
-    tenant_id = Column(String, nullable=False, default=DEFAULT_TENANT, index=True)
-    user_message = Column(Text, nullable=False)
-    assistant_message = Column(Text, nullable=False)
-    status = Column(String, nullable=False)
-    trace_json = Column(JSON, nullable=False)
-    budget_json = Column(JSON, nullable=False)
-    chunks_json = Column(JSON, nullable=True)
-    created_at = Column(String, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    tenant_id: Mapped[str] = mapped_column(
+        String, nullable=False, default=DEFAULT_TENANT, index=True
+    )
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    assistant_message: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    trace_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    chunks_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 @dataclass

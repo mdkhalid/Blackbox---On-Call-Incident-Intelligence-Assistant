@@ -22,6 +22,7 @@ from blackbox.graph.prompts import (
     grade_prompt,
     rewrite_prompt,
 )
+from blackbox.graph.state import GraphState
 from blackbox.llm.base import LLMProvider, LLMResponse
 from blackbox.logging_setup import get_logger
 from blackbox.memory.tokens import count_tokens
@@ -43,7 +44,7 @@ class GraphDeps:
 # ---- retrieve ----
 
 
-def retrieve_node(state: dict, deps: GraphDeps) -> dict:
+def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     filters = state.get("filters") or None
@@ -82,7 +83,7 @@ def retrieve_node(state: dict, deps: GraphDeps) -> dict:
 # ---- grade ----
 
 
-def grade_node(state: dict, deps: GraphDeps) -> dict:
+def grade_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     history = list(state.get("grade_history") or [])
     attempt = len(history) + 1
@@ -148,7 +149,7 @@ def grade_node(state: dict, deps: GraphDeps) -> dict:
 # ---- rewrite ----
 
 
-def rewrite_node(state: dict, deps: GraphDeps) -> dict:
+def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     attempt = int(state.get("rewrite_count", 0)) + 1
@@ -202,7 +203,7 @@ def rewrite_node(state: dict, deps: GraphDeps) -> dict:
 # ---- generate ----
 
 
-def generate_node(state: dict, deps: GraphDeps) -> dict:
+def generate_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     context = state.get("context") or ""
@@ -304,7 +305,7 @@ def generate_node(state: dict, deps: GraphDeps) -> dict:
 # ---- ground check ----
 
 
-def ground_check_node(state: dict, deps: GraphDeps) -> dict:
+def ground_check_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     answer = state.get("answer") or ""
     chunks = state.get("chunks") or []
@@ -354,7 +355,7 @@ def ground_check_node(state: dict, deps: GraphDeps) -> dict:
 # ---- honest failure ----
 
 
-def honest_failure_node(state: dict, deps: GraphDeps) -> dict:
+def honest_failure_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("original_query") or state.get("query", "")
     filters = state.get("filters") or {}
@@ -399,7 +400,7 @@ def honest_failure_node(state: dict, deps: GraphDeps) -> dict:
 # ---- helpers ----
 
 
-def _failure_reason(state: dict) -> str:
+def _failure_reason(state: GraphState) -> str:
     error = state.get("error")
     if error == "llm_call_cap":
         return "the per-turn LLM call budget was exhausted"
@@ -411,7 +412,7 @@ def _failure_reason(state: dict) -> str:
     return str(grade.get("reason") or "")
 
 
-def _over_budget(state: dict, deps: GraphDeps) -> bool:
+def _over_budget(state: GraphState, deps: GraphDeps) -> bool:
     return int(state.get("llm_calls", 0)) >= deps.config.guardrails.max_llm_calls_per_turn
 
 
@@ -419,7 +420,7 @@ def _cap_payload(node: str) -> dict:
     return {"error": "llm_call_cap"}
 
 
-def _merge_usage(state: dict, response: LLMResponse) -> dict:
+def _merge_usage(state: GraphState, response: LLMResponse) -> dict:
     usage = dict(state.get("usage") or {})
     usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + response.prompt_tokens
     usage["completion_tokens"] = (

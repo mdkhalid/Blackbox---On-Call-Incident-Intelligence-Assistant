@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Callable
 
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
@@ -25,12 +26,26 @@ def advisory_key(conversation_id: str) -> int:
 
 
 class LocalTurnLock:
-    def __init__(self, lock: asyncio.Lock) -> None:
+    """A local turn lock, released back to the registry when the turn ends.
+
+    `on_release` exists so the registry can drop an idle lock instead of keeping one
+    object per conversation for the lifetime of the process.
+    """
+
+    def __init__(
+        self,
+        lock: asyncio.Lock,
+        *,
+        on_release: Callable[[], None] | None = None,
+    ) -> None:
         self._lock = lock
+        self._on_release = on_release
 
     async def release(self) -> None:
         if self._lock.locked():
             self._lock.release()
+        if self._on_release is not None:
+            self._on_release()
 
 
 class PostgresTurnLock:

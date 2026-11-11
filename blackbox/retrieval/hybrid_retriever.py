@@ -56,8 +56,8 @@ class HybridRetriever(BaseRetriever):
     cache: Any = Field(default=None, exclude=True, repr=False)
     cache_ttl_s: int = 0
 
-    _dense: DenseRetriever = PrivateAttr(default=None)
-    _sparse: SparseRetriever = PrivateAttr(default=None)
+    _dense: DenseRetriever | None = PrivateAttr(default=None)
+    _sparse: SparseRetriever | None = PrivateAttr(default=None)
 
     def model_post_init(self, /, __context: Any) -> None:
         self._dense = DenseRetriever(self.vectorstore)
@@ -77,10 +77,14 @@ class HybridRetriever(BaseRetriever):
 
     @property
     def dense(self) -> DenseRetriever:
+        if self._dense is None:  # pragma: no cover - set in model_post_init
+            raise RuntimeError("the dense retriever is not initialised")
         return self._dense
 
     @property
     def sparse(self) -> SparseRetriever:
+        if self._sparse is None:  # pragma: no cover - set in model_post_init
+            raise RuntimeError("the sparse retriever is not initialised")
         return self._sparse
 
     # ---- index management ----
@@ -91,7 +95,8 @@ class HybridRetriever(BaseRetriever):
         Both the BM25 index and the lexical reranker's IDF table are built from the corpus,
         so both must be rebuilt or retrieval would score against a stale vocabulary.
         """
-        self._sparse.invalidate()
+        if self._sparse is not None:
+            self._sparse.invalidate()
         if type(self.reranker).__name__ == "LexicalReranker":
             corpus_texts = list(self.vectorstore.get_all().get("documents") or [])
             self.reranker = type(self.reranker).from_corpus(corpus_texts)

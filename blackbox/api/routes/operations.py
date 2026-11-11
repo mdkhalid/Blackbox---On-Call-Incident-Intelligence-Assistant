@@ -94,12 +94,15 @@ def run_evaluation(
     if not services.eval_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="an evaluation is already running")
     try:
+        retriever = services.retriever
+        if retriever is None:
+            raise HTTPException(status_code=503, detail="runtime unavailable")
         try:
             dataset = load_dataset()
         except SystemExit as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-        results = run_all(services.retriever, dataset, k=payload.k)
+        results = run_all(retriever, dataset, k=payload.k)
         strategies = {
             name: asdict(metrics) for name, (metrics, _) in results.items()
         }
@@ -109,7 +112,7 @@ def run_evaluation(
             "strategies": strategies,
         }
         if payload.fusion_sweep:
-            sweep = fusion_sweep(services.retriever, dataset, k=payload.k)
+            sweep = fusion_sweep(retriever, dataset, k=payload.k)
             body["fusion_sweep"] = [
                 {"dense_weight": dense, "sparse_weight": sparse, "mrr": mrr}
                 for dense, sparse, mrr in sweep

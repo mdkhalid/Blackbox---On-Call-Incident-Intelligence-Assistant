@@ -23,6 +23,8 @@ jobs:
           pip install -e ".[dev,rag,db]"
       - name: Lint
         run: python -m ruff check blackbox tests scripts alembic
+      - name: Type check
+        run: python -m mypy blackbox
       - name: Tests
         run: python -m pytest -q
       - name: Migration check

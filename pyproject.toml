@@ -73,3 +73,26 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["blackbox"]
+warn_unused_configs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+show_error_codes = true
+
+# Optional dependencies ship without type information. They are imported lazily so the
+# graph, tests and the offline demo run without them installed; the stubs are not
+# worth vendoring, so the imports are typed as `Any` instead.
+[[tool.mypy.overrides]]
+module = [
+    "anthropic.*",
+    "chromadb.*",
+    "openai.*",
+    "rank_bm25.*",
+    "redis.*",
+    "sentence_transformers.*",
+    "yaml.*",
+]
+ignore_missing_imports = true

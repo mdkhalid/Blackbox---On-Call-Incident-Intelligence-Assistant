@@ -196,7 +196,9 @@ class AppServices:
         if local.locked():
             raise ConversationBusy("conversation already has an active turn")
         await local.acquire()
-        return LocalTurnLock(local)
+        return LocalTurnLock(
+            local, on_release=lambda: self.release_lock(lock_key, local)
+        )
 
     def lock_for(self, conversation_id: str) -> asyncio.Lock:
         lock = self.conversation_locks.get(conversation_id)
@@ -204,6 +206,21 @@ class AppServices:
             lock = asyncio.Lock()
             self.conversation_locks[conversation_id] = lock
         return lock
+
+    def release_lock(self, key: str, lock: asyncio.Lock) -> None:
+        """Drop an idle turn lock from the registry.
+
+        The registry must not grow without bound: a long-lived process serving
+        thousands of distinct conversations a day would otherwise hold one lock object
+        per conversation for the lifetime of the process.
+
+        Only the lock currently registered for this key is dropped, and only while it
+        is unlocked, so a conversation that is still busy keeps its lock and mutual
+        exclusion is preserved. The local lock is a try-lock - a second caller is
+        rejected with 409 rather than queued - so an unlocked lock has no waiters.
+        """
+        if self.conversation_locks.get(key) is lock and not lock.locked():
+            self.conversation_locks.pop(key, None)
 
     async def ensure_rate_limiter(self):
         """Redis-backed limiter when reachable, local fallback otherwise."""

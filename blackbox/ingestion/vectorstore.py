@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any, cast
 
 import chromadb
 
@@ -56,11 +57,18 @@ class ChromaVectorStore:
     def query_embedding(
         self, embedding: list[float], top_k: int = 5, where: dict | None = None
     ) -> dict:
-        return self.collection.query(query_embeddings=[embedding], n_results=top_k, where=where)
+        # Chroma's stub types the embedding argument as a numpy-compatible sequence;
+        # a plain list of floats is accepted at runtime but does not satisfy the
+        # invariant element type, so the argument is passed through as `Any`.
+        embeddings: list[Any] = [embedding]
+        result = self.collection.query(
+            query_embeddings=embeddings, n_results=top_k, where=where
+        )
+        return cast(dict, result)
 
     def get_all(self, where: dict | None = None) -> dict:
         """Fetch every matching chunk. Used to build the in-process BM25 index."""
         kwargs: dict = {"include": ["documents", "metadatas"]}
         if where:
             kwargs["where"] = where
-        return self.collection.get(**kwargs)
+        return cast(dict, self.collection.get(**kwargs))

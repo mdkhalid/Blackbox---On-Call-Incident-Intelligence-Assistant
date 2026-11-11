@@ -9,6 +9,8 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from blackbox.iputils import Network, parse_trusted_networks
+
 # ---------- YAML tunables ----------
 
 class RetrievalConfig(BaseModel):
@@ -274,6 +276,11 @@ class Settings(BaseSettings):
     auth_jwt_audience: str | None = Field(default=None, alias="AUTH_JWT_AUDIENCE")
     auth_default_tenant: str = Field(default="default", alias="AUTH_DEFAULT_TENANT")
 
+    # Trusted reverse proxies. `X-Forwarded-For` is only honoured when the request
+    # arrives from one of these networks; anything else is client-controlled and is
+    # ignored, so the rate limiter cannot be bypassed with a spoofed header.
+    trusted_proxy_cidrs: str = Field(default="", alias="TRUSTED_PROXY_CIDRS")
+
     @field_validator("llm_timeout_s")
     @classmethod
     def positive_timeout(cls, v):
@@ -305,6 +312,11 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def trusted_proxy_networks(self) -> list[Network]:
+        """Parsed trusted proxy networks."""
+        return parse_trusted_networks(self.trusted_proxy_cidrs.split(","))
 
     @model_validator(mode="after")
     def validate_provider_key(self):

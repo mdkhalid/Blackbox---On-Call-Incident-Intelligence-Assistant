@@ -76,7 +76,9 @@ def verify_claims(
                 claim=text,
                 supported=supported,
                 sources=sources,
-                matched_chunk_ids=[best_chunk["chunk_id"]] if supported else [],
+                matched_chunk_ids=(
+                    [best_chunk["chunk_id"]] if best_chunk is not None and supported else []
+                ),
                 overlap=round(best_overlap, 4),
                 reason=(
                     "claim terms appear in retrieved evidence"

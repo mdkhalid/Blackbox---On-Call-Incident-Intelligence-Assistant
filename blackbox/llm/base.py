@@ -24,7 +24,8 @@ class LLMResponse:
 
 
 class LLMProvider(Protocol):
-    name: str
+    @property
+    def name(self) -> str: ...
 
     def complete(
         self,

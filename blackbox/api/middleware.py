@@ -9,6 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from blackbox.api.client_ip import resolve_client_ip
+
 REQUEST_ID_HEADER = "X-Request-ID"
 
 _EXEMPT_PATHS = {
@@ -88,6 +90,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     The limiter is Redis-backed when available (shared across pods) and falls back to an
     in-process limiter. Health and the viewer are exempt.
+
+    The key is the *client* address, not the TCP peer address. Behind a trusted proxy
+    the peer is the proxy for every client, so keying on it would make the limit
+    cluster-wide instead of per client.
     """
 
     def __init__(self, app, *, services, window_s: float = 1.0) -> None:
@@ -100,7 +106,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS" or path in _EXEMPT_PATHS or path.startswith("/health"):
             return await call_next(request)
 
-        key = request.client.host if request.client else "unknown"
+        key = resolve_client_ip(request, self.services.settings.trusted_proxy_networks)
         limit = self.services.config.guardrails.rate_limit_rps
         limiter = await self.services.ensure_rate_limiter()
         allowed, retry_after = await limiter.check(
