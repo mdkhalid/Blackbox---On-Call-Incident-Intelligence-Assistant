@@ -14,20 +14,24 @@ from blackbox.retrieval.hybrid_retriever import (
 from blackbox.retrieval.models import RetrievedChunk, to_documents
 from blackbox.retrieval.rerank import build_reranker
 from blackbox.retrieval.sparse import SparseRetriever, tokenize
+from blackbox.retrieval.stores import DenseStore, SparseStore
 from blackbox.retrieval.timeout import Deadline, RetrievalTimeoutError, with_timeout
 
 __all__ = [
     "Deadline",
     "DenseRetriever",
+    "DenseStore",
     "FusionConfig",
     "HybridRetriever",
     "MetadataFilter",
     "RetrievalTimeoutError",
     "RetrievedChunk",
     "SparseRetriever",
+    "SparseStore",
     "build_default_retriever",
     "build_hybrid_retriever",
     "build_reranker",
+    "build_sparse_store",
     "fuse",
     "last_n_days",
     "parse_filter",
@@ -35,6 +39,30 @@ __all__ = [
     "tokenize",
     "with_timeout",
 ]
+
+
+def build_sparse_store(
+    settings: Settings | None = None,
+    retrieval_config: RetrievalConfig | None = None,
+):
+    """The sparse leg's adapter, chosen by configuration.
+
+    `bm25` keeps the index in the pod's memory, which is the development default.
+    `opensearch` keeps it in the cluster, which is what the target scale needs.
+    """
+    settings = settings or get_settings()
+    rc = retrieval_config if retrieval_config is not None else get_config().retrieval
+    if rc.sparse_backend == "opensearch":
+        from blackbox.retrieval.opensearch import OpenSearchSparseStore
+
+        return OpenSearchSparseStore(
+            hosts=settings.opensearch_hosts,
+            index=settings.opensearch_index,
+            username=settings.opensearch_username,
+            password=settings.opensearch_password,
+            verify_certs=settings.opensearch_verify_certs,
+        )
+    return None
 
 
 def build_default_retriever(
@@ -62,4 +90,6 @@ def build_default_retriever(
         collection_name=collection_name or rc.collection_name,
         embedding_provider=embedding_provider,
     )
-    return build_hybrid_retriever(vectorstore, rc)
+    return build_hybrid_retriever(
+        vectorstore, rc, sparse_store=build_sparse_store(settings, rc)
+    )

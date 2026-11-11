@@ -28,6 +28,9 @@ class RetrievalConfig(BaseModel):
     min_relevance_score: float | None = None
     collection_name: str = "blackbox_chunks"
     embedding_provider: str = "auto"
+    # Which adapter serves the sparse leg. `bm25` keeps the index in the pod's
+    # memory and is the development adapter; `opensearch` keeps it in the cluster.
+    sparse_backend: str = "bm25"
 
     @field_validator("top_k", "candidate_pool", "fusion_k", "rewrite_cap", "retrieval_timeout_ms")
     @classmethod
@@ -62,6 +65,13 @@ class RetrievalConfig(BaseModel):
     def rerank_provider_known(cls, v):
         if v not in ("auto", "cross_encoder", "lexical", "llm", "none"):
             raise ValueError("rerank_provider must be auto|cross_encoder|lexical|llm|none")
+        return v
+
+    @field_validator("sparse_backend")
+    @classmethod
+    def sparse_backend_known(cls, v):
+        if v not in ("bm25", "opensearch"):
+            raise ValueError("sparse_backend must be 'bm25' or 'opensearch'")
         return v
 
     @model_validator(mode="after")
@@ -285,6 +295,13 @@ class Settings(BaseSettings):
     # arrives from one of these networks; anything else is client-controlled and is
     # ignored, so the rate limiter cannot be bypassed with a spoofed header.
     trusted_proxy_cidrs: str = Field(default="", alias="TRUSTED_PROXY_CIDRS")
+
+    # OpenSearch, the sparse retrieval backend that scales past a single pod.
+    opensearch_hosts: str = Field(default="", alias="OPENSEARCH_HOSTS")
+    opensearch_index: str = Field(default="blackbox_chunks", alias="OPENSEARCH_INDEX")
+    opensearch_username: str = Field(default="", alias="OPENSEARCH_USERNAME")
+    opensearch_password: str = Field(default="", alias="OPENSEARCH_PASSWORD")
+    opensearch_verify_certs: bool = Field(default=True, alias="OPENSEARCH_VERIFY_CERTS")
 
     @field_validator("llm_timeout_s")
     @classmethod

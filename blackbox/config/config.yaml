@@ -18,6 +18,11 @@ retrieval:
   retrieval_timeout_ms: 5000
   collection_name: blackbox_chunks
   embedding_provider: auto
+  # Which adapter serves the sparse leg.
+  #   bm25       - in-process index; the development adapter, and the rollback path.
+  #   opensearch - the index lives in the cluster, which is what the target scale needs.
+  # The connection details (hosts, index, credentials) come from the environment.
+  sparse_backend: bm25
 
 graph:
   # Claim terms must appear in a retrieved chunk at this rate to count as grounded.

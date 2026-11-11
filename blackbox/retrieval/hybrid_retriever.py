@@ -72,13 +72,14 @@ class HybridRetriever(BaseRetriever):
     rerank_enabled: bool | None = None
     cache: Any = Field(default=None, exclude=True, repr=False)
     cache_ttl_s: int = 0
+    sparse_store: Any = Field(default=None, exclude=True, repr=False)
 
     _dense: DenseRetriever | None = PrivateAttr(default=None)
-    _sparse: SparseRetriever | None = PrivateAttr(default=None)
+    _sparse: Any = PrivateAttr(default=None)
 
     def model_post_init(self, /, __context: Any) -> None:
         self._dense = DenseRetriever(self.vectorstore)
-        self._sparse = SparseRetriever(self.vectorstore)
+        self._sparse = self.sparse_store or SparseRetriever(self.vectorstore)
         if self.reranker is None:
             corpus_texts: list[str] = []
             if self.config.rerank_provider in ("lexical", "auto"):
@@ -99,7 +100,7 @@ class HybridRetriever(BaseRetriever):
         return self._dense
 
     @property
-    def sparse(self) -> SparseRetriever:
+    def sparse(self) -> Any:
         if self._sparse is None:  # pragma: no cover - set in model_post_init
             raise RuntimeError("the sparse retriever is not initialised")
         return self._sparse
@@ -107,13 +108,28 @@ class HybridRetriever(BaseRetriever):
     # ---- index management ----
 
     def invalidate(self) -> None:
-        """Drop cached corpus-derived state; call after ingestion changes the collection.
+        """Mark the corpus-derived state as stale.
 
-        Both the BM25 index and the lexical reranker's IDF table are built from the corpus,
-        so both must be rebuilt or retrieval would score against a stale vocabulary.
+        Both the BM25 index and the lexical reranker's IDF table are built from the
+        corpus, so both must be rebuilt or retrieval would score against a stale
+        vocabulary. Nothing is rebuilt here: a rebuild is O(corpus) and belongs on the
+        ingestion worker, not on the request path. `rebuild_indexes` does the work and
+        publishes the result.
         """
         if self._sparse is not None:
             self._sparse.invalidate()
+        if self.cache is not None:
+            self.cache.clear_prefix("ret:")
+
+    def rebuild_indexes(self) -> None:
+        """Rebuild the corpus-derived indexes and publish them atomically.
+
+        Called by the ingestion worker once the corpus has changed. After this
+        returns, the request path serves queries against the new corpus without
+        paying for a rebuild.
+        """
+        if self._sparse is not None:
+            self._sparse.rebuild()
         if type(self.reranker).__name__ == "LexicalReranker":
             corpus_texts = list(self.vectorstore.get_all().get("documents") or [])
             self.reranker = type(self.reranker).from_corpus(corpus_texts)
@@ -560,6 +576,7 @@ def build_hybrid_retriever(
     default_filter: MetadataFilter | None = None,
     reranker: Any = None,
     top_k: int | None = None,
+    sparse_store: Any = None,
 ) -> HybridRetriever:
     return HybridRetriever(
         vectorstore=vectorstore,
@@ -567,4 +584,5 @@ def build_hybrid_retriever(
         default_filter=default_filter,
         reranker=reranker,
         top_k=top_k,
+        sparse_store=sparse_store,
     )

@@ -90,6 +90,7 @@ module = [
     "anthropic.*",
     "chromadb.*",
     "openai.*",
+    "opensearchpy.*",
     "rank_bm25.*",
     "redis.*",
     "sentence_transformers.*",

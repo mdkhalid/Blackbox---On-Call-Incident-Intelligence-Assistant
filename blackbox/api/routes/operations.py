@@ -55,7 +55,10 @@ async def ingest(
             batch_size=services.config.ingestion.batch_size_chunks,
         )
         results = pipeline.ingest_directory(root, force=payload.refresh)
-        services.retriever.invalidate()
+        # The corpus-derived indexes are rebuilt here, on the worker, and published
+        # atomically. A rebuild is O(corpus), so it must not happen on the request
+        # path of the next query.
+        services.retriever.rebuild_indexes()
         ingested = sum(1 for result in results if result["status"] == "ingested")
         skipped = sum(1 for result in results if result["status"] == "skipped")
         body = {

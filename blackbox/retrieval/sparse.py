@@ -4,13 +4,25 @@ BM25 exists here for the reason the assignment calls out: embeddings blur exact 
 `ERR_POOL_EXHAUSTED`, `p99`, `checkout-service` must match literally, and a lexical model
 on the same corpus does that natively.
 
-The index is built from the vector store (the single source of truth for chunks) and
-cached until explicitly invalidated after ingestion.
+This is the *development* adapter for the sparse leg. It holds the whole corpus, its
+tokenised form and the BM25 index in the pod's memory, and rebuilds all of them after
+an ingest. That is acceptable for a corpus of tens of thousands of chunks and not
+acceptable at the target scale, so it sits behind the `SparseStore` protocol and can be
+replaced by OpenSearch without changing anything above it.
+
+Two properties matter for the request path:
+
+* The index is published atomically. A reader either sees the old index or the new
+  one, never a half-built one.
+* A rebuild is O(corpus) and does not belong on the request path. `rebuild` is called
+  by the ingestion worker; the request path only ever reads an index that exists.
 """
 from __future__ import annotations
 
 import re
 import threading
+from dataclasses import dataclass
+from typing import Any
 
 from blackbox.ingestion.vectorstore import ChromaVectorStore
 from blackbox.retrieval.filters import MetadataFilter
@@ -29,8 +41,8 @@ def tokenize(text: str) -> list[str]:
     * Underscored identifiers stay whole (`ERR_POOL_EXHAUSTED` is one token).
 
     That last rule is deliberate. Splitting error codes into parts makes `ERR_AUTH_FAILED`
-    and `ERR_AUTH_TIMEOUT` match each other through the shared `err`/`auth` terms, which is
-    exactly the false positive this retriever exists to avoid. Prose still bridges the gap:
+    and `ERR_AUTH_TIMEOUT` match each other through the shared `err`/`auth` terms, which
+    is exactly the false positive this retriever exists to avoid. Prose still bridges the gap:
     a query about "pool exhaustion" matches the sentence around the code, not the code
     token itself.
     """
@@ -47,63 +59,97 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
+@dataclass(slots=True)
+class _Corpus:
+    """An immutable snapshot of the corpus and its BM25 index."""
+
+    ids: list[str]
+    texts: list[str]
+    metas: list[dict]
+    by_id: dict[str, int]
+    bm25: Any
+
+
 class SparseRetriever:
+    """BM25 over the chunk corpus, behind the `SparseStore` protocol."""
+
     def __init__(self, vectorstore: ChromaVectorStore):
         self.vectorstore = vectorstore
         self._lock = threading.Lock()
-        self._ids: list[str] = []
-        self._texts: list[str] = []
-        self._metas: list[dict] = []
-        self._bm25 = None
-        self._ready = False
+        self._build_lock = threading.Lock()
+        self._corpus: _Corpus | None = None
+        self._stale = False
 
     # ---- index ----
 
     def invalidate(self) -> None:
+        """Mark the corpus-derived state as stale.
+
+        Nothing is rebuilt here. A rebuild is O(corpus), and doing it inside the
+        request path would charge the next query for the previous ingest. The
+        ingestion worker calls `rebuild` instead.
+        """
         with self._lock:
-            self._ready = False
-            self._bm25 = None
-            self._ids, self._texts, self._metas = [], [], []
+            self._stale = True
+
+    def rebuild(self) -> None:
+        """Rebuild the index from the corpus and publish it atomically."""
+        corpus = self._build()
+        with self._lock:
+            self._corpus = corpus
+            self._stale = False
 
     def warm_up(self) -> None:
-        """Build the index eagerly so the first query does not pay for it."""
-        self._ensure_index()
+        """Make sure an index exists, building it if this is a cold start.
 
-    def _ensure_index(self) -> None:
-        if self._ready:
-            return
+        This is the development fallback: with no ingestion worker running, the first
+        query has to build the index itself.
+        """
+        self._current()
+
+    def _current(self) -> _Corpus:
         with self._lock:
-            if self._ready:
-                return
-            data = self.vectorstore.get_all()
-            ids = data.get("ids") or []
-            texts = data.get("documents") or []
-            metas = data.get("metadatas") or []
-            corpus = [tokenize(t or "") for t in texts]
-            self._ids = list(ids)
-            self._texts = list(texts)
-            self._metas = [dict(m or {}) for m in metas]
-            if corpus:
-                from rank_bm25 import BM25Okapi
+            if self._corpus is not None and not self._stale:
+                return self._corpus
+        # Only one thread builds the index; the others wait for it and then use the
+        # published snapshot.
+        with self._build_lock:
+            with self._lock:
+                if self._corpus is not None and not self._stale:
+                    return self._corpus
+            corpus = self._build()
+            with self._lock:
+                self._corpus = corpus
+                self._stale = False
+            return corpus
 
-                self._bm25 = BM25Okapi(corpus)
-            else:
-                self._bm25 = None
-            self._ready = True
+    def _build(self) -> _Corpus:
+        data = self.vectorstore.get_all()
+        ids = list(data.get("ids") or [])
+        texts = list(data.get("documents") or [])
+        metas = [dict(m or {}) for m in (data.get("metadatas") or [])]
+        by_id = {chunk_id: index for index, chunk_id in enumerate(ids)}
+
+        bm25 = None
+        if ids:
+            from rank_bm25 import BM25Okapi
+
+            bm25 = BM25Okapi([tokenize(text or "") for text in texts])
+        return _Corpus(ids=ids, texts=texts, metas=metas, by_id=by_id, bm25=bm25)
 
     @property
     def size(self) -> int:
-        self._ensure_index()
-        return len(self._ids)
+        return len(self._current().ids)
 
     def get_chunk(self, chunk_id: str) -> RetrievedChunk | None:
-        self._ensure_index()
-        try:
-            idx = self._ids.index(chunk_id)
-        except ValueError:
+        corpus = self._current()
+        index = corpus.by_id.get(chunk_id)
+        if index is None:
             return None
         return RetrievedChunk(
-            chunk_id=chunk_id, text=self._texts[idx], metadata=dict(self._metas[idx])
+            chunk_id=chunk_id,
+            text=corpus.texts[index],
+            metadata=dict(corpus.metas[index]),
         )
 
     # ---- search ----
@@ -114,15 +160,15 @@ class SparseRetriever:
         top_k: int,
         filter: MetadataFilter | None = None,
     ) -> list[RetrievedChunk]:
-        self._ensure_index()
-        if self._bm25 is None:
+        corpus = self._current()
+        if corpus.bm25 is None:
             return []
 
         query_tokens = tokenize(query)
         if not query_tokens:
             return []
 
-        scores = self._bm25.get_scores(query_tokens)
+        scores = corpus.bm25.get_scores(query_tokens)
 
         # Metadata scoping happens before ranking, so the returned top-k is drawn from the
         # filtered candidate set rather than the whole corpus.
@@ -130,7 +176,7 @@ class SparseRetriever:
         for i, score in enumerate(scores):
             if score <= 0.0:
                 continue
-            if filter is not None and not filter.matches(self._metas[i]):
+            if filter is not None and not filter.matches(corpus.metas[i]):
                 continue
             candidates.append((i, float(score)))
 
@@ -140,9 +186,9 @@ class SparseRetriever:
         for rank, (i, score) in enumerate(candidates[:top_k], start=1):
             out.append(
                 RetrievedChunk(
-                    chunk_id=self._ids[i],
-                    text=self._texts[i],
-                    metadata=dict(self._metas[i]),
+                    chunk_id=corpus.ids[i],
+                    text=corpus.texts[i],
+                    metadata=dict(corpus.metas[i]),
                     sparse_score=score,
                     sparse_rank=rank,
                 )
