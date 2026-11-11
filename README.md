@@ -34,12 +34,16 @@ The original assignment is complete. Work beyond it is tracked in two living doc
 
 Open defects and scaling gaps found by the code audit (all reproduced against the running
 code) are collected in
-[`docs/code-audit-findings.md`](docs/code-audit-findings.md) — including one critical issue
-where the SSE token stream exposes an answer before the ground check has run.
+[`docs/code-audit-findings.md`](docs/code-audit-findings.md). **All nine findings are now
+fixed**, including the critical one where the SSE token stream exposed an answer before the
+ground check had run.
 
 Current production phase: **Phase 2 (retrieval migration and data-plane tenant isolation)**.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
-smoke) is complete.
+smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
+emitted only after the ground check, retrieval timings are per-request, the budget endpoint
+reports the request that was actually sent, the graph runs asynchronously without holding a
+worker thread, and ingest/eval run as background jobs.
 
 ## Architecture
 

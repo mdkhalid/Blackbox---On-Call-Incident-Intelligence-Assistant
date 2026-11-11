@@ -16,23 +16,30 @@ Related documents:
 - [`development-tracker.md`](development-tracker.md) — living status of the phased plan
 - [`retrieval-results.md`](retrieval-results.md) — measured retrieval comparison table
 
-**Status legend:** 🔴 critical · 🟠 major · 🟡 minor · ⬜ not started
+**Status legend:** 🔴 critical · 🟠 major · 🟡 minor · ⬜ not started · ✅ fixed
+
+> **Resolution:** all nine findings are fixed as of 2026-11-11. The table below records the
+> state of each one, the commit that fixed it and the regression test that now guards it.
+> The original analysis is kept in each section so the reasoning, and therefore the shape
+> of the fix, can still be read.
 
 ---
 
 ## 0. Summary
 
-| # | Severity | Area | Finding |
-|---|---|---|---|
-| [1](#1-sse-token-stream-leaks-ungrounded-content-) | 🔴 | Correctness / safety | SSE token events expose the answer **before** the ground check runs |
-| [2](#2-trace-timings-cross-contaminate-between-concurrent-requests-) | 🟠 | Concurrency | Shared singleton retriever leaks per-request timings across requests |
-| [3](#3-reported-token-budget-does-not-match-what-was-sent-) | 🟠 | Correctness / observability | `/budget` reports tokens that were never sent; real prompt can exceed the cap |
-| [4](#4-conversation_locks-dict-grows-without-bound-) | 🟡 | Memory | Per-conversation lock map is never pruned |
-| [5](#5-thread-pool-caps-sse-concurrency-) | 🟠 | Scaling | Sync graph nodes cap concurrent SSE turns at the thread-pool size |
-| [6](#6-bm25-index-is-o(corpus)-in-memory-per-pod-) | 🟠 | Scaling | Full corpus is pulled into RAM per pod and rebuilt on every ingest |
-| [7](#7-rate-limiter-ignores-x-forwarded-for-) | 🟠 | Scaling | Behind an ingress, all clients share one rate-limit bucket |
-| [8](#8-ingest-and-eval-block-the-worker-) | 🟡 | Scaling | Operational endpoints run synchronously instead of `202` + job |
-| [9](#9-mypy-errors-with-no-type-check-gate-) | 🟡 | Quality | 35 type errors, CI never runs mypy |
+| # | Severity | Area | Finding | State |
+|---|---|---|---|---|
+| [1](#1-sse-token-stream-leaks-ungrounded-content-) | 🔴 | Correctness / safety | SSE token events expose the answer **before** the ground check runs | ✅ `9e9f643` |
+| [2](#2-trace-timings-cross-contaminate-between-concurrent-requests-) | 🟠 | Concurrency | Shared singleton retriever leaks per-request timings across requests | ✅ `9e9f643` |
+| [3](#3-reported-token-budget-does-not-match-what-was-sent-) | 🟠 | Correctness / observability | `/budget` reports tokens that were never sent; real prompt can exceed the cap | ✅ `9e9f643` |
+| [4](#4-conversation_locks-dict-grows-without-bound-) | 🟡 | Memory | Per-conversation lock map is never pruned | ✅ `b01f724` |
+| [5](#5-thread-pool-caps-sse-concurrency-) | 🟠 | Scaling | Sync graph nodes cap concurrent SSE turns at the thread-pool size | ✅ `03c72f4` |
+| [6](#6-bm25-index-is-o(corpus)-in-memory-per-pod-) | 🟠 | Scaling | Full corpus is pulled into RAM per pod and rebuilt on every ingest | ✅ `0ba7279` |
+| [7](#7-rate-limiter-ignores-x-forwarded-for-) | 🟠 | Scaling | Behind an ingress, all clients share one rate-limit bucket | ✅ `b01f724` |
+| [8](#8-ingest-and-eval-block-the-worker-) | 🟡 | Scaling | Operational endpoints run synchronously instead of `202` + job | ✅ `12514ce` |
+| [9](#9-mypy-errors-with-no-type-check-gate-) | 🟡 | Quality | 35 type errors, CI never runs mypy | ✅ `b01f724` |
+
+**After the fixes:** 388 tests green, `ruff` clean, `mypy` clean, CI gates on all three.
 
 ### What is genuinely good
 
@@ -45,7 +52,7 @@ Worth stating plainly, because it is the majority of the codebase:
   expectation*, and explain the corpus shape that causes it, rather than relabelling it.
   This is exactly the intellectual honesty the rubric rewards.
 - **The ground check itself is correct** — deterministic, structural, cannot hallucinate. Only
-  its *streaming ordering* is broken (finding 1).
+  its *streaming ordering* was broken (finding 1).
 - **The tokenizer preserves identifiers** (`ERR_POOL_EXHAUSTED` stays one token), which directly
   serves the error-code case the assignment calls out.
 - **The lexical reranker abstains** when a query has no content terms, so it cannot scramble a
@@ -62,7 +69,7 @@ Worth stating plainly, because it is the majority of the codebase:
 
 ## 1. SSE token stream leaks ungrounded content 🔴
 
-**Status:** open · **Severity:** critical · **Area:** correctness / safety
+**Status:** fixed · **Severity:** critical · **Area:** correctness / safety
 
 ### The problem
 
@@ -145,11 +152,36 @@ A provider that returns one unsupported claim. Assert that the concatenated toke
 contain **neither** the unsupported claim **nor** any substring of the stripped answer, and
 that `streamed_answer(events) == final["answer"]` holds for the honest-failure path too.
 
+### Resolution ✅ `9e9f643`
+
+The token stream is emitted after the graph finishes, not from the `generate` node:
+
+```python
+answer = result.get("answer") or ""
+for piece in token_chunks(answer):
+    yield sse_event("token", {"text": piece})
+```
+
+The answer is the post-ground-check text (or the honest-failure text), so what the client
+renders is what the server stands behind. `sse.py`'s docstring described this behaviour all
+along; the code now matches it.
+
+Guarded by `tests/test_api_chat.py`:
+
+- `test_ungrounded_claims_never_reach_the_client` — a provider that drafts one supported and
+  one fabricated claim; the fabrication must not appear in the token stream, not even in part.
+- `test_token_events_start_after_the_ground_check` — token events must not precede the node
+  that finalises the answer.
+- `test_chat_honest_failure_is_streamed_and_persisted` — now also asserts
+  `streamed_answer(events) == final["answer"]` on the honest-failure path.
+
+Both new tests were confirmed to fail against the pre-fix code.
+
 ---
 
 ## 2. Trace timings cross-contaminate between concurrent requests 🟠
 
-**Status:** open · **Severity:** major · **Area:** concurrency
+**Status:** fixed · **Severity:** major · **Area:** concurrency
 
 ### The problem
 
@@ -207,11 +239,30 @@ Return the timing payload from `retrieve()` instead of stashing it on the instan
   (tests, eval harness), or remove them and update `tests/test_hybrid_retriever.py` and
   `tests/test_retrieval_cache.py` accordingly.
 
+### Resolution ✅ `9e9f643`
+
+The shared state is gone rather than kept as a convenience: `last_timings` and `last_counts`
+no longer exist, so there is nothing for a concurrent request to overwrite or misread.
+
+- `blackbox/retrieval/models.py` — new `RetrievalResult` dataclass carrying the chunks, the
+  timings, the counts and whether the result came from the cache.
+- `blackbox/retrieval/hybrid_retriever.py` — `retrieve_detailed()` returns the `RetrievalResult`
+  of the call that produced it; `retrieve()` delegates to it and returns just the chunks.
+- `blackbox/graph/nodes.py` — `retrieve_node` reads the timings off the result it just received.
+
+Guarded by `tests/test_hybrid_retriever.py` and `tests/test_graph_build.py`:
+
+- `test_retriever_keeps_no_shared_per_request_state` — the singleton carries no per-request state.
+- `test_concurrent_retrievals_keep_their_own_timings` — two concurrent calls return distinct
+  timing dicts, and the slow leg really is slower than the fast one.
+- `test_retrieve_node_takes_the_timings_of_its_own_call` — the deterministic form: the node
+  takes the timings off the result it just received, not off the instance.
+
 ---
 
 ## 3. Reported token budget does not match what was sent 🟠
 
-**Status:** open · **Severity:** major · **Area:** correctness / observability
+**Status:** fixed · **Severity:** major · **Area:** correctness / observability
 
 Three related defects in the same subsystem.
 
@@ -298,11 +349,45 @@ window is being respected.
 - Assert the reported `total_tokens` equals the sum of the tokens actually sent.
 - Assert the real prompt never exceeds `total_cap_tokens - output_headroom_tokens`.
 
+### Resolution ✅ `9e9f643`
+
+All three defects are fixed, and the budget now describes one request rather than two
+estimates of it.
+
+**3c — the headroom is enforced.** `build_context` computes the input ceiling as
+`total_cap_tokens - output_headroom_tokens` and evicts against that, not against the raw cap.
+
+**3b — the chunks are inside the cap.** The memory side reserves the chunk allocation when it
+is assembled (the API assembles memory before the graph retrieves), so the evidence cannot be
+added on top of an already-full context.
+
+**3a — the reported numbers are the sent numbers.** `generate_node` measures the prompt it
+actually built, fits the evidence into what is left of the ceiling, and reports:
+
+- `prompt_tokens` — the exact token count of the prompt handed to the provider.
+- `buckets.retrieved_chunks.allocated` — the exact token count of the evidence block sent.
+- `total_tokens` — the content allocation (system + rendered context + evidence + question).
+
+The API now returns the graph's own budget report instead of recomputing one from the
+retrieval result, so there is a single source of truth. The system prompt was unified as
+well: `CHAT_SYSTEM_PROMPT` and `GENERATE_SYSTEM` are now the same string, so the budget
+counts the prompt that was sent rather than a differently worded one.
+
+Guarded by `tests/test_api_chat.py` and `tests/test_memory_budget.py`:
+
+- `test_reported_budget_matches_the_prompt_that_was_sent` — `prompt_tokens` equals the token
+  count of the prompt the provider received, read back from the recorded provider call.
+- `test_the_real_prompt_never_exceeds_the_input_ceiling` — with a deliberately tight budget,
+  the real prompt stays under `total_cap - output_headroom` and `over_cap` is false.
+- `test_the_output_headroom_is_reserved_from_the_input_ceiling`,
+  `test_the_chunk_room_is_reserved_when_the_chunks_are_not_retrieved_yet`,
+  `test_supplied_chunks_are_counted_against_the_ceiling`.
+
 ---
 
 ## 4. `conversation_locks` dict grows without bound 🟡
 
-**Status:** open · **Severity:** minor · **Area:** memory
+**Status:** fixed · **Severity:** minor · **Area:** memory
 
 `blackbox/api/services.py:201`:
 
@@ -330,11 +415,28 @@ only, so the tenant concurrency limit is per-pod, not global. `docs/scaling-and-
 - Consider bounding the map size with an LRU, or only allocating locks for conversations that
   are currently active.
 
+### Resolution ✅ `b01f724`
+
+`AppServices.release_lock` drops an idle lock from the registry when the turn ends, and
+`LocalTurnLock` calls it on release. Only the lock currently registered for that key is
+dropped, and only while it is unlocked.
+
+The "no waiter exists" condition holds by construction here: the local lock is a *try*-lock.
+A second caller is rejected with `409` rather than queued, so there are never waiters on it,
+and the check-then-acquire sequence contains no await point that could interleave.
+
+Guarded by `tests/test_api_locks.py`:
+
+- `test_idle_turn_locks_are_pruned_from_the_registry` — fifty conversations, fifty turns, an
+  empty registry afterwards.
+- `test_a_busy_turn_keeps_its_lock_registered` — a held lock stays registered and still
+  rejects a second turn with `ConversationBusy`.
+
 ---
 
 ## 5. Thread pool caps SSE concurrency 🟠
 
-**Status:** open (partially covered by Phase 3) · **Severity:** major · **Area:** scaling
+**Status:** fixed · **Severity:** major · **Area:** scaling
 
 ### The problem
 
@@ -378,11 +480,51 @@ and because it interacts with findings 1–3: any fix that moves work onto the e
   run **sequentially inside one thread** despite the docstring claiming otherwise.
 - Bound the executor explicitly rather than relying on the default.
 
+### Resolution ✅ `03c72f4`
+
+All three parts are done.
+
+**Async provider interface.** `LLMProvider` gained `acomplete`, implemented by the hosted
+providers (via `AsyncOpenAI` / `AsyncAnthropic`), the offline provider, the resilience wrapper
+(async semaphore, async backoff, the same circuit breaker) and the cache wrapper.
+
+**Async graph nodes.** Every node in `blackbox/graph/nodes.py` and `blackbox/graph/router.py`
+is now a coroutine function, so LangGraph runs them on the event loop instead of offloading
+them to the thread pool. The entity store's blocking SQLAlchemy reads are pushed to a worker
+thread explicitly rather than by accident.
+
+**Genuinely concurrent retrieval.** The retriever was restructured around a `_RetrievalPlan`
+and per-leg methods, so `aretrieve_detailed` dispatches the dense and sparse legs to two
+threads and awaits them together. The request now pays for the slower leg rather than the sum
+of both.
+
+**Bounded executor.** The app's lifespan installs a `ThreadPoolExecutor` of
+`MAX_WORKER_THREADS` (default 32) as the event loop's default executor, replacing
+asyncio's `min(32, cpu_count + 4)`.
+
+Two consequences worth recording:
+
+- `run_graph` is now `async`, and the groundedness evaluation with it. The evaluation script
+  drives it with `asyncio.run`.
+- The async work exposed a latent bug: an in-memory SQLite database belongs to a *connection*,
+  and SQLAlchemy hands every thread its own connection — so the API's thread-pooled database
+  calls saw a different, empty database per thread. In-memory SQLite now uses a static pool
+  (`blackbox/db.py`), so the database is shared.
+
+Guarded by `tests/test_async_runtime.py` and `tests/test_hybrid_retriever.py`:
+
+- `test_every_graph_node_is_a_coroutine_function` — the structural guarantee.
+- `test_the_resilient_provider_awaits_its_provider` — the provider is awaited, not called in
+  a thread.
+- `test_the_lifespan_bounds_the_default_executor` — the pool size is the configured one.
+- `test_async_retrieval_runs_the_dense_and_sparse_legs_concurrently` — the behavioural
+  guarantee: two 300 ms legs complete in under 500 ms, not 600 ms.
+
 ---
 
 ## 6. BM25 index is O(corpus) in memory, per pod 🟠
 
-**Status:** open (Phase 2) · **Severity:** major · **Area:** scaling
+**Status:** fixed · **Severity:** major · **Area:** scaling
 
 `blackbox/retrieval/sparse.py:72-92` builds the index by pulling the **entire corpus** out of
 the vector store:
@@ -413,11 +555,49 @@ Consequences at the 10M-chunk target (§2 of the scaling doc):
 - Replace the linear `ids.index()` lookup with a dict.
 - Move index rebuild off the request path (build in the worker, publish atomically).
 
+### Resolution ✅ `0ba7279`
+
+All three parts are done.
+
+**The `SparseStore` protocol.** `blackbox/retrieval/stores.py` defines `DenseStore` and
+`SparseStore`. The in-process BM25 index is now a *dev-only adapter* behind it, and
+`blackbox/retrieval/opensearch.py` is the adapter that scales. The metadata filter stays a
+store-neutral AST (`MetadataFilter`) and is compiled per store: `to_chroma_where()` for
+Chroma, `matches()` for the in-process matcher, `opensearch_clauses()` for OpenSearch. The
+backend is chosen by `retrieval.sparse_backend` (`bm25` | `opensearch`) in the YAML config,
+with the connection details in the environment.
+
+**The linear scan is gone.** `SparseRetriever` keeps a `by_id` dict alongside the corpus, so
+`get_chunk` is a dict lookup.
+
+**The rebuild moved off the request path.** `invalidate()` now only marks the corpus-derived
+state as stale; it no longer rebuilds. The ingestion worker calls `rebuild_indexes()`, which
+rebuilds the index and the reranker's IDF table and publishes them atomically — a reader
+sees either the old index or the new one, never a half-built one. The lazy rebuild remains
+only as the development fallback for the case where nothing has published an index yet.
+
+Guarded by `tests/test_retrieval_stores.py`:
+
+- `test_the_in_process_bm25_adapter_satisfies_the_sparse_store_protocol`,
+  `test_the_opensearch_adapter_satisfies_the_sparse_store_protocol`,
+  `test_the_dense_retriever_satisfies_the_dense_store_protocol`.
+- `test_the_sparse_store_contract` — the behaviour the hybrid retriever relies on, whatever
+  the adapter.
+- `test_a_chunk_lookup_is_a_dict_lookup_not_a_linear_scan`.
+- `test_the_index_is_rebuilt_and_published_off_the_request_path` and
+  `test_an_invalidated_index_is_rebuilt_on_demand_as_a_fallback`.
+- `test_the_filter_is_compiled_into_opensearch_clauses` and the query-body tests.
+
+**What is still open:** the OpenSearch adapter is written and unit-tested for its query
+compilation, but it has not been run against a real cluster, and the OpenSearch index is not
+yet populated by ingestion. Chroma plus the in-process BM25 remain the default and the
+rollback path until that is done.
+
 ---
 
 ## 7. Rate limiter ignores `X-Forwarded-For` 🟠
 
-**Status:** open · **Severity:** major · **Area:** scaling
+**Status:** fixed · **Severity:** major · **Area:** scaling
 
 `blackbox/api/middleware.py:103`:
 
@@ -446,11 +626,32 @@ forwarded-header handling anywhere in `blackbox/` is this line).
 Note the security angle: `X-Forwarded-For` must only be trusted from known proxies, otherwise
 the limit becomes trivially bypassable by a spoofed header.
 
+### Resolution ✅ `b01f724`
+
+The second option was chosen: a trusted-proxy-aware resolver.
+
+`blackbox/api/client_ip.py` resolves the client address as follows:
+
+1. No trusted proxies configured → the peer address, unchanged.
+2. The immediate peer is not in a trusted network → the peer address. Any forwarded header it
+   sent is client-controlled and is ignored, so a spoofed header cannot buy a client its own
+   rate-limit bucket.
+3. The peer is trusted → the right-most address in `X-Forwarded-For` that is not itself a
+   trusted proxy. That is the address the outermost trusted hop observed.
+
+Trusted networks are configured with `TRUSTED_PROXY_CIDRS` (comma-separated CIDRs); the
+parsing lives in `blackbox/iputils.py` so neither the config module nor the API layer has to
+depend on the other.
+
+Guarded by `tests/test_api_client_ip.py`: no trusted proxies, a trusted proxy, an untrusted
+peer spoofing the header, a chain of proxies, a missing peer, an address with a port, and
+invalid CIDR entries.
+
 ---
 
 ## 8. Ingest and eval block the worker 🟡
 
-**Status:** open (Phase 2/3) · **Severity:** minor · **Area:** scaling
+**Status:** fixed · **Severity:** minor · **Area:** scaling
 
 `blackbox/api/routes/operations.py:22` (`POST /api/ingest`) and `:74` (`POST /api/eval/run`)
 are **synchronous** `def` routes that run the whole job inline.
@@ -472,11 +673,36 @@ Consequences:
 - Add `GET /api/ingest/{job_id}` and `GET /api/eval/{job_id}` status endpoints.
 - Keep the existing single-job lock as the queue-depth guard until the worker exists.
 
+### Resolution ✅ `12514ce`
+
+Both endpoints now answer `202 {job_id}` and the work happens on a background worker.
+
+- `blackbox/api/jobs.py` — a `JobQueue` per kind: a FIFO queue served by one worker thread,
+  with a job record carrying the status, the timestamps, the result and the error.
+- `GET /api/jobs/{job_id}`, `GET /api/ingest/{job_id}` and `GET /api/eval/{job_id}` report the
+  job's state and its result. A job belonging to another tenant is reported as `404`, not
+  `403`, so the endpoint cannot be used to probe for other tenants' jobs.
+- The `409` on a second concurrent run is gone: a second request is queued rather than
+  refused.
+
+Two design points worth recording:
+
+- The worker is a **thread**, not a task on the request's event loop. A request's loop does
+  not outlive the request, so a task-based worker would be cancelled the moment the response
+  was sent — which is exactly what happened in the first implementation.
+- The queue is in-process. A shared, durable queue (the Redis-backed worker of §8) is the
+  next step; the API shape does not change when that happens, only where the queue lives.
+
+Guarded by `tests/test_api_jobs.py` and `tests/test_api_operations.py`: a job runs and
+reports its result, a failing job is reported without killing the worker, jobs of one kind
+run in order, a second job is queued rather than refused, and another tenant's job is not
+found.
+
 ---
 
 ## 9. mypy errors with no type-check gate 🟡
 
-**Status:** open (tracked) · **Severity:** minor · **Area:** quality
+**Status:** fixed · **Severity:** minor · **Area:** quality
 
 `mypy blackbox` reports **35 errors across 16 files**:
 
@@ -506,28 +732,58 @@ expose it as a read-only property.
   `Mapped[]`/`mapped_column()` migration to SQLAlchemy 2.0 typing, which would also align the
   models with the doc's own §7 requirement: *"SQLAlchemy 2.0 `Mapped` models"*.
 
+### Resolution ✅ `b01f724`
+
+`mypy blackbox` reports **no issues across 92 source files**, and CI runs it.
+
+- The SQLAlchemy models are now `Mapped[]` / `mapped_column()` typed, as the scaling document's
+  own §7 requires. The DDL is unchanged, so the Alembic baseline still matches.
+- The `LLMProvider` protocol now declares `name` as a read-only property, which is what the
+  implementations actually expose; the protocol was the thing that was wrong.
+- The remaining errors were real and are fixed: the graph nodes are typed with `GraphState`
+  rather than `dict` (which is also what `StateGraph` requires), `PrivateAttr` defaults are
+  typed as optional, the grounding and fake-LLM provider have explicit None handling, and the
+  Chroma result types are cast at the boundary rather than lying about them.
+- Optional dependencies (`openai`, `anthropic`, `chromadb`, `opensearchpy`, `rank_bm25`,
+  `sentence_transformers`, `yaml`, `redis`) are imported lazily and are exempted from the
+  missing-stub check in `pyproject.toml`, because the package installs them optionally.
+
+Guarded by `tests/test_docs.py::test_ci_gates_on_lint_types_and_tests`, which asserts the
+workflow runs ruff, mypy and pytest.
+
 ---
 
-## Appendix A — Suggested fix order
+## Appendix A — How the fixes were ordered
 
-1. **Finding 1** (SSE token ordering) — breaks the core safety guarantee and corrupts the
-   honest-failure demo. Contained fix, one file plus a regression test.
-2. **Finding 2** (shared timing state) — small, mechanical, removes a whole class of confusing
-   trace bugs.
-3. **Finding 3** (budget reporting + cap enforcement) — a mandated deliverable; three related
-   defects in one subsystem, best fixed together.
-4. **Finding 7** (`X-Forwarded-For`) — small config-level change, but blocks correct operation
-   behind the documented ingress.
-5. **Finding 8** (async ingest/eval) — needed for Phase 2/3; already specified in the doc.
-6. **Finding 5** (async graph nodes) — Phase 3, but it is the largest throughput ceiling and
-   should be scheduled deliberately rather than discovered.
-7. **Finding 6** (BM25 at scale) — Phase 2, mitigated by the OpenSearch migration.
-8. **Finding 4** (lock map leak) — small; fold into any change touching `services.py`.
-9. **Finding 9** (mypy gate) — cheap to add now, so the count stops growing.
+The order the audit originally suggested, and what actually happened:
+
+1. **Finding 1** (SSE token ordering) — `9e9f643`. Breaks the core safety guarantee and
+   corrupts the honest-failure demo. Contained fix, one file plus a regression test.
+2. **Finding 2** (shared timing state) — `9e9f643`. Small, mechanical, removes a whole class of
+   confusing trace bugs.
+3. **Finding 3** (budget reporting + cap enforcement) — `9e9f643`. A mandated deliverable; three
+   related defects in one subsystem, fixed together.
+4. **Finding 7** (`X-Forwarded-For`) — `b01f724`. Small config-level change, but blocks correct
+   operation behind the documented ingress.
+5. **Finding 4** (lock map leak) — `b01f724`. Small; folded into the change touching
+   `services.py`.
+6. **Finding 9** (mypy gate) — `b01f724`. Cheap to add now, so the count stops growing.
+7. **Finding 5** (async graph nodes) — `03c72f4`. The largest throughput ceiling; scheduled
+   deliberately rather than discovered.
+8. **Finding 8** (async ingest/eval) — `12514ce`. The job queue was built on top of the async
+   runtime rather than before it.
+9. **Finding 6** (BM25 at scale) — `0ba7279`. The `SparseStore` protocol, the OpenSearch adapter
+   and the off-path index rebuild.
+
+The order differs from the suggestion in one place: finding 9 (the mypy gate) was pulled
+forward to fourth, because the async work touched every module in the package and a clean type
+check made that work much easier to trust.
 
 ## Appendix B — Verification notes
 
-- `pytest -q` — **333 passed** at audit time.
+At audit time (commit `d568250`):
+
+- `pytest -q` — **333 passed**.
 - `ruff check blackbox tests scripts` — **clean**.
 - `mypy blackbox` — **35 errors** (finding 9).
 - LangGraph sync-node offloading confirmed by reading
@@ -536,3 +792,15 @@ expose it as a read-only property.
 - All four bug reproductions were run against the live code with throwaway scripts under the
   OS temp directory; the scripts were deleted afterwards and no reproduction artefacts were
   left in the repository.
+
+After the fixes (commit `0ba7279`):
+
+- `pytest -q` — **388 passed**.
+- `ruff check blackbox tests scripts alembic` — **clean**.
+- `mypy blackbox` — **clean** (92 source files checked).
+- CI runs lint, mypy, tests and the migration check.
+- The finding-1 regression tests were confirmed to fail against the pre-fix code, so they are
+  real guards rather than tests written to match the new behaviour.
+- The in-memory SQLite bug that the async work exposed was confirmed with a direct
+  reproduction: a table created on the main thread is *not* visible to a worker thread on
+  `sqlite:///:memory:`.

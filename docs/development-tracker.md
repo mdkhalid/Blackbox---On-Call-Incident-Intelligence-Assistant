@@ -9,7 +9,7 @@ next.
 - **Open bugs & scaling gaps (audit):** [`code-audit-findings.md`](code-audit-findings.md)
 - **Status legend:** ✅ done · ◐ in progress · ⬜ not started · ⚠ blocked
 
-Last updated: 2026-11-10
+Last updated: 2026-11-11
 
 ---
 
@@ -18,15 +18,15 @@ Last updated: 2026-11-10
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 333 passing, `ruff` clean |
+| Tests | 388 passing, `ruff` clean, `mypy` clean |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
-| Retrieval | local Chroma + in-process BM25 (single node) |
+| Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
 | Stores | Postgres/SQLite conversation + entity store |
 | Deployment | Docker Compose (two-replica smoke passing) |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
-## 2. Current status (2026-11-10)
+## 2. Current status (2026-11-11)
 
 **Phase 1 — complete (control plane).**
 - Auth/tenancy: JWT/RBAC, tenant-scoped conversations and turns, cross-tenant tests.
@@ -42,25 +42,41 @@ Last updated: 2026-11-10
 - Scope decision: data-plane tenant isolation (retrieval predicates and Postgres RLS) moves
   to Phase 2, where the retrieval stores are replaced. Phase 1 isolates the control plane.
 
-**Next:** Phase 2 — retrieval migration and mandatory tenant filters.
-**Not started:** Phase 3 async/workers/traces, Phase 4 Kubernetes/observability, Phase 5
-multi-region/DR.
+**Audit remediation — complete (all nine findings fixed).**
+- The code audit found one critical defect and eight scaling and quality gaps. All nine are
+  fixed; see [`code-audit-findings.md`](code-audit-findings.md) for the analysis and the
+  resolution of each one.
+- Correctness: the SSE token stream no longer exposes an answer before the ground check has
+  run; retrieval timings are per-request rather than shared; the budget endpoint reports the
+  request that was actually sent, and the input ceiling now covers the whole prompt.
+- Concurrency and scaling: the graph nodes are async, so a hosted LLM round trip no longer
+  occupies a worker thread; the dense and sparse retrieval legs run concurrently; the worker
+  pool is bounded by configuration.
+- Operational: ingest and eval answer `202 {job_id}` and run on a background worker instead
+  of occupying a request worker and refusing further work.
+- Quality: `mypy` reports no issues across the package and CI gates on it.
+
+**Next:** Phase 2 — retrieval migration and mandatory tenant filters. The store protocols
+and the filter compilation are in place, so the adapters can be built against them.
+**Not started:** Phase 4 Kubernetes/observability, Phase 5 multi-region/DR.
 
 ### Resume point (next session)
 
-State: clean working tree at `9efb2c4`; **333 tests green**, `ruff` clean; Docker available;
-Phase 1 closed. Nothing is uncommitted.
+State: clean working tree; **388 tests green**, `ruff` clean, `mypy` clean; Docker available;
+Phase 1 closed and the audit remediation closed. Nothing is uncommitted.
 
 **First Phase 2 package (do this next):**
-1. Add `DenseStore` / `SparseStore` protocols plus a neutral metadata-filter AST in
-   `blackbox/retrieval/stores.py`. Wrap the current Chroma and BM25 implementations as
-   adapters without changing behavior, with contract tests against the existing corpus.
-2. Put `tenant_id` into chunk metadata at ingestion and require it in retrieval filters
-   (reject an empty tenant). Backfill/re-ingest the seed corpus and add cross-tenant retrieval
-   tests: tenant A must never retrieve tenant B chunks, even with an empty/forged filter.
-3. Add the Qdrant dense adapter and contract tests (Docker/testcontainers), then the OpenSearch
-   sparse adapter. Keep Chroma/BM25 as the default and rollback path until eval parity is green.
-4. Only then start shadow indexing and dual-read cutover.
+1. Populate the OpenSearch index from the ingestion pipeline and run the adapter against a
+   real cluster. The adapter and its query compilation are written and unit-tested; they have
+   not yet been exercised against a live cluster. Chroma + in-process BM25 stay the default
+   and the rollback path until then.
+2. Add the Qdrant dense adapter and contract tests (Docker/testcontainers).
+3. Put `tenant_id` into chunk metadata at ingestion and require it in retrieval filters
+   (reject an empty tenant). Backfill/re-ingest the seed corpus and add cross-tenant
+   retrieval tests: tenant A must never retrieve tenant B chunks, even with an empty or
+   forged filter.
+4. Postgres RLS policies as defense in depth.
+5. Only then start shadow indexing and dual-read cutover.
 
 Do not begin alias cutover before the filtered-retrieval contract and tenant-isolation proof
 are green. Phase 2 exit gate: MRR ≥ 0.9214 (or documented baseline), tenant filters proven,
@@ -70,6 +86,7 @@ p95 within SLO.
 ```bash
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m ruff check blackbox tests scripts alembic
+.\.venv\Scripts\python.exe -m mypy blackbox
 .\.venv\Scripts\python.exe scripts\multi_pod_smoke.py   # Docker; shared Postgres + Redis
 ```
 
@@ -94,8 +111,8 @@ payloads vs per-tenant indexes — decide before the Qdrant adapter lands.
 | LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
 | Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
-| Qdrant/OpenSearch migration | 2 | ⬜ | adapters, tenant filters, dual-read, alias cutover |
-| Async graph + workers | 3 | ⬜ | remove threadpool from request path |
+| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; cluster run, tenant filters, dual-read, alias cutover open |
+| Async graph + workers | 3 | ◐ | async graph, async providers, bounded pool and the ingest/eval job queue are done; shared queue backend and trace store open |
 | Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3 |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
 | Observability stack | 4 | ⬜ | OTel, Prometheus/Grafana/Loki |
@@ -148,8 +165,8 @@ isolation is a Phase 2 gate because the retrieval stores are replaced there.
 ### 3.5 LLM resilience
 - [x] Retry with jitter, circuit breaker and bounded concurrency (`ResilientLLMProvider`)
 - [x] Fake-provider tests for retry recovery and circuit-open failure
-- [ ] Async `acomplete` provider interface — **Phase 3**
-- [ ] Async graph/providers with no threadpool hops — **Phase 3**
+- [x] Async `acomplete` provider interface — audit finding 5
+- [x] Async graph/providers with no threadpool hops — audit finding 5
 - [ ] Explicit token/cost quotas per tenant — **Phase 4**
 
 ---
@@ -159,13 +176,13 @@ isolation is a Phase 2 gate because the retrieval stores are replaced there.
 Exit gate: eval parity (MRR ≥ 0.9214 or documented baseline), tenant filters proven, p95
 within SLO at target load.
 
-- [ ] `DenseStore` / `SparseStore` protocols
+- [x] `DenseStore` / `SparseStore` protocols — audit finding 6
 - [ ] Qdrant adapter (async, payload filters, batch upsert, snapshots)
-- [ ] OpenSearch adapter (async, BM25, filter compilation, index aliases)
-- [ ] Neutral metadata-filter AST; compile per store
+- [x] OpenSearch adapter (async, BM25, filter compilation) — audit finding 6; not yet run against a live cluster
+- [x] Neutral metadata-filter AST; compile per store — audit finding 6
 - [ ] Mandatory tenant clause injected after compilation; reject empty tenant
 - [ ] Postgres RLS policies as defense in depth
-- [ ] Concurrent dense/sparse legs (`asyncio.gather`)
+- [x] Concurrent dense/sparse legs (`asyncio.gather`) — audit finding 5
 - [ ] Keep score trail, fusion, rerank and eval harness unchanged
 - [ ] Versioned indexes + `chunks-current` alias; staged ingest and atomic cutover
 - [ ] Shadow indexing and dual-read comparison
@@ -178,10 +195,10 @@ within SLO at target load.
 
 ## 5. Phase 3 — Async runtime and jobs
 
-- [ ] Async graph nodes and LangGraph execution
-- [ ] Async retrieval stores + provider clients end-to-end
-- [ ] Queue worker: ingest, eval, summary compaction
-- [ ] `202 + job_id` ingest/eval APIs with status endpoints
+- [x] Async graph nodes and LangGraph execution — audit finding 5
+- [ ] Async retrieval stores + provider clients end-to-end — providers are async; the stores are not
+- [ ] Queue worker: ingest, eval, summary compaction — ingest and eval run on a worker; the queue is in-process and summary compaction is not queued
+- [x] `202 + job_id` ingest/eval APIs with status endpoints — audit finding 8
 - [ ] Staged ingest with validation and alias swap
 - [ ] Trace store split: Postgres recent + ClickHouse/S3 archive
 - [ ] Paginated `/trace`; retention jobs
@@ -196,7 +213,7 @@ within SLO at target load.
 - [ ] OpenTelemetry traces/metrics/logs; Prometheus/Grafana/Loki/Tempo
 - [ ] Dashboards, alerts, SLO burn
 - [x] GitHub Actions: lint, tests, migration check
-- [ ] CI: mypy, coverage, image scan/SBOM, image build
+- [ ] CI: coverage, image scan/SBOM, image build (mypy is done)
 - [ ] GitOps + canary/blue-green; migration Job
 - [ ] Load tests at target concurrency; failure injection
 - [ ] Pen-test checklist and secret rotation
@@ -216,7 +233,7 @@ within SLO at target load.
 
 ## 8. Cross-cutting backlog
 
-- [ ] Fix remaining mypy errors (currently ~30; no type-check gate)
+- [x] Fix remaining mypy errors; CI type-check gate — audit finding 9
 - [ ] Coverage threshold and coverage report in CI
 - [ ] Provider contract tests (OpenAI/Anthropic against mock servers)
 - [ ] Postgres/Redis integration tests (testcontainers)
@@ -241,6 +258,10 @@ within SLO at target load.
 | 2026-11-10 | Tenant-pinned conversation writes across regions | Accepted | Avoids cross-region write conflicts |
 | 2026-11-10 | Traces split to ClickHouse/S3 | Provisional | Final choice before Phase 3 |
 | 2026-11-10 | Provisional SLOs (2k SSE, 200 turns/s, 10M+ chunks) | Provisional | Replace with measured capacity |
+| 2026-11-11 | Resolve the client IP from `X-Forwarded-For` only when the peer is a trusted proxy | Accepted | A spoofable header would make the rate limit trivial to bypass |
+| 2026-11-11 | Background jobs run on a dedicated worker thread, not on the request's event loop | Accepted | A request's loop does not outlive the request |
+| 2026-11-11 | The in-process BM25 index is a dev-only adapter behind `SparseStore` | Accepted | Chroma + BM25 stay the default and the rollback path until eval parity is green |
+| 2026-11-11 | In-memory SQLite uses a static pool | Accepted | A `:memory:` database belongs to a connection, and SQLAlchemy gives each thread its own |
 
 ## 10. Open questions
 
@@ -270,6 +291,15 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-10 | CI workflow (lint, tests, migration check) + audit event lines | ✅ | local |
 | 2026-11-10 | Two-replica Docker smoke (shared Postgres + Redis) passing | ✅ | local |
 | 2026-11-10 | Added Phase 2 resume point: store protocols, tenant metadata, adapters | ✅ | `9efb2c4` |
+| 2026-11-11 | Audit finding 1: SSE tokens emitted after the ground check, not from `generate` | ✅ | `9e9f643` |
+| 2026-11-11 | Audit finding 2: per-request retrieval timings; shared instance state removed | ✅ | `9e9f643` |
+| 2026-11-11 | Audit finding 3: budget reports the request that was sent; the input ceiling covers the prompt | ✅ | `9e9f643` |
+| 2026-11-11 | Audit finding 4: idle conversation locks are pruned from the registry | ✅ | `b01f724` |
+| 2026-11-11 | Audit finding 7: proxy-aware client IP for the rate limiter | ✅ | `b01f724` |
+| 2026-11-11 | Audit finding 9: mypy clean and gated in CI | ✅ | `b01f724` |
+| 2026-11-11 | Audit finding 5: async graph nodes, async providers, concurrent retrieval legs, bounded pool | ✅ | `03c72f4` |
+| 2026-11-11 | Audit finding 8: ingest and eval answer `202 {job_id}` and run on a background worker | ✅ | `12514ce` |
+| 2026-11-11 | Audit finding 6: `SparseStore` protocol, OpenSearch adapter, off-path index rebuild | ✅ | `0ba7279` |
 
 ## 12. Update protocol
 

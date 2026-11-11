@@ -40,8 +40,6 @@ class AppServices:
     lock_engine: Any | None = None
     rate_limiter: Any | None = None
 
-    ingest_lock: threading.Lock = field(default_factory=threading.Lock)
-    eval_lock: threading.Lock = field(default_factory=threading.Lock)
     conversation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     job_queues: dict[str, Any] = field(default_factory=dict)
 
