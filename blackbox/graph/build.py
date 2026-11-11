@@ -106,8 +106,13 @@ def build_graph(
     return builder.compile(checkpointer=checkpointer)
 
 
-def run_graph(graph, state: GraphState) -> dict:
-    return dict(graph.invoke(dict(state)))
+async def run_graph(graph, state: GraphState) -> dict:
+    """Run the graph to completion.
+
+    The nodes are async, so the graph is invoked asynchronously: no worker thread is
+    held for the duration of a hosted LLM round trip.
+    """
+    return dict(await graph.ainvoke(dict(state)))
 
 
 async def stream_graph_events(graph, state: GraphState) -> AsyncIterator[dict]:

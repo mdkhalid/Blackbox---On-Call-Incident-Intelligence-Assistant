@@ -1,4 +1,4 @@
-import threading
+import asyncio
 import time
 
 import pytest
@@ -60,11 +60,11 @@ class AlwaysInsufficient(FakeLLMProvider):
         self.usage["total_tokens"] += resp.prompt_tokens + resp.completion_tokens
 
 
-def test_graph_answers_grounded_question(graph_retriever, graph_config, settings):
+async def test_graph_answers_grounded_question(graph_retriever, graph_config, settings):
     graph = build_graph(
         retriever=graph_retriever, llm=FakeLLMProvider(), config=graph_config, settings=settings
     )
-    out = run_graph(
+    out = await run_graph(
         graph, initial_state("What caused ERR_POOL_EXHAUSTED in checkout-service?")
     )
     assert out["status"] == "answered"
@@ -77,16 +77,16 @@ def test_graph_answers_grounded_question(graph_retriever, graph_config, settings
         assert node in nodes
 
 
-def test_trace_includes_the_retrieval_score_trail(graph_retriever, graph_config, settings):
+async def test_trace_includes_the_retrieval_score_trail(graph_retriever, graph_config, settings):
     graph = build_graph(
         retriever=graph_retriever, llm=FakeLLMProvider(), config=graph_config, settings=settings
     )
-    out = run_graph(graph, initial_state("checkout connection pool exhaustion"))
+    out = await run_graph(graph, initial_state("checkout connection pool exhaustion"))
     assert out["chunks"]
     assert any(chunk.get("fused_rank") is not None for chunk in out["chunks"])
 
 
-def test_retrieve_node_reports_this_request_timings(
+async def test_retrieve_node_reports_this_request_timings(
     graph_retriever, graph_config, settings
 ):
     """The trace must carry the timings of the request it belongs to.
@@ -100,13 +100,13 @@ def test_retrieve_node_reports_this_request_timings(
         config=graph_config,
         settings=settings,
     )
-    out = retrieve_node({"query": "checkout connection pool exhaustion"}, deps)
+    out = await retrieve_node({"query": "checkout connection pool exhaustion"}, deps)
     assert "dense_ms" in out["timings"]
     assert "sparse_ms" in out["timings"]
     assert out["timings"]["last_retrieve_ms"] >= 0
 
 
-def test_concurrent_retrieve_nodes_keep_their_own_timings(
+async def test_concurrent_retrieve_nodes_keep_their_own_timings(
     graph_retriever, graph_config, settings
 ):
     """Two in-flight requests must not see each other's retrieval latencies."""
@@ -128,23 +128,19 @@ def test_concurrent_retrieve_nodes_keep_their_own_timings(
 
     graph_retriever.dense.search = slow_dense_search
 
-    results: dict[str, dict] = {}
+    async def run(query: str) -> dict:
+        return await retrieve_node({"query": query}, deps)
 
-    def run(query: str) -> None:
-        results[query] = retrieve_node({"query": query}, deps)
-
-    threads = [threading.Thread(target=run, args=(query,)) for query in delays]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    results = dict(
+        zip(delays, await asyncio.gather(*(run(query) for query in delays)))
+    )
 
     assert results[fast_query]["timings"]["dense_ms"] < results[slow_query]["timings"][
         "dense_ms"
     ]
 
 
-def test_retrieve_node_takes_the_timings_of_its_own_call(graph_config, settings):
+async def test_retrieve_node_takes_the_timings_of_its_own_call(graph_config, settings):
     """The node must read the timings off the result it just received.
 
     This is the deterministic form of the concurrency guard: a retriever that published
@@ -171,20 +167,20 @@ def test_retrieve_node_takes_the_timings_of_its_own_call(graph_config, settings)
         config=graph_config,
         settings=settings,
     )
-    out = retrieve_node({"query": "checkout connection pool exhaustion"}, deps)
+    out = await retrieve_node({"query": "checkout connection pool exhaustion"}, deps)
     assert out["timings"]["marker"] == "checkout connection pool exhaustion"
     assert out["timings"]["dense_ms"] == 1.0
     assert out["chunks"][0]["chunk_id"] == "checkout connection pool exhaustion::0"
 
 
-def test_graph_honest_failure_after_rewrite_cap(graph_retriever, graph_config, settings):
+async def test_graph_honest_failure_after_rewrite_cap(graph_retriever, graph_config, settings):
     graph = build_graph(
         retriever=graph_retriever,
         llm=AlwaysInsufficient(),
         config=graph_config,
         settings=settings,
     )
-    out = run_graph(
+    out = await run_graph(
         graph,
         initial_state(
             "What caused ERR_POOL_EXHAUSTED?", filters={"doc_types": ["postmortem"]}
@@ -199,7 +195,7 @@ def test_graph_honest_failure_after_rewrite_cap(graph_retriever, graph_config, s
     assert nodes.count("rewrite") == graph_config.retrieval.rewrite_cap
 
 
-def test_graph_enforces_the_llm_call_cap(graph_retriever, settings):
+async def test_graph_enforces_the_llm_call_cap(graph_retriever, settings):
     config = AppConfig(
         retrieval=RetrievalConfig(
             top_k=3,
@@ -213,13 +209,13 @@ def test_graph_enforces_the_llm_call_cap(graph_retriever, settings):
     graph = build_graph(
         retriever=graph_retriever, llm=AlwaysInsufficient(), config=config, settings=settings
     )
-    out = run_graph(graph, initial_state("What caused ERR_POOL_EXHAUSTED?"))
+    out = await run_graph(graph, initial_state("What caused ERR_POOL_EXHAUSTED?"))
     assert out["status"] == "honest_failure"
     assert out["error"] == "llm_call_cap"
     assert out["llm_calls"] == 1
 
 
-def test_graph_entity_lookup_route(graph_retriever, graph_config, settings, entity_store):
+async def test_graph_entity_lookup_route(graph_retriever, graph_config, settings, entity_store):
     graph = build_graph(
         retriever=graph_retriever,
         llm=FakeLLMProvider(),
@@ -227,17 +223,17 @@ def test_graph_entity_lookup_route(graph_retriever, graph_config, settings, enti
         config=graph_config,
         settings=settings,
     )
-    out = run_graph(graph, initial_state("Which services depend on payment-gateway?"))
+    out = await run_graph(graph, initial_state("Which services depend on payment-gateway?"))
     assert out["route"] == "entity"
     assert out["status"] == "answered"
     assert "checkout-service" in out["answer"]
 
 
-def test_graph_direct_route(graph_retriever, graph_config, settings):
+async def test_graph_direct_route(graph_retriever, graph_config, settings):
     graph = build_graph(
         retriever=graph_retriever, llm=FakeLLMProvider(), config=graph_config, settings=settings
     )
-    out = run_graph(graph, initial_state("hello"))
+    out = await run_graph(graph, initial_state("hello"))
     assert out["status"] == "direct"
     assert "incident" in out["answer"].lower()
 

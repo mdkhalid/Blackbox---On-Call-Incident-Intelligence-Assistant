@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sqlalchemy import Column, String, Text, create_engine
+from sqlalchemy import Column, String, Text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+from blackbox.db import build_engine
 
 
 class Base(DeclarativeBase):
@@ -63,7 +65,7 @@ class EntityStore(Protocol):
 
 class SqlAlchemyEntityStore:
     def __init__(self, db_url: str = "sqlite:///:memory:"):
-        self.engine = create_engine(db_url, future=True)
+        self.engine = build_engine(db_url)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def init(self) -> None:

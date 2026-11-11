@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from sqlalchemy import JSON, Integer, String, Text, create_engine
+from sqlalchemy import JSON, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
+from blackbox.db import build_engine
 from blackbox.memory import ConversationMemory
 
 DEFAULT_TENANT = "default"
@@ -131,8 +132,7 @@ class ConversationRepository(Protocol):
 
 class SqlAlchemyConversationRepository:
     def __init__(self, db_url: str, *, memory_config=None) -> None:
-        connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
-        self.engine = create_engine(db_url, future=True, connect_args=connect_args)
+        self.engine = build_engine(db_url)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.memory_config = memory_config
 

@@ -45,7 +45,7 @@ def _memory() -> ConversationMemory:
     return memory
 
 
-def test_generate_receives_the_memory_context(graph_retriever, graph_config, settings):
+async def test_generate_receives_the_memory_context(graph_retriever, graph_config, settings):
     llm = FakeLLMProvider()
     memory = _memory()
     chunks = [
@@ -67,7 +67,7 @@ def test_generate_receives_the_memory_context(graph_retriever, graph_config, set
     graph = build_graph(
         retriever=graph_retriever, llm=llm, config=graph_config, settings=settings
     )
-    out = run_graph(
+    out = await run_graph(
         graph,
         initial_state(
             "What caused ERR_POOL_EXHAUSTED in checkout-service?",

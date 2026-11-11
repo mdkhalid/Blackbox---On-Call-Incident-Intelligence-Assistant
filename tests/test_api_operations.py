@@ -99,7 +99,7 @@ def test_eval_run_includes_groundedness_when_requested(operations_client, monkey
     def fake_run_all(retriever, dataset, *, k=5, strategies=None):
         return {"hybrid (RRF)": (Metrics(count=1, mrr=0.5), [])}
 
-    def fake_groundedness(graph, dataset, *, limit=None):
+    async def fake_groundedness(graph, dataset, *, limit=None):
         return {"draft_claim_support": 0.75, "abstention_accuracy": 1.0}
 
     monkeypatch.setattr("blackbox.api.routes.operations.run_all", fake_run_all)

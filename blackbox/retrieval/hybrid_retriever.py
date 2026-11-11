@@ -15,9 +15,11 @@ set for sparse, so nothing is ever retrieved unfiltered and trimmed afterwards.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.callbacks import (
@@ -40,6 +42,21 @@ from blackbox.retrieval.sparse import SparseRetriever
 from blackbox.retrieval.timeout import Deadline
 
 logger = get_logger(__name__)
+
+
+@dataclass(slots=True)
+class _RetrievalPlan:
+    """The resolved settings of one retrieval, shared by the sync and async paths."""
+
+    query: str
+    k: int
+    pool: int
+    md_filter: MetadataFilter | None
+    wants_rerank: bool
+    dense_only: bool
+    sparse_only: bool
+    cache_key: str | None
+    deadline: Deadline
 
 
 class HybridRetriever(BaseRetriever):
@@ -152,26 +169,18 @@ class HybridRetriever(BaseRetriever):
         state would let concurrent requests overwrite and then read each other's
         latency numbers, which is precisely what the trace viewer must not show.
         """
-        k = top_k or self.top_k or self.config.top_k
-        md_filter = self._coerce_filter(filter)
-        wants_rerank = (
-            self.rerank_enabled if self.rerank_enabled is not None else self.config.rerank
-        )
-        if use_rerank is not None:
-            wants_rerank = use_rerank
-        timings: dict[str, float] = {}
-
-        cache_key = self._cache_key(
-            query=query,
-            top_k=k,
-            md_filter=md_filter,
-            use_rerank=wants_rerank,
+        plan = self._plan(
+            query,
+            top_k=top_k,
+            filter=filter,
+            use_rerank=use_rerank,
             dense_only=dense_only,
             sparse_only=sparse_only,
         )
-        if cache_key:
+
+        if plan.cache_key:
             started = time.perf_counter()
-            cached = self.cache.get(cache_key)
+            cached = self.cache.get(plan.cache_key)
             if isinstance(cached, list):
                 results = [RetrievedChunk.from_cache_dict(item) for item in cached]
                 elapsed = round((time.perf_counter() - started) * 1000, 2)
@@ -190,37 +199,185 @@ class HybridRetriever(BaseRetriever):
                     cached=True,
                 )
 
-        pool = max(self.config.candidate_pool, k)
-
         # Build corpus-derived indexes before the deadline starts. The BM25 index and the
         # embedding model are one-time startup costs, not per-request work; charging them to
         # the first query would make a healthy cold request look like a timeout. The deadline
         # must be constructed *after* this, or its clock starts before the warm-up finishes.
         self.sparse.warm_up()
-        deadline = Deadline(self.config.retrieval_timeout_ms, operation="hybrid_retrieve")
 
-        t0 = time.perf_counter()
-        dense_hits: list[RetrievedChunk] = []
-        if not sparse_only:
-            dense_hits = deadline.run(
-                "dense",
-                lambda: self.dense.search(query, top_k=pool, filter=md_filter),
+        dense_hits, dense_ms = self._run_leg(plan, "dense")
+        sparse_hits, sparse_ms = self._run_leg(plan, "sparse")
+
+        result = self._finalize(
+            plan,
+            dense_hits=dense_hits,
+            sparse_hits=sparse_hits,
+            timings={"dense_ms": dense_ms, "sparse_ms": sparse_ms},
+        )
+        if plan.cache_key:
+            self.cache.set(
+                plan.cache_key,
+                [chunk.to_cache_dict() for chunk in result.chunks],
+                self.cache_ttl_s,
             )
-        timings["dense_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        return result
 
-        t0 = time.perf_counter()
-        sparse_hits: list[RetrievedChunk] = []
-        if not dense_only:
-            sparse_hits = deadline.run(
-                "sparse",
-                lambda: self.sparse.search(query, top_k=pool, filter=md_filter),
+    async def aretrieve_detailed(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        filter: MetadataFilter | dict[str, Any] | None = None,
+        use_rerank: bool | None = None,
+        dense_only: bool = False,
+        sparse_only: bool = False,
+    ) -> RetrievalResult:
+        """Async retrieval with the dense and sparse legs running concurrently.
+
+        The synchronous path runs the legs one after the other, so a request pays for
+        both. Here each leg is dispatched to a worker thread and awaited together, so
+        the request pays for the slower of the two rather than the sum of both.
+        """
+        plan = self._plan(
+            query,
+            top_k=top_k,
+            filter=filter,
+            use_rerank=use_rerank,
+            dense_only=dense_only,
+            sparse_only=sparse_only,
+        )
+
+        if plan.cache_key:
+            started = time.perf_counter()
+            cached = await asyncio.to_thread(self.cache.get, plan.cache_key)
+            if isinstance(cached, list):
+                results = [RetrievedChunk.from_cache_dict(item) for item in cached]
+                elapsed = round((time.perf_counter() - started) * 1000, 2)
+                logger.info(
+                    "retrieval_cache_hit", query=query[:120], returned=len(results)
+                )
+                return RetrievalResult(
+                    chunks=results,
+                    timings={"cache_ms": elapsed, "total_ms": elapsed},
+                    counts={
+                        "dense": 0,
+                        "sparse": 0,
+                        "fused": 0,
+                        "returned": len(results),
+                    },
+                    cached=True,
+                )
+
+        await asyncio.to_thread(self.sparse.warm_up)
+
+        dense_task = asyncio.to_thread(self._run_leg, plan, "dense")
+        sparse_task = asyncio.to_thread(self._run_leg, plan, "sparse")
+        (dense_hits, dense_ms), (sparse_hits, sparse_ms) = await asyncio.gather(
+            dense_task, sparse_task
+        )
+
+        result = self._finalize(
+            plan,
+            dense_hits=dense_hits,
+            sparse_hits=sparse_hits,
+            timings={"dense_ms": dense_ms, "sparse_ms": sparse_ms},
+        )
+        if plan.cache_key:
+            await asyncio.to_thread(
+                self.cache.set,
+                plan.cache_key,
+                [chunk.to_cache_dict() for chunk in result.chunks],
+                self.cache_ttl_s,
             )
-        timings["sparse_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        return result
+
+    def _plan(
+        self,
+        query: str,
+        *,
+        top_k: int | None,
+        filter: MetadataFilter | dict[str, Any] | None,
+        use_rerank: bool | None,
+        dense_only: bool,
+        sparse_only: bool,
+    ) -> _RetrievalPlan:
+        """Resolve the settings shared by the sync and async retrieval paths."""
+        k = top_k or self.top_k or self.config.top_k
+        md_filter = self._coerce_filter(filter)
+        wants_rerank = (
+            self.rerank_enabled if self.rerank_enabled is not None else self.config.rerank
+        )
+        if use_rerank is not None:
+            wants_rerank = use_rerank
+        return _RetrievalPlan(
+            query=query,
+            k=k,
+            pool=max(self.config.candidate_pool, k),
+            md_filter=md_filter,
+            wants_rerank=wants_rerank,
+            dense_only=dense_only,
+            sparse_only=sparse_only,
+            cache_key=self._cache_key(
+                query=query,
+                top_k=k,
+                md_filter=md_filter,
+                use_rerank=wants_rerank,
+                dense_only=dense_only,
+                sparse_only=sparse_only,
+            ),
+            deadline=Deadline(
+                self.config.retrieval_timeout_ms, operation="hybrid_retrieve"
+            ),
+        )
+
+    def _run_leg(
+        self, plan: _RetrievalPlan, leg: str
+    ) -> tuple[list[RetrievedChunk], float]:
+        """Run one retrieval leg and report how long it took."""
+        started = time.perf_counter()
+        if leg == "dense":
+            hits = self._dense_leg(plan)
+        else:
+            hits = self._sparse_leg(plan)
+        return hits, round((time.perf_counter() - started) * 1000, 2)
+
+    def _dense_leg(self, plan: _RetrievalPlan) -> list[RetrievedChunk]:
+        if plan.sparse_only:
+            return []
+        return plan.deadline.run(
+            "dense",
+            lambda: self.dense.search(
+                plan.query, top_k=plan.pool, filter=plan.md_filter
+            ),
+        )
+
+    def _sparse_leg(self, plan: _RetrievalPlan) -> list[RetrievedChunk]:
+        if plan.dense_only:
+            return []
+        return plan.deadline.run(
+            "sparse",
+            lambda: self.sparse.search(
+                plan.query, top_k=plan.pool, filter=plan.md_filter
+            ),
+        )
+
+    def _finalize(
+        self,
+        plan: _RetrievalPlan,
+        *,
+        dense_hits: list[RetrievedChunk],
+        sparse_hits: list[RetrievedChunk],
+        timings: dict[str, float],
+    ) -> RetrievalResult:
+        """Fuse, re-rank and score-floor the two legs into the final result."""
+        timings = dict(timings)
+        pool = plan.pool
+        k = plan.k
 
         t0 = time.perf_counter()
-        if dense_only:
+        if plan.dense_only:
             fused = _rank_single(dense_hits, "dense", pool)
-        elif sparse_only:
+        elif plan.sparse_only:
             fused = _rank_single(sparse_hits, "sparse", pool)
         else:
             fused = fuse(
@@ -237,26 +394,23 @@ class HybridRetriever(BaseRetriever):
         timings["fuse_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         t0 = time.perf_counter()
-        if wants_rerank and fused and self.reranker is not None:
+        if plan.wants_rerank and fused and self.reranker is not None:
             candidates = fused[: max(self.config.rerank_candidates, k)]
-            results = deadline.run(
+            results = plan.deadline.run(
                 "rerank",
-                lambda: self.reranker.rerank(query, candidates, top_k=k, filter=md_filter),
+                lambda: self.reranker.rerank(
+                    plan.query, candidates, top_k=k, filter=plan.md_filter
+                ),
             )
         else:
             results = fused[:k]
         timings["rerank_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
-        results = self._apply_score_floor(results, reranked=bool(wants_rerank and self.reranker))
+        results = self._apply_score_floor(
+            results, reranked=bool(plan.wants_rerank and self.reranker)
+        )
 
-        if cache_key:
-            self.cache.set(
-                cache_key,
-                [chunk.to_cache_dict() for chunk in results],
-                self.cache_ttl_s,
-            )
-
-        timings["total_ms"] = round(sum(v for kk, v in timings.items()), 2)
+        timings["total_ms"] = round(sum(timings.values()), 2)
         counts = {
             "dense": len(dense_hits),
             "sparse": len(sparse_hits),
@@ -265,9 +419,9 @@ class HybridRetriever(BaseRetriever):
         }
         logger.info(
             "retrieval_complete",
-            query=query[:120],
+            query=plan.query[:120],
             top_k=k,
-            reranked=bool(wants_rerank and self.reranker is not None),
+            reranked=bool(plan.wants_rerank and self.reranker is not None),
             **timings,
         )
         return RetrievalResult(chunks=results, timings=timings, counts=counts)
@@ -275,17 +429,16 @@ class HybridRetriever(BaseRetriever):
     async def aretrieve(self, query: str, **kwargs: Any) -> list[RetrievedChunk]:
         """Async entry point; dense and sparse run concurrently in threads.
 
-        Chroma and rank_bm25 are blocking, so each leg goes to a worker thread while the
-        async wrapper enforces the real deadline.
+        Chroma and rank_bm25 are blocking, so each leg goes to a worker thread while
+        the async wrapper enforces the real deadline.
         """
-        import asyncio
-
         from blackbox.retrieval.timeout import with_timeout
 
-        return await with_timeout(
-            asyncio.to_thread(lambda: self.retrieve(query, **kwargs)),
+        result = await with_timeout(
+            self.aretrieve_detailed(query, **kwargs),
             self.config.retrieval_timeout_ms,
         )
+        return result.chunks
 
     # ---- helpers ----
 

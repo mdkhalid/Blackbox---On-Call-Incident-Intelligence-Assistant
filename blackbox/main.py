@@ -1,6 +1,8 @@
 """FastAPI application factory."""
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -32,7 +34,20 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
         app.state.settings = settings
         app.state.services = services or build_services(settings)
         setup_logging(settings)
-        yield
+        # LangGraph offloads any synchronous node to the event loop's default
+        # executor. The default is `min(32, cpu_count + 4)`, which ties the request
+        # path's concurrency to the machine size; bounding it explicitly makes the
+        # ceiling a configured number rather than an accident of the host.
+        loop = asyncio.get_running_loop()
+        executor = ThreadPoolExecutor(
+            max_workers=settings.max_worker_threads,
+            thread_name_prefix="blackbox-worker",
+        )
+        loop.set_default_executor(executor)
+        try:
+            yield
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="Blackbox", version=__version__, lifespan=lifespan)
     # Available before lifespan runs too (TestClient without a context manager, ASGI

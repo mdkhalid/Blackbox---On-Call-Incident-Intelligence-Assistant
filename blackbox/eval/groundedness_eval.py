@@ -20,6 +20,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import pathlib
 from dataclasses import asdict, dataclass
@@ -60,8 +61,8 @@ class GroundednessResult:
         return self.supported_claims / self.draft_claims
 
 
-def run_question(graph, question: dict) -> GroundednessResult:
-    out = run_graph(
+async def run_question(graph, question: dict) -> GroundednessResult:
+    out = await run_graph(
         graph,
         initial_state(question["question"], filters=question.get("filter")),
     )
@@ -141,7 +142,7 @@ def summarize_results(results: list[GroundednessResult]) -> dict:
     }
 
 
-def evaluate_dataset(graph, dataset: dict, *, limit: int | None = None) -> dict:
+async def evaluate_dataset(graph, dataset: dict, *, limit: int | None = None) -> dict:
     questions = list(dataset["questions"])
     if limit is not None:
         questions = questions[: max(0, limit)]
@@ -154,7 +155,7 @@ def evaluate_dataset(graph, dataset: dict, *, limit: int | None = None) -> dict:
         }
         for index, question in enumerate(UNANSWERABLE_QUESTIONS)
     ]
-    results = [run_question(graph, question) for question in questions]
+    results = [await run_question(graph, question) for question in questions]
     summary = summarize_results(results)
     summary["results"] = [asdict(result) | {"support": result.support} for result in results]
     return summary
@@ -285,7 +286,7 @@ def main() -> None:
 
     dataset = load_dataset()
     graph, llm, retriever = build_graph_for_eval()
-    summary = evaluate_dataset(graph, dataset, limit=args.limit)
+    summary = asyncio.run(evaluate_dataset(graph, dataset, limit=args.limit))
 
     print(f"questions: {summary['questions']}")
     print(f"answered: {summary['answered']} | honest failures: {summary['honest_failures']}")

@@ -37,3 +37,14 @@ class LLMProvider(Protocol):
         max_tokens: int = 512,
         json_mode: bool = False,
     ) -> LLMResponse: ...
+
+    async def acomplete(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 512,
+        json_mode: bool = False,
+    ) -> LLMResponse: ...

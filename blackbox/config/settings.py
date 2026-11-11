@@ -268,6 +268,11 @@ class Settings(BaseSettings):
     llm_circuit_threshold: int = Field(default=5, alias="LLM_CIRCUIT_THRESHOLD")
     llm_circuit_reset_s: float = Field(default=30.0, alias="LLM_CIRCUIT_RESET_S")
 
+    # Worker threads for the blocking parts of the request path (Chroma queries, BM25
+    # scoring, SQLAlchemy reads). The default executor is `min(32, cpu_count + 4)`,
+    # which silently ties concurrency to the machine size; this makes it explicit.
+    max_worker_threads: int = Field(default=32, alias="MAX_WORKER_THREADS")
+
     # Authentication. Disabled by default only for local development; required in prod.
     auth_enabled: bool = Field(default=False, alias="AUTH_ENABLED")
     auth_jwt_secret: str | None = Field(default=None, alias="AUTH_JWT_SECRET")
@@ -300,6 +305,13 @@ class Settings(BaseSettings):
     def positive_int(cls, v):
         if v < 1:
             raise ValueError("must be >= 1")
+        return v
+
+    @field_validator("max_worker_threads")
+    @classmethod
+    def positive_threads(cls, v):
+        if v < 1:
+            raise ValueError("MAX_WORKER_THREADS must be >= 1")
         return v
 
     @field_validator("llm_circuit_reset_s")

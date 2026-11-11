@@ -6,6 +6,7 @@ only taken when the query shape is unambiguous. This also keeps the router free.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from dataclasses import dataclass
@@ -134,7 +135,7 @@ def find_service(query: str, entity_store: Any) -> str | None:
     return max(matches, key=len) if matches else None
 
 
-def router_node(
+async def router_node(
     state: GraphState,
     *,
     entity_store: Any | None = None,
@@ -158,7 +159,9 @@ def router_node(
     }
 
 
-def entity_lookup_node(state: GraphState, *, entity_store: Any | None = None) -> dict:
+async def entity_lookup_node(
+    state: GraphState, *, entity_store: Any | None = None
+) -> dict:
     """Answer a dependency question from the structured graph, as evidence chunks.
 
     Emitting regular evidence keeps the rest of the graph uniform: the same grading,
@@ -166,19 +169,26 @@ def entity_lookup_node(state: GraphState, *, entity_store: Any | None = None) ->
     """
     started = time.perf_counter()
     query = state.get("query", "")
-    service = find_service(query, entity_store) if entity_store is not None else None
+    service = None
+    dependents: list[str] = []
+    if entity_store is not None:
+        # The entity store is a blocking SQLAlchemy repository, so its calls are
+        # pushed to a worker thread rather than run on the event loop.
+        service = await asyncio.to_thread(find_service, query, entity_store)
+        if service:
+            dependents = await asyncio.to_thread(
+                entity_store.services_depending_on, service
+            )
 
     chunks: list[dict] = []
-    if service and entity_store is not None:
-        dependents = entity_store.services_depending_on(service)
-        if dependents:
-            text = (
-                f"{', '.join(dependents)} depend on {service} according to the dependency "
-                "graph."
-            )
-            if len(dependents) == 1:
-                text = f"{dependents[0]} depends on {service} according to the dependency graph."
-        else:
+    if service:
+        text = (
+            f"{', '.join(dependents)} depend on {service} according to the dependency "
+            "graph."
+        )
+        if len(dependents) == 1:
+            text = f"{dependents[0]} depends on {service} according to the dependency graph."
+        elif not dependents:
             text = f"No services in the dependency graph depend on {service}."
         chunks.append(
             {
@@ -206,7 +216,7 @@ def entity_lookup_node(state: GraphState, *, entity_store: Any | None = None) ->
     }
 
 
-def direct_answer_node(state: GraphState) -> dict:
+async def direct_answer_node(state: GraphState) -> dict:
     started = time.perf_counter()
     query = state.get("query", "")
     term = definition_term(query)

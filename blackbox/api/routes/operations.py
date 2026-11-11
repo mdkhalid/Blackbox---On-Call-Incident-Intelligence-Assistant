@@ -72,7 +72,7 @@ def ingest(
 
 
 @router.post("/api/eval/run")
-def run_evaluation(
+async def run_evaluation(
     payload: EvalRequest,
     request: Request,
     principal: Principal = _ADMIN_AUTH,
@@ -118,7 +118,7 @@ def run_evaluation(
                 for dense, sparse, mrr in sweep
             ]
         if payload.groundedness:
-            body["groundedness"] = evaluate_dataset(
+            body["groundedness"] = await evaluate_dataset(
                 services.graph, dataset, limit=payload.limit
             )
         return body

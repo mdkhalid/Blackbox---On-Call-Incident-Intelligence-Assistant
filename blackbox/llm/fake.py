@@ -62,6 +62,26 @@ class FakeLLMProvider:
         self.usage["total_tokens"] += response.total_tokens
         return response
 
+    async def acomplete(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 512,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """The offline provider is pure CPU and instant, so there is nothing to await."""
+        return self.complete(
+            system=system,
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+
     def _respond(self, prompt: str, json_mode: bool) -> tuple[str, str]:
         if "TASK: GRADE" in prompt:
             return self._grade(prompt), "grade"

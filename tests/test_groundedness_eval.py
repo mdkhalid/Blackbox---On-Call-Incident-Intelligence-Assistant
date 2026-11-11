@@ -62,8 +62,8 @@ def eval_graph(vectorstore, settings):
     )
 
 
-def test_run_question_counts_unsupported_draft_claims(eval_graph):
-    result = run_question(
+async def test_run_question_counts_unsupported_draft_claims(eval_graph):
+    result = await run_question(
         eval_graph,
         {
             "id": "q1",

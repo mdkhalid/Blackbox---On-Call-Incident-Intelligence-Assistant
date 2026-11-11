@@ -211,6 +211,42 @@ async def test_async_retrieve(retriever):
     assert docs
 
 
+async def test_async_retrieval_runs_the_dense_and_sparse_legs_concurrently(retriever):
+    """The async path must not run the two legs one after the other.
+
+    Sequential legs make a request pay for the sum of both; concurrent legs make it
+    pay for the slower of the two. This is the difference the async runtime exists
+    for, so it is worth a measurement rather than an inspection.
+    """
+    original_dense = retriever.dense.search
+    original_sparse = retriever.sparse.search
+
+    def slow_dense(query, **kwargs):
+        time.sleep(0.3)
+        return original_dense(query, **kwargs)
+
+    def slow_sparse(query, **kwargs):
+        time.sleep(0.3)
+        return original_sparse(query, **kwargs)
+
+    retriever.dense.search = slow_dense
+    retriever.sparse.search = slow_sparse
+
+    started = time.perf_counter()
+    result = await retriever.aretrieve_detailed("checkout connection pool", top_k=3)
+    elapsed = time.perf_counter() - started
+
+    assert result.chunks
+    assert elapsed < 0.5, f"the legs ran sequentially: {elapsed:.2f}s"
+
+
+async def test_async_retrieval_reports_this_calls_own_timings(retriever):
+    result = await retriever.aretrieve_detailed("checkout pool", top_k=3)
+    assert "dense_ms" in result.timings
+    assert "sparse_ms" in result.timings
+    assert result.timings["total_ms"] >= 0
+
+
 def test_cold_start_does_not_trip_the_deadline(vectorstore, retrieval_config):
     """Index building is startup work and must not be charged to a request.
 

@@ -5,6 +5,7 @@ change can never return a stale answer. Disabled in production.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import asdict
@@ -88,4 +89,44 @@ class CachedLLMProvider:
             json_mode=json_mode,
         )
         self.cache.set(key, asdict(response), self.ttl_s)
+        return response
+
+    async def acomplete(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 512,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Async twin of `complete`.
+
+        The cache backend is synchronous, so its calls are pushed to a worker thread
+        rather than run on the event loop.
+        """
+        key = self._key(
+            system=system,
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        cached = await asyncio.to_thread(self.cache.get, key)
+        if isinstance(cached, dict):
+            data = dict(cached)
+            data["cached"] = True
+            return LLMResponse(**data)
+
+        response = await self.provider.acomplete(
+            system=system,
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        await asyncio.to_thread(self.cache.set, key, asdict(response), self.ttl_s)
         return response

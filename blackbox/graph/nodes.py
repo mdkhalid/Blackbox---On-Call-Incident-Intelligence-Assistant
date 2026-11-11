@@ -5,6 +5,7 @@ so the same run can be replayed by the trace viewer and streamed by the API.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -44,7 +45,7 @@ class GraphDeps:
 # ---- retrieve ----
 
 
-def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
+async def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     filters = state.get("filters") or None
@@ -53,7 +54,7 @@ def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
     timings: dict[str, float] = dict(state.get("timings") or {})
     error = state.get("error")
     try:
-        result = _retrieve(
+        result = await _aretrieve(
             deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters
         )
         chunks = [_serialize_chunk(hit) for hit in result.chunks]
@@ -83,7 +84,7 @@ def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
 # ---- grade ----
 
 
-def grade_node(state: GraphState, deps: GraphDeps) -> dict:
+async def grade_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     history = list(state.get("grade_history") or [])
     attempt = len(history) + 1
@@ -109,7 +110,8 @@ def grade_node(state: GraphState, deps: GraphDeps) -> dict:
         }
 
     call_started = time.perf_counter()
-    response = deps.llm.complete(
+    response = await _acomplete(
+        deps.llm,
         system=GRADE_SYSTEM,
         prompt=grade_prompt(query, state.get("chunks") or []),
         model=deps.settings.grading_model,
@@ -149,7 +151,7 @@ def grade_node(state: GraphState, deps: GraphDeps) -> dict:
 # ---- rewrite ----
 
 
-def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
+async def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     attempt = int(state.get("rewrite_count", 0)) + 1
@@ -169,7 +171,8 @@ def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
         }
 
     call_started = time.perf_counter()
-    response = deps.llm.complete(
+    response = await _acomplete(
+        deps.llm,
         system=REWRITE_SYSTEM,
         prompt=rewrite_prompt(query, attempt),
         model=deps.settings.rewrite_model,
@@ -203,7 +206,7 @@ def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
 # ---- generate ----
 
 
-def generate_node(state: GraphState, deps: GraphDeps) -> dict:
+async def generate_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("rewritten_query") or state.get("query", "")
     context = state.get("context") or ""
@@ -258,7 +261,8 @@ def generate_node(state: GraphState, deps: GraphDeps) -> dict:
         }
 
     call_started = time.perf_counter()
-    response = deps.llm.complete(
+    response = await _acomplete(
+        deps.llm,
         system=GENERATE_SYSTEM,
         prompt=prompt,
         model=deps.settings.generation_model,
@@ -305,7 +309,7 @@ def generate_node(state: GraphState, deps: GraphDeps) -> dict:
 # ---- ground check ----
 
 
-def ground_check_node(state: GraphState, deps: GraphDeps) -> dict:
+async def ground_check_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     answer = state.get("answer") or ""
     chunks = state.get("chunks") or []
@@ -355,7 +359,7 @@ def ground_check_node(state: GraphState, deps: GraphDeps) -> dict:
 # ---- honest failure ----
 
 
-def honest_failure_node(state: GraphState, deps: GraphDeps) -> dict:
+async def honest_failure_node(state: GraphState, deps: GraphDeps) -> dict:
     started = time.perf_counter()
     query = state.get("original_query") or state.get("query", "")
     filters = state.get("filters") or {}
@@ -442,7 +446,7 @@ def _serialize_chunk(chunk: Any) -> dict:
     return trail
 
 
-def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any) -> RetrievalResult:
+async def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any) -> RetrievalResult:
     """Retrieve chunks together with the timings of *this* call.
 
     `retrieve_detailed` is the primary API because the retriever is a process-wide
@@ -455,6 +459,39 @@ def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any) -> Retriev
         return detailed(query, top_k=top_k, filter=filter)
     chunks = list(retriever.retrieve(query, top_k=top_k, filter=filter))
     return RetrievalResult(chunks=chunks)
+
+
+async def _aretrieve(
+    retriever: Any, query: str, *, top_k: int, filter: Any
+) -> RetrievalResult:
+    """Async retrieval that keeps the same per-call timings contract as `_retrieve`.
+
+    A retriever that can retrieve asynchronously is awaited directly; one that cannot
+    is pushed to a worker thread so the event loop is never blocked by a blocking
+    store call.
+    """
+    detailed = getattr(retriever, "aretrieve_detailed", None)
+    if callable(detailed):
+        return await detailed(query, top_k=top_k, filter=filter)
+    detailed = getattr(retriever, "retrieve_detailed", None)
+    if callable(detailed):
+        return await asyncio.to_thread(detailed, query, top_k=top_k, filter=filter)
+    chunks = await asyncio.to_thread(
+        retriever.retrieve, query, top_k=top_k, filter=filter
+    )
+    return RetrievalResult(chunks=list(chunks))
+
+
+async def _acomplete(llm: Any, **kwargs: Any) -> LLMResponse:
+    """Call the provider's async entry point, falling back to a worker thread.
+
+    A provider that only implements the synchronous `complete` still works, but it
+    occupies a worker thread for the duration of the call.
+    """
+    acomplete = getattr(llm, "acomplete", None)
+    if callable(acomplete):
+        return await acomplete(**kwargs)
+    return await asyncio.to_thread(llm.complete, **kwargs)
 
 
 def _fit_chunks(chunks: list[dict], token_cap: int) -> list[dict]:
