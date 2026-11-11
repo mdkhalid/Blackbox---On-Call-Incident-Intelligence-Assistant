@@ -1,8 +1,14 @@
-"""Operational endpoints: corpus ingestion and retrieval evaluation."""
+"""Operational endpoints: corpus ingestion and retrieval evaluation.
+
+Both are long jobs, so both answer `202 {job_id}` and run the work on a background
+worker. The status endpoints report what the job did.
+"""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -17,10 +23,11 @@ from blackbox.logging_setup import get_logger
 logger = get_logger(__name__)
 router = APIRouter(tags=["operations"])
 _ADMIN_AUTH = Depends(require_roles("admin"))
+_READ_AUTH = Depends(require_roles("viewer", "operator", "admin"))
 
 
-@router.post("/api/ingest")
-def ingest(
+@router.post("/api/ingest", status_code=202)
+async def ingest(
     payload: IngestRequest,
     request: Request,
     principal: Principal = _ADMIN_AUTH,
@@ -33,21 +40,15 @@ def ingest(
         subject=principal.subject,
         corpus_dir=payload.corpus_dir,
     )
-    try:
-        services.ensure_runtime()
-    except Exception as exc:
-        logger.exception("ingest_runtime_unavailable")
-        raise HTTPException(status_code=503, detail="runtime unavailable") from exc
 
     root = _corpus_path(payload.corpus_dir)
     if not root.is_dir():
         raise HTTPException(status_code=400, detail="corpus_dir does not exist")
 
-    if not services.ingest_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="an ingestion job is already running")
-    try:
+    def run() -> dict[str, Any]:
+        services.ensure_runtime()
         if services.retriever is None or services.entity_store is None:
-            raise HTTPException(status_code=503, detail="ingestion dependencies unavailable")
+            raise RuntimeError("ingestion dependencies unavailable")
         pipeline = IngestionPipeline(
             services.retriever.vectorstore,
             services.entity_store,
@@ -67,11 +68,26 @@ def ingest(
         }
         logger.info("ingest_complete", **body)
         return body
-    finally:
-        services.ingest_lock.release()
+
+    job = services.submit_job(
+        "ingest",
+        run,
+        tenant_id=principal.tenant_id,
+        subject=principal.subject,
+    )
+    return _job_response(job, "/api/ingest")
 
 
-@router.post("/api/eval/run")
+@router.get("/api/ingest/{job_id}")
+def ingest_status(
+    job_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
+    return _job_status(job_id, request, principal, kind="ingest")
+
+
+@router.post("/api/eval/run", status_code=202)
 async def run_evaluation(
     payload: EvalRequest,
     request: Request,
@@ -85,34 +101,24 @@ async def run_evaluation(
         subject=principal.subject,
         k=payload.k,
     )
-    try:
-        services.ensure_runtime()
-    except Exception as exc:
-        logger.exception("eval_runtime_unavailable")
-        raise HTTPException(status_code=503, detail="runtime unavailable") from exc
 
-    if not services.eval_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="an evaluation is already running")
-    try:
+    async def run() -> dict[str, Any]:
+        await asyncio.to_thread(services.ensure_runtime)
         retriever = services.retriever
         if retriever is None:
-            raise HTTPException(status_code=503, detail="runtime unavailable")
-        try:
-            dataset = load_dataset()
-        except SystemExit as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-        results = run_all(retriever, dataset, k=payload.k)
+            raise RuntimeError("runtime unavailable")
+        dataset = load_dataset()
+        results = await asyncio.to_thread(run_all, retriever, dataset, k=payload.k)
         strategies = {
             name: asdict(metrics) for name, (metrics, _) in results.items()
         }
-        body = {
+        body: dict[str, Any] = {
             "k": payload.k,
             "questions": dataset.get("question_count"),
             "strategies": strategies,
         }
         if payload.fusion_sweep:
-            sweep = fusion_sweep(retriever, dataset, k=payload.k)
+            sweep = await asyncio.to_thread(fusion_sweep, retriever, dataset, k=payload.k)
             body["fusion_sweep"] = [
                 {"dense_weight": dense, "sparse_weight": sparse, "mrr": mrr}
                 for dense, sparse, mrr in sweep
@@ -122,8 +128,57 @@ async def run_evaluation(
                 services.graph, dataset, limit=payload.limit
             )
         return body
-    finally:
-        services.eval_lock.release()
+
+    job = services.submit_job(
+        "eval",
+        run,
+        tenant_id=principal.tenant_id,
+        subject=principal.subject,
+    )
+    return _job_response(job, "/api/eval")
+
+
+@router.get("/api/eval/{job_id}")
+def eval_status(
+    job_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
+    return _job_status(job_id, request, principal, kind="eval")
+
+
+@router.get("/api/jobs/{job_id}")
+def job_status(
+    job_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
+    return _job_status(job_id, request, principal, kind=None)
+
+
+def _job_response(job, status_url: str) -> dict[str, Any]:
+    return {
+        "job_id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "submitted_at": job.submitted_at,
+        "status_url": f"{status_url}/{job.id}",
+    }
+
+
+def _job_status(job_id: str, request: Request, principal: Principal, *, kind: str | None):
+    services = get_services(request)
+    found = services.find_job(job_id, kind=kind)
+    if found is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    queue, job = found
+    # A job that belongs to another tenant is reported as missing rather than as
+    # forbidden, so the endpoint cannot be used to probe for other tenants' jobs.
+    if job.tenant_id != principal.tenant_id:
+        raise HTTPException(status_code=404, detail="job not found")
+    body = queue.snapshot(job)
+    body["status_url"] = f"/api/jobs/{job.id}"
+    return body
 
 
 def _corpus_path(raw: str) -> Path:

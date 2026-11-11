@@ -43,6 +43,7 @@ class AppServices:
     ingest_lock: threading.Lock = field(default_factory=threading.Lock)
     eval_lock: threading.Lock = field(default_factory=threading.Lock)
     conversation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    job_queues: dict[str, Any] = field(default_factory=dict)
 
     _storage_lock: threading.Lock = field(default_factory=threading.Lock)
     _runtime_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -254,6 +255,39 @@ class AppServices:
                 self._tenant_counts.pop(tenant_id, None)
             else:
                 self._tenant_counts[tenant_id] = count - 1
+
+    # ---- background jobs ----
+
+    def job_queue(self, kind: str):
+        """The queue for one kind of operational job."""
+        from blackbox.api.jobs import JobQueue
+
+        queue = self.job_queues.get(kind)
+        if queue is None:
+            queue = JobQueue(kind)
+            self.job_queues[kind] = queue
+        return queue
+
+    def submit_job(self, kind: str, fn, *, tenant_id: str, subject: str):
+        """Queue a background job and return it immediately.
+
+        The caller gets a job id and polls the status endpoint; the work happens on a
+        worker instead of inside the request.
+        """
+        return self.job_queue(kind).submit(fn, tenant_id=tenant_id, subject=subject)
+
+    def find_job(self, job_id: str, *, kind: str | None = None):
+        """Find a job by id, optionally restricted to one kind."""
+        for queue in self.job_queues.values():
+            job = queue.get(job_id)
+            if job is not None and (kind is None or job.kind == kind):
+                return queue, job
+        return None
+
+    def stop_jobs(self) -> None:
+        """Stop the background job workers."""
+        for queue in self.job_queues.values():
+            queue.stop()
 
 
 def build_services(settings: Settings) -> AppServices:
