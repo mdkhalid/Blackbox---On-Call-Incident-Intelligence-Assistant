@@ -141,8 +141,13 @@ cross-tenant tests (read/chat → 404, admin actions → 403).
 ### Current
 
 - Chroma `PersistentClient` on a local volume; BM25 built in-process from the full corpus per
-  worker; dense and sparse legs run sequentially; filters compile to Chroma `where`.
+  worker; dense and sparse legs run concurrently; filters compile to Chroma `where`.
 - Retrieval cache key includes query/filter/top-k/config; invalidated on ingest.
+- The sparse leg sits behind the `SparseStore` protocol (`blackbox/retrieval/stores.py`), with
+  the in-process BM25 index as the development adapter and an OpenSearch adapter alongside it.
+  The metadata filter is a store-neutral AST compiled per store.
+- The corpus-derived indexes are rebuilt on the ingestion worker and published atomically
+  (`rebuild_indexes`), so a request never pays for an O(corpus) rebuild.
 
 ### Target
 
@@ -164,6 +169,13 @@ cross-tenant tests (read/chat → 404, admin actions → 403).
 4. Cut reads; keep Chroma read-only for rollback.
 5. Remove local Chroma/BM25 from the runtime and docs.
 
+> **State (2026-11-11, audit finding 6).** Steps 1's *seam* is done: the protocols, the
+> per-store filter compilation and the OpenSearch adapter exist and are contract-tested
+> against the in-process adapter. The *migration* is not: the OpenSearch index is not
+> populated by ingestion and the adapter has not been run against a live cluster. Chroma
+> plus the in-process BM25 remain the default and the rollback path. Steps 2–5 are open, as
+> are the tenant predicate and the Qdrant adapter.
+
 ### Gate
 
 Hybrid MRR ≥ 0.9214 (or a documented new baseline), recall/precision not lower, groundedness
@@ -177,8 +189,8 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
   hops in the request path.
 - Explicit LLM policy: connect/read timeout, bounded retries with jitter, circuit breaker,
   per-tenant admission control, max tokens/cost. **Phase 1 implements timeout/retry, the
-  circuit breaker, bounded provider concurrency and per-pod tenant admission; async provider
-  execution and global quotas are Phase 3/4.**
+  circuit breaker, bounded provider concurrency and per-tenant admission; global quotas are
+  Phase 4.**
 - SSE: stateless streams, configurable ingress idle timeout, no proxy buffering; tokens remain
   post-ground-check; node events stream during execution.
 - Idempotency: `Idempotency-Key` on `/api/chat`, stored in Redis with the final result, so
@@ -189,6 +201,15 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 - Optional LangGraph Postgres checkpointer for crash recovery; Postgres remains the
   conversation source of truth.
 - Graceful shutdown: stop accepting, drain SSE, release leases, flush traces.
+
+> **State (2026-11-11, audit finding 5).** The async provider interface, the async graph
+> nodes, the concurrent dense/sparse legs and the explicitly bounded worker pool
+> (`MAX_WORKER_THREADS`, replacing asyncio's `min(32, cpu_count + 4)`) are implemented. A
+> hosted LLM round trip no longer occupies a worker thread.
+>
+> Two things are still open. The *retrieval stores* are synchronous and reached through
+> `asyncio.to_thread`, so the request path still has threadpool hops for Chroma and BM25.
+> And the provider's concurrency limit is per-process; global quotas remain Phase 4.
 
 ---
 
@@ -206,6 +227,15 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 - PgBouncer transaction mode; separate `NullPool` engine for advisory locks; pool sizing
   documented per replica.
 
+> **State (2026-11-11, audit finding 9).** The models use `Mapped[]`/`mapped_column()` and
+> the DDL is unchanged, so the Alembic baseline still matches. Two further database fixes
+> landed with the audit remediation: an in-memory SQLite database now uses a static pool (a
+> `:memory:` database belongs to a connection, and the API's thread-pooled database calls
+> were seeing a different, empty database per thread), and a local SQLite database whose
+> schema no longer matches the models is detected and recreated outside production.
+> `create_all` never alters an existing table, so without the second fix a local database
+> written before a schema change made the app unstartable.
+
 ---
 
 ## 8. Ingestion, evaluation and memory jobs
@@ -217,6 +247,18 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 - One ingest per tenant at a time; eval queue isolated from ingest; dead-letter queues and
   retry budgets.
 - Evaluation results persist for regression comparison and release gates.
+
+> **State (2026-11-11, audit finding 8).** The `202 {job_id}` shape and the status endpoints
+> are implemented (`/api/jobs/{id}`, `/api/ingest/{id}`, `/api/eval/{id}`), along with a real
+> queue: a second ingest or eval is queued rather than refused with `409`. The job runs on
+> a dedicated worker thread, not on the request's event loop — a request's loop does not
+> outlive the request, so a task-based worker would be cancelled the moment the response was
+> sent.
+>
+> The queue is **in-process**, not the SQS/Kafka design above. Job state does not survive a
+> restart and is not shared between replicas, so a multi-pod deployment would serve a job
+> status from whichever pod happens to hold it. Dead-letter queues, retry budgets and
+> summary compaction on the worker remain open.
 
 ---
 
@@ -256,6 +298,11 @@ with tenant affinity.
 - Audit trail for access and admin actions; retention policy.
 - Dependency/image scanning, SBOM, signed images, least-privilege service accounts.
 - RLS + mandatory application tenant filters; cross-tenant access tests are release blockers.
+- The rate limiter keys on the *client* address, not the TCP peer. Behind the ingress every
+  request arrives from the proxy, so the peer address would make a per-client limit a
+  cluster-wide one. `X-Forwarded-For` is read only when the immediate peer is a configured
+  trusted proxy (`TRUSTED_PROXY_CIDRS`); otherwise the header is client-controlled and is
+  ignored, so the limit cannot be bypassed with a spoofed header.
 
 ---
 
@@ -311,10 +358,30 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 |---|---|---|
 | 0 | This document, architecture decisions, SLOs, tenancy/runbook outline | ✅ Done |
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
-| 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ⬜ Planned |
-| 3 | Async graph/providers, queue workers, trace store split | ⬜ Planned |
+| 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ◐ In progress |
+| 3 | Async graph/providers, queue workers, trace store split | ◐ In progress |
 | 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ⬜ Planned |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
+
+### Audit remediation (complete, 2026-11-11)
+
+The code audit (see [`code-audit-findings.md`](code-audit-findings.md)) found one critical
+defect and eight scaling and quality gaps. All nine are fixed; the per-finding analysis and
+resolution live in that document. What changed against this document's target shape:
+
+- **Runtime (§6).** Async providers, async graph nodes, concurrent dense/sparse legs and an
+  explicitly bounded worker pool. A hosted LLM round trip no longer holds a worker thread.
+- **Retrieval (§5).** The sparse leg is behind the `SparseStore` protocol, with the OpenSearch
+  adapter written and contract-tested. The index is not yet populated and the adapter has not
+  met a live cluster, so Chroma + in-process BM25 remain the default and the rollback path.
+- **Jobs (§8).** `202 {job_id}` with status endpoints and a real queue, so a second job is
+  queued rather than refused. The queue is in-process, not SQS/Kafka.
+- **Observability.** Retrieval timings are per-request rather than shared between concurrent
+  requests, and the budget endpoint reports the request that was actually sent, including
+  the exact prompt token count.
+- **Security (§10).** The rate limiter keys on the client address, honouring
+  `X-Forwarded-For` only from trusted proxies.
+- **Quality.** `mypy` is clean and gated in CI.
 
 ### Phase 1 progress (complete, control plane)
 
