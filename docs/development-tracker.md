@@ -213,8 +213,8 @@ within SLO at target load.
 - [x] The two sparse backends measure identically — the sparse leg now scores with Lucene's
   formula in both adapters, so the OpenSearch backend reproduces the in-process numbers exactly
   (dense 0.8548 / sparse 0.8714 / hybrid 0.9167 / hybrid+rerank 0.8857)
-- [ ] Versioned indexes + `chunks-current` alias; staged ingest and atomic cutover
-- [ ] Shadow indexing and dual-read comparison
+- [ ] Versioned indexes + `chunks-current` alias; staged ingest and atomic cutover (helpers landed in opensearch adapter; alias wiring open)
+- [x] Shadow indexing and dual-read comparison — ShadowingRetriever (dual-read) + shadow_store dual-write in ingestion pipeline
 - [x] Eval parity gate wired into CI — `--min-mrr` flag on retrieval_eval, CI step added
 - [ ] Remove Chroma/BM25 runtime dependency after cutover (rollback window documented)
 - [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision

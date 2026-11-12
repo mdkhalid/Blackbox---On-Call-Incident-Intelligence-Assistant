@@ -210,6 +210,22 @@ async def offboard_tenant(
     return {"tenant_id": tenant_id, "conversations_removed": removed}
 
 
+@router.post("/api/admin/retention", status_code=200)
+async def run_retention(
+    request: Request,
+    days: int = 90,
+    principal: Principal = _ADMIN_AUTH,
+):
+    services = get_services(request)
+    try:
+        await asyncio.to_thread(services.ensure_storage)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    removed = await asyncio.to_thread(services.conversations.delete_older_than, days)
+    logger.info("audit_admin_action", action="retention", days=days, removed=removed)
+    return {"days": days, "conversations_removed": removed}
+
+
 def _corpus_path(raw: str) -> Path:
     base = Path.cwd().resolve()
     candidate = Path(raw)

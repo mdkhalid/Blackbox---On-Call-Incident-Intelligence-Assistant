@@ -127,6 +127,7 @@ class ConversationRepository(Protocol):
     ) -> list[TurnRecord]: ...
     def delete_tenant(self, tenant_id: str) -> int: ...
 
+    def delete_older_than(self, days: int) -> int: ...
     def last_turn(
         self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
     ) -> TurnRecord | None: ...
@@ -200,6 +201,21 @@ class SqlAlchemyConversationRepository:
             session.query(TurnRow).filter(TurnRow.tenant_id == tenant_id).delete()
             convs = session.query(ConversationRow).filter(
                 ConversationRow.tenant_id == tenant_id
+            ).delete()
+            session.commit()
+            return int(convs or 0)
+
+    def delete_older_than(self, days: int) -> int:
+        """Delete conversations and turns older than ``days``. Returns conversations removed."""
+        if days < 0:
+            raise ValueError("days must be >= 0")
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        with self._session() as session:
+            session.query(TurnRow).filter(TurnRow.created_at < cutoff).delete()
+            convs = session.query(ConversationRow).filter(
+                ConversationRow.updated_at < cutoff
             ).delete()
             session.commit()
             return int(convs or 0)
