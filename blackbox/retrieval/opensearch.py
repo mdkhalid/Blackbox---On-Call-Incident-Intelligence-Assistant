@@ -99,9 +99,14 @@ class OpenSearchSparseStore:
         text_field: str = "text",
         tokens_field: str = "tokens",
         chunk_id_field: str = "chunk_id",
+        alias: str | None = None,
     ) -> None:
         self.hosts = [host.strip() for host in hosts.split(",") if host.strip()]
-        self.index = index
+        # When an alias is supplied, `index` names the read alias and concrete
+        # indexes are versioned ({alias}-vN) behind it. Otherwise `index` is a
+        # concrete index, which keeps the development adapter simple.
+        self.alias = alias
+        self.index = alias if alias else index
         self.username = username
         self.password = password
         self.verify_certs = verify_certs
@@ -169,6 +174,11 @@ class OpenSearchSparseStore:
 
     def ensure_index(self) -> None:
         """Create the index with its mapping if it does not exist yet."""
+        if self.alias:
+            if not self.list_versions():
+                self.create_versioned(1)
+                self.swap_alias(1)
+            return
         if self.client.indices.exists(index=self.index):
             return
         self.client.indices.create(index=self.index, body=INDEX_MAPPING)
@@ -176,6 +186,12 @@ class OpenSearchSparseStore:
 
     def drop_index(self) -> None:
         """Delete the index. Used by the tests and by a full reindex."""
+        if self.alias:
+            for v in self.list_versions():
+                name = self.versioned_index_name(v)
+                if self.client.indices.exists(index=name):
+                    self.client.indices.delete(index=name)
+            return
         if self.client.indices.exists(index=self.index):
             self.client.indices.delete(index=self.index)
 
