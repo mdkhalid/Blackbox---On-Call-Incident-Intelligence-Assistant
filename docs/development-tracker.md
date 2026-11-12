@@ -220,7 +220,7 @@ within SLO at target load.
 - [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision
 - [x] SQLAlchemy 2.0 `Mapped` models — already in place (ConversationRow/TurnRow use Mapped + mapped_column)
 - [x] JSONB conversion migration (0003) — Postgres only; models stay portable JSON
-- [ ] Partition plan for turns/traces (Postgres) — open
+- [x] Partition plan for turns/traces — partition_month column + index + migration 0004 (range partitioning ready)
 - [x] Retention/deletion APIs beyond tenant offboarding — delete_older_than + admin endpoint
 - [x] Tenant offboarding (conversations + turns) via `DELETE /api/admin/tenants/{tenant_id}` and `ConversationRepository.delete_tenant`; entity/index payloads are store-wide today
 - [ ] Global per-tenant LLM/token quotas — deferred to Phase 4 (per-pod admission control in place)
