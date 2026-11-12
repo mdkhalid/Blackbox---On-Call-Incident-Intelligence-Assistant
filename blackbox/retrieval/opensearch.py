@@ -179,6 +179,44 @@ class OpenSearchSparseStore:
         if self.client.indices.exists(index=self.index):
             self.client.indices.delete(index=self.index)
 
+    # ---- versioned indexes / alias cutover (Phase 2) ----
+
+    def versioned_index_name(self, version: int) -> str:
+        """Concrete index name for a given version."""
+        return f"{self.index}-v{version}"
+
+    def list_versions(self) -> list[int]:
+        """Return the versions of concrete indexes behind the alias."""
+        versions: list[int] = []
+        try:
+            for name in self.client.indices.get_alias(index=f"{self.index}-v*"):
+                suffix = name.rsplit("-v", 1)[-1]
+                if suffix.isdigit():
+                    versions.append(int(suffix))
+        except Exception:  # noqa: BLE001
+            return versions
+        return sorted(versions)
+
+    def create_versioned(self, version: int) -> str:
+        """Create a concrete versioned index with the standard mapping."""
+        name = self.versioned_index_name(version)
+        if not self.client.indices.exists(index=name):
+            self.client.indices.create(index=name, body=INDEX_MAPPING)
+        return name
+
+    def swap_alias(self, version: int) -> None:
+        """Atomically point the read alias at a concrete versioned index."""
+        target = self.versioned_index_name(version)
+        actions: list[dict[str, Any]] = []
+        try:
+            current = self.client.indices.get_alias(name=self.index)
+            for old in current:
+                actions.append({"remove": {"index": old, "alias": self.index}})
+        except Exception:  # noqa: BLE001, S110
+            pass
+        actions.append({"add": {"index": target, "alias": self.index}})
+        self.client.indices.update_aliases({"actions": actions})
+
     @property
     def size(self) -> int:
         try:
