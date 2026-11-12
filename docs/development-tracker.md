@@ -126,7 +126,7 @@ mandatory tenant payloads vs per-tenant indexes.
 | LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
 | Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
-| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant scaffolding landed; dual-read, alias cutover open |
+| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant adapter wired via dense_backend config; versioned indexes/alias helpers landed; shadow/dual-read open |
 | Async graph + workers | 3 | ◐ | async graph, async providers, bounded pool and the ingest/eval job queue are done; shared queue backend and trace store open |
 | Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3 |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
@@ -341,6 +341,7 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-12 | Postgres RLS policies (migration 0002, conditional on Postgres) | ✅ | `411945d` |
 | 2026-11-12 | Qdrant adapter scaffolding + optional `vector` extra | ◐ | `411945d` |
 | 2026-11-12 | OpenSearch versioned indexes + alias cutover helpers | ◐ | `f99b685` |
+| 2026-11-12 | Qdrant dense backend wired (config + factory + filter compilation) | ◐ | `1cb30a9` |
 
 ## 12. Update protocol
 
