@@ -217,7 +217,7 @@ within SLO at target load.
 - [x] Shadow indexing and dual-read comparison — ShadowingRetriever (dual-read) + shadow_store dual-write in ingestion pipeline
 - [x] Eval parity gate wired into CI — `--min-mrr` flag on retrieval_eval, CI step added
 - [x] Remove Chroma/BM25 runtime dependency after cutover — rollback window documented in scaling-and-production-readiness.md; dev adapters retained as rollback path
-- [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision (script added: scripts/benchmark_backends.py; needs clusters)
+- [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision (script: scripts/benchmark_backends.py; needs live clusters - deferred)
 - [x] SQLAlchemy 2.0 `Mapped` models — already in place (ConversationRow/TurnRow use Mapped + mapped_column)
 - [x] JSONB conversion migration (0003) — Postgres only; models stay portable JSON
 - [x] Partition plan for turns/traces — partition_month column + index + migration 0004 (range partitioning ready)
