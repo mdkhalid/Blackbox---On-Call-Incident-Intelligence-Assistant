@@ -233,7 +233,7 @@ within SLO at target load.
 ## 5. Phase 3 — Async runtime and jobs
 
 - [x] Async graph nodes and LangGraph execution — audit finding 5
-- [ ] Async retrieval stores + provider clients end-to-end — providers are async; the stores are not
+- [x] Async retrieval stores + provider clients end-to-end — asearch on DenseStore/SparseStore protocols and concrete stores/retrievers
 - [ ] Queue worker: ingest, eval, summary compaction — ingest and eval run on a worker; the queue is in-process and summary compaction is not queued
 - [x] `202 + job_id` ingest/eval APIs with status endpoints — audit finding 8
 - [ ] Staged ingest with validation and alias swap
