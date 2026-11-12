@@ -21,6 +21,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Consumes the shared Redis job queue (ingest/eval/retention). The API can also
+  # execute jobs in-process; the dedicated worker is what keeps a job alive when the
+  # pod that submitted it is replaced.
+  worker:
+    build: .
+    container_name: blackbox-worker
+    command: ["python", "-m", "blackbox.worker"]
+    env_file:
+      - .env
+    environment:
+      - ENV=dev
+      - DATABASE_URL=postgresql://blackbox:blackbox@postgres:5432/blackbox
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+      - CONFIG_PATH=blackbox/config/config.yaml
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     container_name: blackbox-postgres

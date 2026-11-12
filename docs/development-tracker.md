@@ -18,7 +18,7 @@ Last updated: 2026-11-12
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 410 passing, `ruff` clean, `mypy` clean |
+| Tests | 454 passing, `ruff` clean, `mypy` clean |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
@@ -56,56 +56,60 @@ Last updated: 2026-11-12
   of occupying a request worker and refusing further work.
 - Quality: `mypy` reports no issues across the package and CI gates on it.
 
-**Next:** Phase 3 — remaining: SSE cancellation, shared queue worker, staged ingest with
-alias swap, trace store split.
-**Not started:** Phase 4 Kubernetes/observability, Phase 5 multi-region/DR.
+**Phase 3 — complete (async runtime and jobs).**
+- Async retrieval stores (`asearch` on the protocols and every adapter), with the hybrid
+  retriever awaiting both legs concurrently.
+- SSE cancellation: a client disconnect cancels the graph generator, releases the turn
+  lock, tenant slot and idempotency key, and persists no partial turn.
+- Shared job store: Redis-backed job records and pending queue, a handler registry, and a
+  dedicated worker process (`python -m blackbox.worker`). Ingest, eval and retention are
+  submit-by-params jobs; closures stay local-only by design.
+- Staged ingest: a complete new versioned OpenSearch index is built, validated (documents,
+  chunks, tenant coverage) and then published by an alias swap. Any failure drops the new
+  version and leaves readers on the previous one.
+- Trace store split: turns are archived to file/S3 (`FileTraceArchive`, `S3TraceArchive`)
+  before retention deletes them; `/trace` is paginated and can merge the archived window.
+- 454 tests green (9 skipped without an OpenSearch cluster), `ruff` clean, `mypy` clean.
+
+**Next:** Phase 4 — Kubernetes and operations (Helm, Terraform, observability, CI image
+build, load tests).
+**Not started:** Phase 5 multi-region/DR.
 
 ### Resume point (next session)
 
-State: clean working tree; **all tests green**, `ruff` clean, `mypy` clean; Docker available.
-Phase 1 (control plane) closed, audit remediation closed, Phase 2 functionally complete
-(two infra-bound items open), and **Phase 3 is in progress**.
+State: clean working tree; **454 tests green** (9 skipped: live-cluster OpenSearch tests),
+`ruff` clean, `mypy` clean (98 source files); Docker available.
+Phase 1 (control plane), the audit remediation, Phase 2 (retrieval migration and tenant
+isolation) and **Phase 3 (async runtime and jobs) are complete**.
 
-**Done in Phase 3 so far:**
-1. ✅ Async retrieval stores end-to-end — `asearch` added to the `DenseStore`/`SparseStore`
-   protocols and to `DenseRetriever`, `SparseRetriever`, `OpenSearchSparseRetriever`;
-   `HybridRetriever` awaits both legs concurrently instead of offloading each to a thread.
-   (`blackbox/retrieval/stores.py`, `dense.py`, `sparse.py`, `opensearch.py`,
-   `hybrid_retriever.py`)
-2. ✅ Graceful shutdown/drain — the lifespan stops the job workers and shuts the thread
-   pool down; covered by `tests/test_graceful_shutdown.py`.
+**Phase 3 delivered (all committed):**
+1. ✅ Async stores — `asearch` in `blackbox/retrieval/stores.py` and adapters; hybrid legs
+   run concurrently.
+2. ✅ SSE cancellation — `stream_with_disconnect` in `blackbox/api/sse.py`, wired into
+   `blackbox/api/routes/chat.py`; tests in `tests/test_sse_cancellation.py`.
+3. ✅ Shared queue — `blackbox/api/jobs.py` (`RedisJobStore`, `register_handler`),
+   `blackbox/worker.py`; tests in `tests/test_shared_jobs.py`.
+4. ✅ Staged ingest — `blackbox/ingestion/staged.py` (validate, then `swap_alias`; abort
+   keeps the old version serving); tests in `tests/test_staged_ingest.py`.
+5. ✅ Trace split — `blackbox/api/trace_archive.py`, `blackbox/api/retention.py`,
+   paginated `/trace`; tests in `tests/test_trace_archive.py` and
+   `tests/test_trace_pagination.py`.
 
-**Next: Phase 3 — remaining items, in recommended order.**
-1. **SSE cancellation** (`⬜`): a client disconnect does not yet cancel the graph run — the
-   stream has no `request.is_disconnected()` check or `CancelledError` handling, and no test
-   covers it. Start in `blackbox/api/routes/chat.py` (SSE generator) and add a test that
-   disconnects mid-stream.
-2. **Shared queue backend** (`⬜`): `JobQueue` in `blackbox/api/jobs.py` is in-process, so a
-   job submitted to one pod is invisible to another. A Redis/SQS queue only stores job
-   *ids*, and the callable cannot be reconstructed from Redis, so this needs a
-   worker-process refactor: serialise job params (kind + kwargs) into Redis and execute
-   them in a dedicated worker process. Do **not** just flip a Redis flag — the current
-   draft path marks cross-pod jobs `failed`.
-3. **Staged ingest with validation and alias swap** (`⬜`): write to a new versioned index,
-   validate (doc count, tenant coverage, sample retrieval), then `swap_alias`. The
-   versioned-index helpers already exist in `blackbox/retrieval/opensearch.py`
-   (`create_versioned`, `swap_alias`, `list_versions`).
-4. **Trace store split** (`⬜`): Postgres for recent traces + ClickHouse/S3 for archive;
-   then paginated `/trace` and retention jobs. Decision is provisional in the decision log —
-   confirm before building.
-5. Optional/cleanup: the duplicate "Commands" block in this section can be merged when the
-   file is next touched.
+**Next: Phase 4 — start with the deployment package, in this order.**
+1. Helm chart: API deployment, worker deployment (`python -m blackbox.worker`), HPA/KEDA,
+   PodDisruptionBudget, NetworkPolicies, and an initContainer/Job for `alembic upgrade head`.
+2. Terraform reference: EKS, Aurora Postgres, ElastiCache Redis, S3 (trace archive), then
+   OpenSearch/Qdrant once the Phase 2 benchmark decision is made.
+3. Observability: OpenTelemetry traces/metrics/logs, Prometheus/Grafana/Loki, SLO burn alerts.
+4. CI: coverage threshold, image build + SBOM/scan; GitOps with a canary/blue-green rollout.
+5. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
 
-Phase 4 (Kubernetes/Helm/Terraform, observability) and Phase 5 (multi-region/DR) are
-not started.
-
-**Phase 2 exit gate met:** MRR 0.9167 (hybrid RRF), tenant filters proven (cross-tenant
-retrieval tests green), eval parity gate wired into CI.
-
-**Phase 2 open items (infra-bound, do not block Phase 3):**
-- Qdrant+OpenSearch vs OpenSearch-only benchmark — run `scripts/benchmark_backends.py`
-  once live Qdrant + OpenSearch clusters exist; record the decision in §9.
-- Global per-tenant LLM/token quotas — deferred to Phase 4.
+**Carried over (infra-bound):**
+- Qdrant+OpenSearch vs OpenSearch-only benchmark — `scripts/benchmark_backends.py` needs
+  live clusters; record the decision in §9.
+- Global per-tenant LLM/token quotas — Phase 4.
+- Summary compaction remains inline in the turn (deliberate: it mutates the memory the
+  same turn reads).
 
 **Commands:**
 ```powershell
@@ -114,12 +118,10 @@ retrieval tests green), eval parity gate wired into CI.
 .\.venv\Scripts\python.exe -m mypy blackbox
 ```
 
-**Commands:**
+**Commands (Docker / live cluster):**
 ```bash
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m ruff check blackbox tests scripts alembic
-.\.venv\Scripts\python.exe -m mypy blackbox
 .\.venv\Scripts\python.exe scripts\multi_pod_smoke.py   # Docker; shared Postgres + Redis
+.\.venv\Scripts\python.exe -m blackbox.worker           # shared-queue consumer (needs REDIS_URL)
 ```
 
 **To exercise the OpenSearch backend locally:**
@@ -132,9 +134,9 @@ docker run -d --name blackbox-opensearch -e discovery.type=single-node \
 # OPENSEARCH_HOSTS=http://127.0.0.1:9200 in the environment
 ```
 
-**Open decision before the Qdrant adapter lands:** Qdrant+OpenSearch vs OpenSearch-only
-(benchmark with the eval harness). Tenant corpus strategy: one shared collection with
-mandatory tenant payloads vs per-tenant indexes.
+**Open decision (carried into Phase 4):** Qdrant+OpenSearch vs OpenSearch-only
+(benchmark with the eval harness once live clusters exist). Tenant corpus strategy is
+settled: one shared collection/index with mandatory tenant payloads.
 
 ## 3. Status dashboard
 
@@ -153,9 +155,10 @@ mandatory tenant payloads vs per-tenant indexes.
 | LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
 | Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
-| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant adapter wired + tested; versioned helpers landed; shadow/dual-read done |
-| Async graph + workers | 3 | ◐ | async graph, async providers, async stores (`asearch`), bounded pool, graceful shutdown and the ingest/eval job queue are done; SSE cancellation, shared queue backend and staged ingest open |
-| Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3; paginated `/trace` + retention jobs |
+| Qdrant/OpenSearch migration | 2 | ✅ | tenant filters, RLS, Qdrant adapter, versioned indexes/alias, shadow/dual-read, offboarding, retention, JSONB/partition, eval gate; only the live-cluster benchmark and global quotas remain |
+| Async graph + workers | 3 | ✅ | async graph/providers/stores; SSE cancellation; shared Redis queue + handler registry + worker process; graceful drain |
+| Staged ingest + alias swap | 3 | ✅ | validate documents/chunks/tenant coverage before `swap_alias`; abort keeps the old version |
+| Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
 | Observability stack | 4 | ⬜ | OTel, Prometheus/Grafana/Loki |
 | CI/CD + security scanning | 4 | ⬜ | GitHub Actions + GitOps |
@@ -184,18 +187,18 @@ isolation is a Phase 2 gate because the retrieval stores are replaced there.
 - [x] Tenant-scoped repository methods; cross-tenant reads return 404
 - [x] Authorization matrix tests (cross-tenant read/write/ingest → 403/404)
 - [x] Audit events for chat, ingest, eval and admin actions
-- [ ] Mandatory tenant predicate in retrieval filters; reject empty tenant — **Phase 2**
+- [x] Mandatory tenant predicate in retrieval filters; reject empty tenant — **Phase 2** (landed)
 - [x] Postgres RLS policies as defense in depth — migration 0002 enables RLS on conversations
   and conversation_turns with per-tenant policies keyed on `app.tenant_id` (Postgres only) — **Phase 2**
-- [ ] Delete/rotate tenant credentials and offboarding — **Phase 2**
+- [x] Delete/rotate tenant credentials and offboarding — **Phase 2** (`DELETE /api/admin/tenants/{id}`)
 
 ### 3.3 Persistence
 - [x] Add Alembic (dependency, `alembic.ini`, baseline revision, upgrade/downgrade test)
 - [x] Remove ad-hoc `ALTER TABLE` DDL; local/test bootstrap uses `create_all` only
 - [x] Indexes on `tenant_id` and `conversation_id` in the baseline migration
 - [x] Migration check job in CI (`upgrade head` + `downgrade base`)
-- [ ] SQLAlchemy 2.0 `Mapped` models; JSONB + partition plan for turns/traces — **Phase 2**
-- [ ] Retention/deletion API and tenant-offboarding job — **Phase 2**
+- [x] SQLAlchemy 2.0 `Mapped` models; JSONB + partition plan for turns/traces — **Phase 2** (landed)
+- [x] Retention/deletion API and tenant-offboarding job — **Phase 2** (landed)
 
 ### 3.4 Shared state and concurrency
 - [x] Redis fixed-window rate limiter with in-process fallback
@@ -255,14 +258,19 @@ within SLO at target load.
 ## 5. Phase 3 — Async runtime and jobs
 
 - [x] Async graph nodes and LangGraph execution — audit finding 5
-- [x] Async retrieval stores + provider clients end-to-end — asearch on DenseStore/SparseStore protocols and concrete stores/retrievers
-- [x] Graceful shutdown/drain — lifespan stops job workers and shuts the thread pool down; `tests/test_graceful_shutdown.py`
-- [ ] SSE cancellation — a client disconnect must cancel the graph run; no `is_disconnected` check or cancellation test yet
-- [ ] Queue worker: ingest, eval, summary compaction — ingest and eval run on a worker; the queue is in-process (cross-pod needs a worker-process refactor to reconstruct job bodies from params)
+- [x] Async retrieval stores + provider clients end-to-end — `asearch` on the `DenseStore`/`SparseStore` protocols and on `DenseRetriever`, `SparseRetriever` and `OpenSearchSparseStore`; `HybridRetriever` awaits both legs concurrently
+- [x] SSE cancellation — `stream_with_disconnect` pumps the graph into a queue while polling `request.is_disconnected()`; a disconnect cancels the producer, closes the graph generator, releases the turn lock/tenant slot/idempotency key and persists no partial turn (`tests/test_sse_cancellation.py`)
+- [x] Graceful shutdown/drain — lifespan stops job workers and shuts the thread pool down (`tests/test_graceful_shutdown.py`)
+- [x] Shared queue backend — `RedisJobStore` + handler registry (`register_handler`); API submits `kind + params`, any replica or `python -m blackbox.worker` executes it; closures remain local-only and fail with a clear reason if another pod wins them (`tests/test_shared_jobs.py`)
 - [x] `202 + job_id` ingest/eval APIs with status endpoints — audit finding 8
-- [ ] Staged ingest with validation and alias swap — versioned-index helpers exist; validate before `swap_alias`
-- [ ] Trace store split: Postgres recent + ClickHouse/S3 archive — decision provisional; confirm before building
-- [ ] Paginated `/trace`; retention jobs
+- [x] Staged ingest with validation and alias swap — builds a new versioned index, validates documents/chunks/tenant coverage, swaps the alias only on success, and aborts back to the previous version on any failure (`blackbox/ingestion/staged.py`, `tests/test_staged_ingest.py`)
+- [x] Trace store split: Postgres recent + file/S3 archive — `FileTraceArchive`/`S3TraceArchive` (gzipped JSONL batches), archive-before-prune (`blackbox/api/retention.py`)
+- [x] Paginated `/trace` (`limit`, `offset`, `include_archive`) and retention jobs — synchronous run or `background=true` (202) on the shared queue; exact turn ids are deleted only after the archive write succeeds
+
+Scope note: summary compaction stays inline in the chat turn. It mutates the
+conversation memory that the same turn is about to read, so queueing it would race the
+turn; the expensive, independent jobs (ingest, eval, retention) are the ones on the
+queue.
 
 ## 6. Phase 4 — Kubernetes and operations
 
@@ -325,6 +333,12 @@ within SLO at target load.
 | 2026-11-11 | The sparse leg scores with Lucene's BM25 formula in both adapters | Accepted | `rank_bm25` uses a different inverse document frequency, so the dev adapter was not measuring the system the OpenSearch backend runs |
 | 2026-11-11 | Equal BM25 scores are broken by document id, then chunk id | Accepted | The previous tie-break was the dense store's internal id order, which made the ranking backend-dependent |
 | 2026-11-11 | Phase 2 gate re-baselined to MRR ≥ 0.9167 | Accepted | The old 0.9214 was measured with a scoring function the production backend does not use; the 0.0047 difference is six times smaller than the metric's tie-break sensitivity |
+| 2026-11-12 | Data-plane tenant isolation is enforced in the stores, not only in the API | Accepted | Empty tenant is rejected, never "all tenants"; the retriever overwrites any caller-supplied tenant |
+| 2026-11-12 | Trace archive is file or S3-compatible object storage, not ClickHouse | Accepted | Gzipped JSONL batches are append-only and need no cluster; ClickHouse remains an analytics option, not the archive of record |
+| 2026-11-12 | Retention archives first and deletes only after the write succeeds | Accepted | Deleting by exact turn id avoids sweeping a turn written between the read and the delete |
+| 2026-11-12 | Background jobs are described by `kind + params`, not closures, on a shared store | Accepted | A closure cannot travel through Redis; `python -m blackbox.worker` executes registered handlers from any replica |
+| 2026-11-12 | Summary compaction stays inline in the turn | Accepted | It mutates the memory the same turn reads; queueing it would race the turn |
+| 2026-11-12 | A staged ingest is always a full rebuild (force=True) | Accepted | Reusing the dedupe skip would leave the new index missing unchanged documents |
 
 ## 10. Open questions
 
@@ -332,7 +346,7 @@ within SLO at target load.
 - RPO/RTO targets and tenant tiers.
 - Embedding dimension/model and quantization policy.
 - Qdrant + OpenSearch vs OpenSearch-only.
-- ClickHouse vs S3+Athena for trace analytics.
+- Trace analytics store (ClickHouse vs S3+Athena) — the archive of record is file/S3 gzipped JSONL.
 - Tenant migration procedure between regions.
 
 ---
@@ -377,6 +391,11 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-12 | Phase 2 pushed to GitHub (31 commits); working tree clean | ✅ | `6b57b3b` |
 | 2026-11-12 | Phase 3: `asearch` on DenseStore/SparseStore protocols and concrete stores/retrievers; HybridRetriever awaits both legs | ✅ | `28958c5` |
 | 2026-11-12 | Phase 3: graceful shutdown/drain tests (lifespan stops job workers + executor) | ✅ | `84c55a2` |
+| 2026-11-12 | Phase 3: SSE cancellation — disconnect-aware stream cancels the graph, releases locks, persists no partial turn | ✅ | `b454072` |
+| 2026-11-12 | Phase 3: trace store split — file/S3 archive, archive-before-prune retention, paginated `/trace` | ✅ | local |
+| 2026-11-12 | Phase 3: shared Redis job store + handler registry + `python -m blackbox.worker`; retention is a job | ✅ | local |
+| 2026-11-12 | Phase 3: staged ingest with validation and alias swap (abort keeps the old version serving) | ✅ | local |
+| 2026-11-12 | Phase 3 complete: 454 tests green, `ruff`/`mypy` clean; compose gains a worker service | ✅ | local |
 
 ## 12. Update protocol
 

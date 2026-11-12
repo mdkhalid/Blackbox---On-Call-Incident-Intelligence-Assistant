@@ -38,14 +38,17 @@ code) are collected in
 fixed**, including the critical one where the SSE token stream exposed an answer before the
 ground check had run.
 
-Current production phase: **Phase 3 (async runtime and jobs) — in progress**. Phase 2
+Current production phase: **Phase 3 (async runtime and jobs) — complete**. Phase 2
 (retrieval migration and data-plane tenant isolation) is functionally complete: tenant
 isolation, RLS, Qdrant adapter, versioned indexes, shadow indexing/dual-read, offboarding,
 retention, partition plan and eval parity gate landed; only the live-cluster backend
 benchmark and global quotas (deferred to Phase 4) remain.
-Phase 3 done so far: async store interfaces (`asearch`) and graceful shutdown/drain.
-Next in Phase 3: SSE cancellation, shared queue worker, staged ingest with alias swap,
-and the trace store split.
+Phase 3 delivered: async store interfaces (`asearch`), SSE cancellation on client
+disconnect, a shared Redis job store with a handler registry and a dedicated worker
+process (`python -m blackbox.worker`), staged ingest with validation before the alias
+swap, and the trace store split (Postgres recent + file/S3 archive, paginated `/trace`,
+archive-before-prune retention).
+Next: Phase 4 (Kubernetes and operations).
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
@@ -74,7 +77,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 410 tests
+pytest -q                            # 454 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -94,6 +97,20 @@ curl localhost:8000/api/ingest/<job_id>   # -> {"status":"succeeded","result":{.
 ```
 
 Open `http://localhost:8000/` for the trace viewer.
+
+Traces are paginated (`?limit=&offset=`) and can include the archived window
+(`?include_archive=true`). Retention prunes old turns, but only after archiving them when
+an archive backend is configured:
+
+```bash
+curl -X POST 'localhost:8000/api/admin/retention?days=90&archive=true'
+# queue it instead (202 + job id): &background=true
+```
+
+With `REDIS_URL` set, ingest/eval/retention jobs go through a shared queue, so any replica
+or a dedicated `python -m blackbox.worker` process can execute them. Archiving uses
+`TRACE_ARCHIVE_BACKEND=file` (default path `./data/traces`) or `s3` (install the `archive`
+extra for boto3).
 
 Run the scripted demo conversation (nine turns + a no-answer question):
 
@@ -432,13 +449,14 @@ python -m blackbox.eval.groundedness_eval --write
 - The rate limiter keys on the client address. Behind an ingress every request arrives from
   the proxy, so `X-Forwarded-For` is honoured — but only from a configured trusted proxy
   (`TRUSTED_PROXY_CIDRS`), so the header cannot be spoofed to dodge the limit.
-- Ingestion and evaluation are background jobs: `POST /api/ingest` and `POST /api/eval/run`
-  answer `202 {job_id}` and run on a worker, with status endpoints. The job state is
-  in-process, so a shared queue is still on the backlog.
+- Ingestion, evaluation and retention are background jobs: `POST /api/ingest`,
+  `POST /api/eval/run` and `POST /api/admin/retention?background=true` answer `202 {job_id}`
+  and run on a worker, with status endpoints. With `REDIS_URL` set the queue is shared, so
+  any replica or a dedicated `python -m blackbox.worker` process can execute the job.
 
 ## Tests
 
-410 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+454 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

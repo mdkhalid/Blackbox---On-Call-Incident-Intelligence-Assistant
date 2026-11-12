@@ -18,12 +18,14 @@ The current application is a correct, measured, single-process corrective-RAG se
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
 - Local Chroma for dense vectors; in-process BM25; Redis-shared rate limits and Postgres
   advisory turn locks; JWT/RBAC with tenant-scoped conversations.
-- 410 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- 454 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
 
-It is suitable for a demo or a small internal team. It is **not** horizontally scalable as
-written: the dense retrieval index is node-local, tenant admission control is per pod, the
-background job queue is in-process, and data-plane tenant filters/RLS are
-not yet in the stores.
+It is suitable for a demo or a small internal team. It is **not** yet horizontally scalable
+as written: the dense retrieval index is node-local (Qdrant and OpenSearch adapters are
+opt-in), and tenant admission control is per pod. The data-plane tenant filters, RLS and
+the tenant-isolated retrieval predicates are implemented, and the job queue can be shared
+through Redis with a dedicated worker process; the remaining gaps are the opt-in backend
+cutover, global quotas, and the Phase 4 deployment/observability work.
 
 The target separates state from compute:
 
@@ -256,17 +258,22 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
   retry budgets.
 - Evaluation results persist for regression comparison and release gates.
 
-> **State (2026-11-11, audit finding 8).** The `202 {job_id}` shape and the status endpoints
+> **State (2026-11-12, Phase 3).** The `202 {job_id}` shape and the status endpoints
 > are implemented (`/api/jobs/{id}`, `/api/ingest/{id}`, `/api/eval/{id}`), along with a real
-> queue: a second ingest or eval is queued rather than refused with `409`. The job runs on
-> a dedicated worker thread, not on the request's event loop — a request's loop does not
-> outlive the request, so a task-based worker would be cancelled the moment the response was
-> sent.
+> queue: a second ingest or eval is queued rather than refused with `409`. Ingest, eval and
+> retention are described by `kind + params`, so with `REDIS_URL` set the job record and the
+> pending queue live in Redis and any replica — or the dedicated `python -m blackbox.worker`
+> process — executes them. A job submitted on one pod is observable from every pod.
 >
-> The queue is **in-process**, not the SQS/Kafka design above. Job state does not survive a
-> restart and is not shared between replicas, so a multi-pod deployment would serve a job
-> status from whichever pod happens to hold it. Dead-letter queues, retry budgets and
-> summary compaction on the worker remain open.
+> Closure-based jobs remain local-only: a callable cannot travel through Redis, so if another
+> pod wins the dequeue the job fails with a clear reason instead of running the wrong code.
+> Dead-letter queues and retry budgets remain open. Staged ingest now builds a complete new
+> index version, validates documents/chunks/tenant coverage, and swaps the alias only on
+> success, so a failed rebuild never serves partial data. Summary compaction stays inline in
+> the turn: it mutates the memory the same turn reads, so queueing it would race the turn.
+> The same Phase 3 work added SSE cancellation (a disconnect cancels the graph and releases
+> the turn lock) and the trace store split (Postgres recent + file/S3 archive, paginated
+> `/trace`, archive-before-prune retention).
 
 ---
 
@@ -366,8 +373,8 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 |---|---|---|
 | 0 | This document, architecture decisions, SLOs, tenancy/runbook outline | ✅ Done |
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
-| 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ◐ In progress |
-| 3 | Async graph/providers, queue workers, trace store split | ◐ In progress |
+| 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
+| 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
 | 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ⬜ Planned |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
@@ -383,7 +390,10 @@ resolution live in that document. What changed against this document's target sh
   adapter written and contract-tested. The index is not yet populated and the adapter has not
   met a live cluster, so Chroma + in-process BM25 remain the default and the rollback path.
 - **Jobs (§8).** `202 {job_id}` with status endpoints and a real queue, so a second job is
-  queued rather than refused. The queue is in-process, not SQS/Kafka.
+  queued rather than refused. With `REDIS_URL` set the job record and pending queue live in
+  Redis, so any replica or the dedicated `python -m blackbox.worker` process executes them;
+  without it the queue is in-process, which is the single-pod fallback rather than the
+  target SQS/Kafka design.
 - **Observability.** Retrieval timings are per-request rather than shared between concurrent
   requests, and the budget endpoint reports the request that was actually sent, including
   the exact prompt token count.

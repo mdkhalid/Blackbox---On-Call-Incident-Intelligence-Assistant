@@ -66,10 +66,13 @@ def chunk_document(path) -> Iterator[Chunk]:
 > not outlive the request, so a task-based worker would be cancelled the moment the response
 > was sent.
 >
-> Still to come from this section: the job state is in-process, so it does not survive a
-> restart and is not shared between replicas — that is the Postgres `ingest_jobs` table and
-> an ARQ/Celery/RQ worker. The SSE progress stream is not implemented either; a job reports
-> its state when polled.
+> **Update (2026-11-12, Phase 3).** The job state is now shared when `REDIS_URL` is set:
+> job records and the pending queue live in Redis, a handler registry makes the job body
+> reconstructible from `kind + params`, and `python -m blackbox.worker` can consume the queue
+> independently of any API replica. Without Redis the queue remains in-process, which does
+> not survive a restart and is not shared between pods — that fallback is for development
+> and single-pod use. The Postgres `ingest_jobs` table and the SSE progress stream are still
+> not implemented; a job reports its state when polled.
 
 ## Progress Streaming (SSE)
 Events during ingestion:
