@@ -108,6 +108,7 @@ def make_metadata(doc: Document, section: str, extra: dict | None = None) -> dic
     date = _as_iso_date(doc.metadata.get("date"))
     services = _as_str_list(doc.metadata.get("services"))
     error_codes = _as_str_list(doc.metadata.get("error_codes"))
+    tenant_id = doc.metadata.get("tenant_id")
 
     md: dict = {
         "doc_id": doc.doc_id,
@@ -115,6 +116,8 @@ def make_metadata(doc: Document, section: str, extra: dict | None = None) -> dic
         "title": doc.title,
         "section": section,
     }
+    if tenant_id:
+        md["tenant_id"] = str(tenant_id)
     if services:
         md["services"] = services
     if error_codes:

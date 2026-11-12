@@ -73,6 +73,10 @@ class MetadataFilter:
     doc_ids: list[str] = field(default_factory=list)
     date_from: str | None = None
     date_to: str | None = None
+    # Tenant scoping. When set, retrieval is restricted to chunks carrying this
+    # tenant_id in their metadata. An empty/missing tenant is rejected (never
+    # "all tenants") so a forged or omitted filter cannot cross the boundary.
+    tenant_id: str | None = None
 
     def is_empty(self) -> bool:
         return not any(
@@ -85,6 +89,7 @@ class MetadataFilter:
                 self.doc_ids,
                 self.date_from,
                 self.date_to,
+                self.tenant_id,
             )
         )
 
@@ -98,7 +103,35 @@ class MetadataFilter:
             doc_ids=_clean(self.doc_ids),
             date_from=self.date_from,
             date_to=self.date_to,
+            tenant_id=self.tenant_id,
         )
+
+    def with_tenant(self, tenant_id: str | None) -> MetadataFilter:
+        """Return a copy with tenant_id set, rejecting an empty tenant.
+
+        Tenant scoping is mandatory: an empty tenant never means "all tenants".
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id must not be empty")
+        copy = MetadataFilter(
+            doc_types=list(self.doc_types),
+            services=list(self.services),
+            error_codes=list(self.error_codes),
+            severities=list(self.severities),
+            sections=list(self.sections),
+            doc_ids=list(self.doc_ids),
+            date_from=self.date_from,
+            date_to=self.date_to,
+            tenant_id=str(tenant_id),
+        )
+        return copy
+
+    @staticmethod
+    def require_tenant(tenant_id: str | None) -> str:
+        """Validate a tenant id, raising ValueError when it is empty."""
+        if not tenant_id:
+            raise ValueError("tenant_id must not be empty")
+        return str(tenant_id)
 
     def to_chroma_where(self) -> dict[str, Any] | None:
         """Compile to a Chroma `where` document, or None when unfiltered."""
@@ -123,6 +156,12 @@ class MetadataFilter:
         c = _clause("doc_id", f.doc_ids, list_field=False)
         if c:
             clauses.append(c)
+
+        # Tenant scoping is mandatory: a chunk is only visible to its own tenant.
+        # An empty tenant_id is never compiled into "match everything" - callers
+        # must resolve a real tenant before reaching here.
+        if f.tenant_id:
+            clauses.append({"tenant_id": str(f.tenant_id)})
 
         start = _date_ord(f.date_from)
         if start is not None:
@@ -164,6 +203,8 @@ class MetadataFilter:
                 have = [have]
             if not any(e in have for e in f.error_codes):
                 return False
+        if f.tenant_id and str(metadata.get("tenant_id", "")) != str(f.tenant_id):
+            return False
         date_ord = metadata.get("date_ord")
         start = _date_ord(f.date_from)
         end = _date_ord(f.date_to)
@@ -194,6 +235,8 @@ def parse_filter(payload: dict[str, Any] | None) -> MetadataFilter:
     for target in ("date_from", "date_to"):
         if payload.get(target):
             kwargs[target] = str(payload[target])
+    if payload.get("tenant_id") is not None:
+        kwargs["tenant_id"] = str(payload["tenant_id"])
     return MetadataFilter(**kwargs)
 
 

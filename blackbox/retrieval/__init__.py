@@ -71,6 +71,7 @@ def build_default_retriever(
     persist_dir: str | None = None,
     collection_name: str | None = None,
     retrieval_config: RetrievalConfig | None = None,
+    tenant_id: str | None = None,
 ) -> HybridRetriever:
     """Construct the retriever from env settings plus YAML tunables.
 
@@ -91,5 +92,6 @@ def build_default_retriever(
         embedding_provider=embedding_provider,
     )
     return build_hybrid_retriever(
-        vectorstore, rc, sparse_store=build_sparse_store(settings, rc)
+        vectorstore, rc, sparse_store=build_sparse_store(settings, rc),
+        tenant_id=tenant_id,
     )

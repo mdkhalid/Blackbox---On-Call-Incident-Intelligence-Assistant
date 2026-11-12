@@ -55,7 +55,8 @@ async def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
     error = state.get("error")
     try:
         result = await _aretrieve(
-            deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters
+            deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters,
+            tenant_id=state.get("tenant_id"),
         )
         chunks = [_serialize_chunk(hit) for hit in result.chunks]
         timings.update(result.timings)
@@ -446,7 +447,7 @@ def _serialize_chunk(chunk: Any) -> dict:
     return trail
 
 
-async def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any) -> RetrievalResult:
+async def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any, tenant_id: str | None = None) -> RetrievalResult:
     """Retrieve chunks together with the timings of *this* call.
 
     `retrieve_detailed` is the primary API because the retriever is a process-wide
@@ -456,13 +457,13 @@ async def _retrieve(retriever: Any, query: str, *, top_k: int, filter: Any) -> R
     """
     detailed = getattr(retriever, "retrieve_detailed", None)
     if callable(detailed):
-        return detailed(query, top_k=top_k, filter=filter)
-    chunks = list(retriever.retrieve(query, top_k=top_k, filter=filter))
+        return detailed(query, top_k=top_k, filter=filter, tenant_id=tenant_id)
+    chunks = list(retriever.retrieve(query, top_k=top_k, filter=filter, tenant_id=tenant_id))
     return RetrievalResult(chunks=chunks)
 
 
 async def _aretrieve(
-    retriever: Any, query: str, *, top_k: int, filter: Any
+    retriever: Any, query: str, *, top_k: int, filter: Any, tenant_id: str | None = None
 ) -> RetrievalResult:
     """Async retrieval that keeps the same per-call timings contract as `_retrieve`.
 
@@ -472,12 +473,12 @@ async def _aretrieve(
     """
     detailed = getattr(retriever, "aretrieve_detailed", None)
     if callable(detailed):
-        return await detailed(query, top_k=top_k, filter=filter)
+        return await detailed(query, top_k=top_k, filter=filter, tenant_id=tenant_id)
     detailed = getattr(retriever, "retrieve_detailed", None)
     if callable(detailed):
-        return await asyncio.to_thread(detailed, query, top_k=top_k, filter=filter)
+        return await asyncio.to_thread(detailed, query, top_k=top_k, filter=filter, tenant_id=tenant_id)
     chunks = await asyncio.to_thread(
-        retriever.retrieve, query, top_k=top_k, filter=filter
+        retriever.retrieve, query, top_k=top_k, filter=filter, tenant_id=tenant_id
     )
     return RetrievalResult(chunks=list(chunks))
 

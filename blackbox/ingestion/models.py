@@ -4,6 +4,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
+# Default tenant used when no tenant is supplied (dev/offline runs). Production
+# deployments always set a real tenant_id; an empty tenant is rejected everywhere.
+DEFAULT_TENANT = "default"
+
 
 @dataclass
 class Document:

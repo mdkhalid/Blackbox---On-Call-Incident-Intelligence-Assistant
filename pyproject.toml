@@ -44,6 +44,10 @@ rerank = [
 search = [
     "opensearch-py>=3.0",
 ]
+# optional: the dense retrieval backend that scales past a single pod
+vector = [
+    "qdrant-client>=1.9",
+]
 db = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
@@ -94,6 +98,7 @@ module = [
     "chromadb.*",
     "openai.*",
     "opensearchpy.*",
+    "qdrant_client.*",
     "redis.*",
     "sentence_transformers.*",
     "yaml.*",

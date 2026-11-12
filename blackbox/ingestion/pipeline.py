@@ -20,6 +20,7 @@ from blackbox.ingestion.loaders import (
     load_postmortem,
     load_runbook,
 )
+from blackbox.ingestion.models import DEFAULT_TENANT
 from blackbox.ingestion.vectorstore import ChromaVectorStore
 
 CHUNKER_MAP = {
@@ -48,6 +49,7 @@ class IngestionPipeline:
         entity_store: SqlAlchemyEntityStore,
         sparse_store: Any | None = None,
         batch_size: int = 64,
+        tenant_id: str = DEFAULT_TENANT,
     ):
         self.vs = vectorstore
         self.es = entity_store
@@ -56,6 +58,9 @@ class IngestionPipeline:
         # drift apart.
         self.sparse = sparse_store
         self.batch_size = batch_size
+        if not tenant_id:
+            raise ValueError("tenant_id must not be empty")
+        self.tenant_id = tenant_id
 
     def _loader_chunker(self, doc_type: str):
         # find in CHUNKER_MAP by doc_type
@@ -73,6 +78,7 @@ class IngestionPipeline:
         # override doc_type if provided
         doc.doc_type = doc_type
         doc.metadata["doc_type"] = doc_type
+        doc.metadata["tenant_id"] = self.tenant_id
         h = content_hash(doc.raw)
         existing = self.es.get_ingested(doc.doc_id)
         if (
@@ -111,6 +117,8 @@ class IngestionPipeline:
 
         # chunk
         chunks = list(chunker(doc))
+        for c in chunks:
+            c.metadata.setdefault("tenant_id", self.tenant_id)
         # batched upsert
         total = 0
         for i in range(0, len(chunks), self.batch_size):

@@ -67,6 +67,7 @@ class HybridRetriever(BaseRetriever):
 
     config: RetrievalConfig = Field(default_factory=RetrievalConfig)
     default_filter: MetadataFilter | None = None
+    tenant_id: str | None = None
     reranker: Any = None
     top_k: int | None = None
     rerank_enabled: bool | None = None
@@ -151,6 +152,7 @@ class HybridRetriever(BaseRetriever):
         use_rerank: bool | None = None,
         dense_only: bool = False,
         sparse_only: bool = False,
+        tenant_id: str | None = None,
     ) -> list[RetrievedChunk]:
         """Run the full pipeline and return chunks carrying their whole score trail.
 
@@ -166,6 +168,7 @@ class HybridRetriever(BaseRetriever):
             use_rerank=use_rerank,
             dense_only=dense_only,
             sparse_only=sparse_only,
+            tenant_id=tenant_id,
         ).chunks
 
     def retrieve_detailed(
@@ -177,6 +180,7 @@ class HybridRetriever(BaseRetriever):
         use_rerank: bool | None = None,
         dense_only: bool = False,
         sparse_only: bool = False,
+        tenant_id: str | None = None,
     ) -> RetrievalResult:
         """Run the full pipeline and return the chunks with this call's own timings.
 
@@ -192,6 +196,7 @@ class HybridRetriever(BaseRetriever):
             use_rerank=use_rerank,
             dense_only=dense_only,
             sparse_only=sparse_only,
+            tenant_id=tenant_id,
         )
 
         if plan.cache_key:
@@ -247,6 +252,7 @@ class HybridRetriever(BaseRetriever):
         use_rerank: bool | None = None,
         dense_only: bool = False,
         sparse_only: bool = False,
+        tenant_id: str | None = None,
     ) -> RetrievalResult:
         """Async retrieval with the dense and sparse legs running concurrently.
 
@@ -261,6 +267,7 @@ class HybridRetriever(BaseRetriever):
             use_rerank=use_rerank,
             dense_only=dense_only,
             sparse_only=sparse_only,
+            tenant_id=tenant_id,
         )
 
         if plan.cache_key:
@@ -316,10 +323,25 @@ class HybridRetriever(BaseRetriever):
         use_rerank: bool | None,
         dense_only: bool,
         sparse_only: bool,
+        tenant_id: str | None = None,
     ) -> _RetrievalPlan:
         """Resolve the settings shared by the sync and async retrieval paths."""
         k = top_k or self.top_k or self.config.top_k
         md_filter = self._coerce_filter(filter)
+        # Resolve the tenant. An explicitly empty tenant is rejected; a missing one
+        # falls back to the retriever's configured tenant, then the dev default.
+        resolved = tenant_id if tenant_id is not None else self.tenant_id
+        if resolved is None:
+            resolved = "default"
+        if resolved == "":
+            raise ValueError("tenant_id must not be empty")
+        resolved = str(resolved)
+        if md_filter is None:
+            md_filter = MetadataFilter(tenant_id=resolved)
+        else:
+            # The tenant is authoritative: a caller-supplied tenant_id in the filter
+            # cannot be used to escape the boundary, so it is overwritten here.
+            md_filter.tenant_id = resolved
         wants_rerank = (
             self.rerank_enabled if self.rerank_enabled is not None else self.config.rerank
         )
@@ -577,6 +599,7 @@ def build_hybrid_retriever(
     reranker: Any = None,
     top_k: int | None = None,
     sparse_store: Any = None,
+    tenant_id: str | None = None,
 ) -> HybridRetriever:
     return HybridRetriever(
         vectorstore=vectorstore,
@@ -585,4 +608,5 @@ def build_hybrid_retriever(
         reranker=reranker,
         top_k=top_k,
         sparse_store=sparse_store,
+        tenant_id=tenant_id,
     )

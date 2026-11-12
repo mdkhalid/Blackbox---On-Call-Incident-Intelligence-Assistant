@@ -88,6 +88,8 @@ def opensearch_clauses(filter: MetadataFilter | None) -> list[dict[str, Any]]:
     ):
         if values:
             clauses.append({"terms": {field: values}})
+    if normalized.tenant_id:
+        clauses.append({"term": {"tenant_id": normalized.tenant_id}})
     start = _date_ord(normalized.date_from)
     if start is not None:
         clauses.append({"range": {"date_ord": {"gte": start}}})

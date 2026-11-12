@@ -149,7 +149,7 @@ async def test_retrieve_node_takes_the_timings_of_its_own_call(graph_config, set
     """
 
     class StubRetriever:
-        def retrieve_detailed(self, query, *, top_k, filter):
+        def retrieve_detailed(self, query, *, top_k, filter, tenant_id=None):
             return RetrievalResult(
                 chunks=[
                     RetrievedChunk(

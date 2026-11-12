@@ -41,6 +41,7 @@ FILTER_FIELDS = (
     "section",
     "services",
     "error_codes",
+    "tenant_id",
 )
 
 INDEX_MAPPING: dict[str, Any] = {
@@ -70,6 +71,7 @@ INDEX_MAPPING: dict[str, Any] = {
             "section": {"type": "keyword"},
             "services": {"type": "keyword"},
             "error_codes": {"type": "keyword"},
+            "tenant_id": {"type": "keyword"},
             "date_ord": {"type": "long"},
             # Stored but not indexed: it is only ever read back for the trace viewer.
             "metadata": {"type": "object", "enabled": False},
@@ -218,6 +220,7 @@ class OpenSearchSparseStore:
 
     def _action(self, chunk: Chunk) -> dict[str, Any]:
         metadata = dict(chunk.metadata or {})
+        metadata.setdefault("tenant_id", "default")
         document: dict[str, Any] = {
             self.chunk_id_field: chunk.chunk_id,
             self.tokens_field: " ".join(tokenize(chunk.text or "")),

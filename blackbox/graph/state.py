@@ -15,6 +15,7 @@ class GraphState(TypedDict, total=False):
     original_query: str
     rewritten_query: str
     filters: dict[str, Any]
+    tenant_id: str
 
     route: str
     route_reason: str
@@ -51,11 +52,18 @@ def initial_state(
     context: str | None = None,
     budget: dict[str, Any] | None = None,
     injection_flags: list[str] | None = None,
+    tenant_id: str | None = None,
 ) -> GraphState:
+    from blackbox.ingestion.models import DEFAULT_TENANT
+
+    resolved = tenant_id if tenant_id else DEFAULT_TENANT
+    if not resolved:
+        raise ValueError("tenant_id must not be empty")
     return GraphState(
         query=query,
         original_query=original_query if original_query is not None else query,
         filters=dict(filters or {}),
+        tenant_id=str(resolved),
         context=context or "",
         budget=dict(budget or {}),
         injection_flags=list(injection_flags or []),

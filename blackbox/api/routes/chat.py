@@ -169,6 +169,7 @@ async def chat(
                 budget=bundle.report,
                 filters=payload.filters,
                 injection_flags=injection_flags,
+                tenant_id=tenant_id,
             )
 
             result: dict = {}

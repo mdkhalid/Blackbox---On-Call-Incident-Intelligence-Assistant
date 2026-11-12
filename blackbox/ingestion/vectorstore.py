@@ -23,11 +23,18 @@ class ChromaVectorStore:
         for c in chunks:
             ids.append(c.chunk_id)
             docs.append(c.text)
-            metas.append(c.metadata)
+            meta: dict[str, Any] = dict(c.metadata or {})
+            # Tenant scoping is mandatory: every stored chunk belongs to a tenant.
+            # A chunk written without one is treated as the default tenant rather
+            # than as "all tenants", so it can never leak across the boundary.
+            meta.setdefault("tenant_id", "default")
+            metas.append(meta)
         if not ids:
             return 0
         embeddings = self.embedding_provider.embed(docs)
-        self.collection.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embeddings)
+        self.collection.upsert(
+            ids=ids, documents=docs, metadatas=cast(Any, metas), embeddings=embeddings
+        )
         return len(ids)
 
     def delete_by_doc(self, doc_id: str) -> None:

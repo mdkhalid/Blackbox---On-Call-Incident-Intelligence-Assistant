@@ -158,7 +158,8 @@ isolation is a Phase 2 gate because the retrieval stores are replaced there.
 - [x] Authorization matrix tests (cross-tenant read/write/ingest → 403/404)
 - [x] Audit events for chat, ingest, eval and admin actions
 - [ ] Mandatory tenant predicate in retrieval filters; reject empty tenant — **Phase 2**
-- [ ] Postgres RLS policies as defense in depth — **Phase 2**
+- [x] Postgres RLS policies as defense in depth — migration 0002 enables RLS on conversations
+  and conversation_turns with per-tenant policies keyed on `app.tenant_id` (Postgres only) — **Phase 2**
 - [ ] Delete/rotate tenant credentials and offboarding — **Phase 2**
 
 ### 3.3 Persistence
@@ -192,12 +193,19 @@ Exit gate: eval parity (MRR ≥ 0.9167 or documented baseline), tenant filters p
 within SLO at target load.
 
 - [x] `DenseStore` / `SparseStore` protocols — audit finding 6
-- [ ] Qdrant adapter (async, payload filters, batch upsert, snapshots)
+- [x] Mandatory tenant clause injected after compilation; reject empty tenant — tenant_id stamped
+  into chunk metadata at ingestion (Chroma + OpenSearch), MetadataFilter carries tenant_id,
+  compilation (Chroma where, BM25 matches, OpenSearch clauses) always includes it, retriever
+  resolves tenant per call and overrides any caller-supplied value, cross-tenant retrieval
+  tests added (tests/test_tenant_isolation_retrieval.py)
+- [ ] Qdrant adapter (async, payload filters, batch upsert, snapshots) — scaffolding module
+  blackbox/ingestion/qdrant_vectorstore.py + optional `vector` extra landed; wiring into
+  build_default_retriever pending
 - [x] OpenSearch adapter (async, BM25, filter compilation) — audit finding 6; run against a live
   OpenSearch 2.19 cluster, and the ingestion pipeline populates its index
 - [x] Neutral metadata-filter AST; compile per store — audit finding 6
-- [ ] Mandatory tenant clause injected after compilation; reject empty tenant
-- [ ] Postgres RLS policies as defense in depth
+- [x] Postgres RLS policies as defense in depth — migration 0002 enables RLS on conversations
+  and conversation_turns with per-tenant policies keyed on `app.tenant_id` (Postgres only)
 - [x] Concurrent dense/sparse legs (`asyncio.gather`) — audit finding 5
 - [x] Keep score trail, fusion, rerank and eval harness unchanged — the score trail, fusion and
   rerank are untouched; the eval harness gained a tie-break sweep and a fix for a sweep that

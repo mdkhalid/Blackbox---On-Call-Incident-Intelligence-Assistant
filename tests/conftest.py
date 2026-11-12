@@ -109,6 +109,7 @@ def mini_corpus():
                 "date": "2024-05-08",
                 "date_ord": 739014,
                 "part": 0,
+                "tenant_id": "default",
             },
         ),
         Chunk(
@@ -128,6 +129,7 @@ def mini_corpus():
                 "date": "2023-11-02",
                 "date_ord": 738826,
                 "part": 0,
+                "tenant_id": "default",
             },
         ),
         Chunk(
@@ -147,6 +149,7 @@ def mini_corpus():
                 "date": "2024-03-14",
                 "date_ord": 738959,
                 "part": 0,
+                "tenant_id": "default",
             },
         ),
         Chunk(
@@ -164,6 +167,7 @@ def mini_corpus():
                 "date": "2024-01-20",
                 "date_ord": 738905,
                 "part": 0,
+                "tenant_id": "default",
             },
         ),
         Chunk(
@@ -182,6 +186,7 @@ def mini_corpus():
                 "date": "2024-06-01",
                 "date_ord": 739038,
                 "part": 0,
+                "tenant_id": "default",
             },
         ),
     ]
