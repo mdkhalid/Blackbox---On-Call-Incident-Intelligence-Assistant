@@ -55,6 +55,7 @@ class TurnRow(Base):
     budget_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     chunks_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    partition_month: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 @dataclass
@@ -381,6 +382,7 @@ class SqlAlchemyConversationRepository:
                 budget_json=last_budget or {},
                 chunks_json=chunks or [],
                 created_at=now,
+                partition_month=now[:7],
             )
             session.add(row)
             session.commit()

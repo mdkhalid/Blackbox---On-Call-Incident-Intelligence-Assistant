@@ -36,7 +36,7 @@ def test_alembic_upgrade_and_downgrade(tmp_path, monkeypatch):
         column["name"] for column in inspector.get_columns("conversation_turns")
     }
     assert {"tenant_id", "memory_json", "last_budget_json"} <= conversation_columns
-    assert {"tenant_id", "chunks_json", "trace_json"} <= turn_columns
+    assert {"tenant_id", "chunks_json", "trace_json", "partition_month"} <= turn_columns
 
     command.downgrade(config, "base")
     remaining = set(inspect(create_engine(url)).get_table_names())
