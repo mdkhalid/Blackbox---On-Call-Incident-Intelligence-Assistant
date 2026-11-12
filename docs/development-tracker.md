@@ -324,7 +324,7 @@ queue.
 | 2026-11-10 | Qdrant (dense) + OpenSearch (sparse) | Provisional | Revisit after Phase 2 benchmark |
 | 2026-11-10 | Postgres advisory locks on dedicated NullPool engine | Accepted | Avoids SSE holding pooled connections |
 | 2026-11-10 | Tenant-pinned conversation writes across regions | Accepted | Avoids cross-region write conflicts |
-| 2026-11-10 | Traces split to ClickHouse/S3 | Provisional | Final choice before Phase 3 |
+| 2026-11-10 | Traces split to ClickHouse/S3 | Superseded | Resolved 2026-11-12: archive is file/S3 gzipped JSONL, not ClickHouse (see below) |
 | 2026-11-10 | Provisional SLOs (2k SSE, 200 turns/s, 10M+ chunks) | Provisional | Replace with measured capacity |
 | 2026-11-11 | Resolve the client IP from `X-Forwarded-For` only when the peer is a trusted proxy | Accepted | A spoofable header would make the rate limit trivial to bypass |
 | 2026-11-11 | Background jobs run on a dedicated worker thread, not on the request's event loop | Accepted | A request's loop does not outlive the request |

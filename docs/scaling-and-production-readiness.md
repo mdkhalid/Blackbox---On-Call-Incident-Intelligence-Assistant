@@ -1,6 +1,7 @@
 # Scaling & Production Readiness — Blackbox
 
-Status: **Phase 0 complete; Phase 1 complete (control plane); Phase 2 next.** This document
+Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
+jobs); Phase 4 (Kubernetes and operations) next.** This document
 is the production contract for the codebase: target architecture, capacity model, tenancy,
 retrieval migration, runtime, operations and the phased path from the current single-node demo
 to an org-wide, multi-region service. It is deliberately explicit about what is **implemented
