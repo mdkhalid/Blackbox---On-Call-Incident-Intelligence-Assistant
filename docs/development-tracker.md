@@ -218,7 +218,9 @@ within SLO at target load.
 - [ ] Eval parity gate wired into CI
 - [ ] Remove Chroma/BM25 runtime dependency after cutover (rollback window documented)
 - [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision
-- [ ] SQLAlchemy 2.0 `Mapped` models; JSONB + partition plan; retention/deletion APIs
+- [x] SQLAlchemy 2.0 `Mapped` models — already in place (ConversationRow/TurnRow use Mapped + mapped_column)
+- [ ] JSONB + partition plan for turns/traces (Postgres) — open
+- [ ] Retention/deletion APIs beyond tenant offboarding — open
 - [x] Tenant offboarding (conversations + turns) via `DELETE /api/admin/tenants/{tenant_id}` and `ConversationRepository.delete_tenant`; entity/index payloads are store-wide today
 - [ ] Global per-tenant LLM/token quotas (per-pod admission control already in place)
 
