@@ -126,7 +126,7 @@ mandatory tenant payloads vs per-tenant indexes.
 | LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
 | Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
-| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant adapter wired via dense_backend config; versioned indexes/alias helpers landed; shadow/dual-read open |
+| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant adapter wired + tested; versioned helpers landed; shadow/dual-read done |
 | Async graph + workers | 3 | ◐ | async graph, async providers, bounded pool and the ingest/eval job queue are done; shared queue backend and trace store open |
 | Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3 |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
@@ -198,7 +198,7 @@ within SLO at target load.
   compilation (Chroma where, BM25 matches, OpenSearch clauses) always includes it, retriever
   resolves tenant per call and overrides any caller-supplied value, cross-tenant retrieval
   tests added (tests/test_tenant_isolation_retrieval.py)
-- [ ] Qdrant adapter (async, payload filters, batch upsert, snapshots) — scaffolding module
+- [x] Qdrant adapter (payload filters, batch upsert, snapshots, in-memory tested)
   blackbox/ingestion/qdrant_vectorstore.py + optional `vector` extra landed; wiring into
   build_default_retriever pending
 - [x] OpenSearch adapter (async, BM25, filter compilation) — audit finding 6; run against a live
