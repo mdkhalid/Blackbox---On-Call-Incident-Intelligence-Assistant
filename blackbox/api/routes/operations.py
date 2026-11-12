@@ -10,10 +10,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from blackbox.api.auth import Principal, require_roles
 from blackbox.api.deps import get_services
+from blackbox.api.jobs import register_handler
 from blackbox.api.schemas import EvalRequest, IngestRequest
 from blackbox.eval.groundedness_eval import evaluate_dataset
 from blackbox.eval.retrieval_eval import fusion_sweep, load_dataset, run_all
@@ -45,42 +46,46 @@ async def ingest(
     if not root.is_dir():
         raise HTTPException(status_code=400, detail="corpus_dir does not exist")
 
-    def run() -> dict[str, Any]:
-        services.ensure_runtime()
-        if services.retriever is None or services.entity_store is None:
-            raise RuntimeError("ingestion dependencies unavailable")
-        pipeline = IngestionPipeline(
-            services.retriever.vectorstore,
-            services.entity_store,
-            sparse_store=services.retriever.sparse,
-            batch_size=services.config.ingestion.batch_size_chunks,
-            shadow_store=getattr(services.retriever, "shadow_vectorstore", None),
-        )
-        results = pipeline.ingest_directory(root, force=payload.refresh)
-        # The corpus-derived indexes are rebuilt here, on the worker, and published
-        # atomically. A rebuild is O(corpus), so it must not happen on the request
-        # path of the next query.
-        services.retriever.rebuild_indexes()
-        ingested = sum(1 for result in results if result["status"] == "ingested")
-        skipped = sum(1 for result in results if result["status"] == "skipped")
-        body = {
-            "corpus_dir": str(root),
-            "documents": len(results),
-            "ingested": ingested,
-            "skipped": skipped,
-            "chunks": services.retriever.vectorstore.count(),
-            "forced": payload.refresh,
-        }
-        logger.info("ingest_complete", **body)
-        return body
-
     job = services.submit_job(
         "ingest",
-        run,
+        {"corpus_dir": str(root), "refresh": payload.refresh},
         tenant_id=principal.tenant_id,
         subject=principal.subject,
     )
     return _job_response(job, "/api/ingest")
+
+
+def _run_ingest(services, params: dict[str, Any]) -> dict[str, Any]:
+    """Ingest one corpus directory. Runs on a worker, never on the request path."""
+    root = Path(params["corpus_dir"])
+    refresh = bool(params.get("refresh", False))
+    services.ensure_runtime()
+    if services.retriever is None or services.entity_store is None:
+        raise RuntimeError("ingestion dependencies unavailable")
+    pipeline = IngestionPipeline(
+        services.retriever.vectorstore,
+        services.entity_store,
+        sparse_store=services.retriever.sparse,
+        batch_size=services.config.ingestion.batch_size_chunks,
+        shadow_store=getattr(services.retriever, "shadow_vectorstore", None),
+    )
+    results = pipeline.ingest_directory(root, force=refresh)
+    # The corpus-derived indexes are rebuilt here, on the worker, and published
+    # atomically. A rebuild is O(corpus), so it must not happen on the request
+    # path of the next query.
+    services.retriever.rebuild_indexes()
+    ingested = sum(1 for result in results if result["status"] == "ingested")
+    skipped = sum(1 for result in results if result["status"] == "skipped")
+    body = {
+        "corpus_dir": str(root),
+        "documents": len(results),
+        "ingested": ingested,
+        "skipped": skipped,
+        "chunks": services.retriever.vectorstore.count(),
+        "forced": refresh,
+    }
+    logger.info("ingest_complete", **body)
+    return body
 
 
 @router.get("/api/ingest/{job_id}")
@@ -107,40 +112,41 @@ async def run_evaluation(
         k=payload.k,
     )
 
-    async def run() -> dict[str, Any]:
-        await asyncio.to_thread(services.ensure_runtime)
-        retriever = services.retriever
-        if retriever is None:
-            raise RuntimeError("runtime unavailable")
-        dataset = load_dataset()
-        results = await asyncio.to_thread(run_all, retriever, dataset, k=payload.k)
-        strategies = {
-            name: asdict(metrics) for name, (metrics, _) in results.items()
-        }
-        body: dict[str, Any] = {
-            "k": payload.k,
-            "questions": dataset.get("question_count"),
-            "strategies": strategies,
-        }
-        if payload.fusion_sweep:
-            sweep = await asyncio.to_thread(fusion_sweep, retriever, dataset, k=payload.k)
-            body["fusion_sweep"] = [
-                {"dense_weight": dense, "sparse_weight": sparse, "mrr": mrr}
-                for dense, sparse, mrr in sweep
-            ]
-        if payload.groundedness:
-            body["groundedness"] = await evaluate_dataset(
-                services.graph, dataset, limit=payload.limit
-            )
-        return body
-
     job = services.submit_job(
         "eval",
-        run,
+        payload.model_dump(),
         tenant_id=principal.tenant_id,
         subject=principal.subject,
     )
     return _job_response(job, "/api/eval")
+
+
+async def _run_eval(services, params: dict[str, Any]) -> dict[str, Any]:
+    """Run the retrieval (and optional groundedness) evaluation on a worker."""
+    k = int(params.get("k", 5))
+    await asyncio.to_thread(services.ensure_runtime)
+    retriever = services.retriever
+    if retriever is None:
+        raise RuntimeError("runtime unavailable")
+    dataset = load_dataset()
+    results = await asyncio.to_thread(run_all, retriever, dataset, k=k)
+    strategies = {name: asdict(metrics) for name, (metrics, _) in results.items()}
+    body: dict[str, Any] = {
+        "k": k,
+        "questions": dataset.get("question_count"),
+        "strategies": strategies,
+    }
+    if params.get("fusion_sweep"):
+        sweep = await asyncio.to_thread(fusion_sweep, retriever, dataset, k=k)
+        body["fusion_sweep"] = [
+            {"dense_weight": dense, "sparse_weight": sparse, "mrr": mrr}
+            for dense, sparse, mrr in sweep
+        ]
+    if params.get("groundedness"):
+        body["groundedness"] = await evaluate_dataset(
+            services.graph, dataset, limit=params.get("limit")
+        )
+    return body
 
 
 @router.get("/api/eval/{job_id}")
@@ -213,11 +219,18 @@ async def offboard_tenant(
 @router.post("/api/admin/retention", status_code=200)
 async def run_retention(
     request: Request,
+    response: Response,
     days: int = 90,
     archive: bool = False,
+    background: bool = False,
     principal: Principal = _ADMIN_AUTH,
 ):
-    """Prune turns older than ``days``, archiving them first when requested."""
+    """Prune turns older than ``days``, archiving them first when requested.
+
+    ``background=true`` queues the run on the job worker (and answers 202), which is
+    what an external scheduler should use: retention can outlive a request when the
+    corpus is large.
+    """
     if days < 0:
         raise HTTPException(status_code=400, detail="days must be >= 0")
     services = get_services(request)
@@ -226,19 +239,44 @@ async def run_retention(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    if background:
+        job = services.submit_job(
+            "retention",
+            {"days": days, "archive": archive},
+            tenant_id=principal.tenant_id,
+            subject=principal.subject,
+        )
+        response.status_code = 202
+        return _job_response(job, "/api/admin/retention")
+
+    body = await asyncio.to_thread(_retention_body, services, days, archive)
+    logger.info("audit_admin_action", action="retention", **body)
+    return body
+
+
+def _retention_body(services, days: int, archive: bool) -> dict[str, Any]:
     if archive:
         from blackbox.api.retention import archive_and_prune
 
-        archive_backend = await asyncio.to_thread(services.get_trace_archive)
-        body = await asyncio.to_thread(
-            archive_and_prune, services.conversations, archive_backend, days
+        return archive_and_prune(
+            services.conversations, services.get_trace_archive(), days
         )
-        logger.info("audit_admin_action", action="retention", **body)
-        return body
-
-    removed = await asyncio.to_thread(services.conversations.delete_older_than, days)
-    logger.info("audit_admin_action", action="retention", days=days, removed=removed)
+    removed = services.conversations.delete_older_than(days)
     return {"days": days, "conversations_removed": removed}
+
+
+def _run_retention(services, params: dict[str, Any]) -> dict[str, Any]:
+    services.ensure_storage()
+    body = _retention_body(
+        services, int(params.get("days", 90)), bool(params.get("archive", False))
+    )
+    logger.info("audit_admin_action", action="retention", **body)
+    return body
+
+
+register_handler("ingest", _run_ingest)
+register_handler("eval", _run_eval)
+register_handler("retention", _run_retention)
 
 
 def _corpus_path(raw: str) -> Path:

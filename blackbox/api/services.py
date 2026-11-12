@@ -43,6 +43,7 @@ class AppServices:
 
     conversation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     job_queues: dict[str, Any] = field(default_factory=dict)
+    job_store: Any | None = None
 
     _storage_lock: threading.Lock = field(default_factory=threading.Lock)
     _runtime_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -288,28 +289,42 @@ class AppServices:
 
     def job_queue(self, kind: str):
         """The queue for one kind of operational job."""
-        from blackbox.api.jobs import JobQueue
+        from blackbox.api.jobs import JobQueue, build_job_store
 
         queue = self.job_queues.get(kind)
         if queue is None:
-            queue = JobQueue(kind)
+            if self.job_store is None:
+                self.job_store = build_job_store(self.settings)
+            queue = JobQueue(kind, self.job_store, services=self)
             self.job_queues[kind] = queue
         return queue
 
-    def submit_job(self, kind: str, fn, *, tenant_id: str, subject: str):
-        """Queue a background job and return it immediately.
+    def submit_job(self, kind: str, params: dict, *, tenant_id: str, subject: str):
+        """Queue a serialisable background job and return it immediately.
 
         The caller gets a job id and polls the status endpoint; the work happens on a
-        worker instead of inside the request.
+        worker instead of inside the request. On a shared store the job is executable
+        by any replica or by the dedicated worker process.
         """
-        return self.job_queue(kind).submit(fn, tenant_id=tenant_id, subject=subject)
+        return self.job_queue(kind).submit_params(
+            params, tenant_id=tenant_id, subject=subject
+        )
 
     def find_job(self, job_id: str, *, kind: str | None = None):
-        """Find a job by id, optionally restricted to one kind."""
+        """Find a job by id, optionally restricted to one kind.
+
+        A shared store lets a job submitted on one replica be observed on another,
+        so the lookup falls back to the store's global index when no local queue
+        knows the id.
+        """
         for queue in self.job_queues.values():
             job = queue.get(job_id)
             if job is not None and (kind is None or job.kind == kind):
                 return queue, job
+        if self.job_store is not None and self.job_store.shared:
+            job = self.job_store.load_any(job_id)
+            if job is not None and (kind is None or job.kind == kind):
+                return self.job_queue(job.kind), job
         return None
 
     def stop_jobs(self) -> None:
@@ -330,9 +345,13 @@ class AppServices:
     def close(self) -> None:
         """Release process-owned resources during shutdown."""
         self.stop_jobs()
+        for queue in self.job_queues.values():
+            queue.join(timeout=2)
         archive = self.trace_archive
         if archive is not None:
             archive.close()
+        if self.job_store is not None:
+            self.job_store.close()
 
 
 def build_services(settings: Settings) -> AppServices:
