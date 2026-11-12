@@ -548,6 +548,10 @@ def main() -> None:
     )
     parser.add_argument("--write", action="store_true", help="write docs/retrieval-results.md")
     parser.add_argument("--json-out", default=None, help="dump raw results to this path")
+    parser.add_argument(
+        "--min-mrr", type=float, default=None,
+        help="exit non-zero if the hybrid (RRF) MRR is below this value (CI gate)",
+    )
     args = parser.parse_args()
 
     dataset = load_dataset()
@@ -586,6 +590,14 @@ def main() -> None:
     if args.write:
         RESULTS_DOC.write_text(markdown, encoding="utf-8")
         print(f"\nwrote {RESULTS_DOC}")
+
+    if args.min_mrr is not None:
+        hybrid = results.get("hybrid (RRF)")
+        if hybrid is None or hybrid[0].mrr < args.min_mrr:
+            actual = hybrid[0].mrr if hybrid else 0.0
+            print(f"\nFAIL: hybrid MRR {actual:.4f} < {args.min_mrr:.4f}")
+            raise SystemExit(1)
+        print(f"\nPASS: hybrid MRR {hybrid[0].mrr:.4f} >= {args.min_mrr:.4f}")
 
     if args.json_out:
         payload = {

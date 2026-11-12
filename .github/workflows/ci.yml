@@ -27,6 +27,8 @@ jobs:
         run: python -m mypy blackbox
       - name: Tests
         run: python -m pytest -q
+      - name: Retrieval eval parity gate
+        run: python -m blackbox.eval.retrieval_eval --k 5 --min-mrr 0.9167
       - name: Migration check
         run: |
           alembic upgrade head
