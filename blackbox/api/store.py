@@ -197,7 +197,7 @@ class SqlAlchemyConversationRepository:
         if not tenant_id:
             raise ValueError("tenant_id must not be empty")
         with self._session() as session:
-            turns = session.query(TurnRow).filter(TurnRow.tenant_id == tenant_id).delete()
+            session.query(TurnRow).filter(TurnRow.tenant_id == tenant_id).delete()
             convs = session.query(ConversationRow).filter(
                 ConversationRow.tenant_id == tenant_id
             ).delete()
