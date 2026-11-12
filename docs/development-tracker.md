@@ -340,6 +340,7 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-12 | Phase 2 tenant isolation: tenant_id stamped into chunk metadata (Chroma + OpenSearch), mandatory tenant filter in compilation, per-call tenant injection with forged-filter override, cross-tenant retrieval tests | ✅ | `411945d` |
 | 2026-11-12 | Postgres RLS policies (migration 0002, conditional on Postgres) | ✅ | `411945d` |
 | 2026-11-12 | Qdrant adapter scaffolding + optional `vector` extra | ◐ | `411945d` |
+| 2026-11-12 | OpenSearch versioned indexes + alias cutover helpers | ◐ | `f99b685` |
 
 ## 12. Update protocol
 
