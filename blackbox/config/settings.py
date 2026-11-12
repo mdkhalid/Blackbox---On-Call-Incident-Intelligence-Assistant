@@ -28,6 +28,9 @@ class RetrievalConfig(BaseModel):
     min_relevance_score: float | None = None
     collection_name: str = "blackbox_chunks"
     embedding_provider: str = "auto"
+    # Which adapter serves the dense leg. `chroma` is the development adapter;
+    # `qdrant` keeps vectors in the cluster.
+    dense_backend: str = "chroma"
     # Which adapter serves the sparse leg. `bm25` keeps the index in the pod's
     # memory and is the development adapter; `opensearch` keeps it in the cluster.
     sparse_backend: str = "bm25"
@@ -72,6 +75,13 @@ class RetrievalConfig(BaseModel):
     def sparse_backend_known(cls, v):
         if v not in ("bm25", "opensearch"):
             raise ValueError("sparse_backend must be 'bm25' or 'opensearch'")
+        return v
+
+    @field_validator("dense_backend")
+    @classmethod
+    def dense_backend_known(cls, v):
+        if v not in ("chroma", "qdrant"):
+            raise ValueError("dense_backend must be 'chroma' or 'qdrant'")
         return v
 
     @model_validator(mode="after")
@@ -260,6 +270,8 @@ class Settings(BaseSettings):
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     chroma_persist_dir: str = Field(default="./data/chroma", alias="CHROMA_PERSIST_DIR")
+    qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
+    qdrant_api_key: str | None = Field(default=None, alias="QDRANT_API_KEY")
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_provider_override: str | None = Field(
         default=None, alias="EMBEDDING_PROVIDER"

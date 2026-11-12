@@ -1,9 +1,10 @@
 """Retrieval layer: hybrid dense + sparse search with fusion, rerank and filtering."""
 from __future__ import annotations
 
+from typing import Any
+
 from blackbox.config.settings import RetrievalConfig, Settings, get_config, get_settings
 from blackbox.ingestion.embeddings import build_embedding_provider
-from blackbox.ingestion.vectorstore import ChromaVectorStore
 from blackbox.retrieval.dense import DenseRetriever
 from blackbox.retrieval.filters import MetadataFilter, last_n_days, parse_filter
 from blackbox.retrieval.fusion import FusionConfig, fuse
@@ -39,6 +40,41 @@ __all__ = [
     "tokenize",
     "with_timeout",
 ]
+
+
+def build_vectorstore(
+    settings: Settings | None = None,
+    retrieval_config: RetrievalConfig | None = None,
+    *,
+    persist_dir: str | None = None,
+    collection_name: str | None = None,
+    embedding_provider: Any = None,
+):
+    """The dense leg's adapter, chosen by configuration.
+
+    `chroma` keeps the collection on disk (development default); `qdrant` keeps it
+    in the cluster.
+    """
+    settings = settings or get_settings()
+    rc = retrieval_config if retrieval_config is not None else get_config().retrieval
+    backend = getattr(rc, "dense_backend", "chroma")
+    name = collection_name or rc.collection_name
+    if backend == "qdrant":
+        from blackbox.ingestion.qdrant_vectorstore import QdrantVectorStore
+
+        return QdrantVectorStore(
+            url=settings.qdrant_url,
+            collection_name=name,
+            embedding_provider=embedding_provider,
+            api_key=settings.qdrant_api_key,
+        )
+    from blackbox.ingestion.vectorstore import ChromaVectorStore
+
+    return ChromaVectorStore(
+        persist_dir=persist_dir or settings.chroma_persist_dir,
+        collection_name=name,
+        embedding_provider=embedding_provider,
+    )
 
 
 def build_sparse_store(
@@ -86,9 +122,11 @@ def build_default_retriever(
         model=settings.embedding_model,
         api_key=settings.openai_api_key,
     )
-    vectorstore = ChromaVectorStore(
-        persist_dir=persist_dir or settings.chroma_persist_dir,
-        collection_name=collection_name or rc.collection_name,
+    vectorstore = build_vectorstore(
+        settings=settings,
+        retrieval_config=rc,
+        persist_dir=persist_dir,
+        collection_name=collection_name,
         embedding_provider=embedding_provider,
     )
     return build_hybrid_retriever(

@@ -24,7 +24,9 @@ class DenseRetriever:
     ) -> list[RetrievedChunk]:
         where = filter.to_chroma_where() if filter else None
         embedding = self.vectorstore.embedding_provider.embed([query])[0]
-        result = self.vectorstore.query_embedding(embedding, top_k=top_k, where=where)
+        result = self.vectorstore.query_embedding(
+            embedding, top_k=top_k, where=where, filter=filter
+        )
 
         ids = (result.get("ids") or [[]])[0]
         docs = (result.get("documents") or [[]])[0]

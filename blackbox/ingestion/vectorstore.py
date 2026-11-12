@@ -62,8 +62,17 @@ class ChromaVectorStore:
         return res
 
     def query_embedding(
-        self, embedding: list[float], top_k: int = 5, where: dict | None = None
+        self,
+        embedding: list[float],
+        top_k: int = 5,
+        where: dict | None = None,
+        filter: Any = None,
     ) -> dict:
+        if filter is not None and where is None:
+            try:
+                where = filter.to_chroma_where()
+            except Exception:  # noqa: BLE001, S110
+                pass
         # Chroma's stub types the embedding argument as a numpy-compatible sequence;
         # a plain list of floats is accepted at runtime but does not satisfy the
         # invariant element type, so the argument is passed through as `Any`.
