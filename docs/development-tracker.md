@@ -126,7 +126,7 @@ mandatory tenant payloads vs per-tenant indexes.
 | LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
 | Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
-| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; cluster run, tenant filters, dual-read, alias cutover open |
+| Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant scaffolding landed; dual-read, alias cutover open |
 | Async graph + workers | 3 | ◐ | async graph, async providers, bounded pool and the ingest/eval job queue are done; shared queue backend and trace store open |
 | Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3 |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
@@ -337,6 +337,9 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-11 | OpenSearch index populated by ingestion; adapter run against a live cluster | ✅ | `dd48e7b` |
 | 2026-11-11 | Sparse leg scores with Lucene's formula; both backends measure identically | ✅ | `beadfc5` |
 | 2026-11-11 | Gate re-baselined to 0.9167; tie-break sensitivity measured and reported | ✅ | local |
+| 2026-11-12 | Phase 2 tenant isolation: tenant_id stamped into chunk metadata (Chroma + OpenSearch), mandatory tenant filter in compilation, per-call tenant injection with forged-filter override, cross-tenant retrieval tests | ✅ | `411945d` |
+| 2026-11-12 | Postgres RLS policies (migration 0002, conditional on Postgres) | ✅ | `411945d` |
+| 2026-11-12 | Qdrant adapter scaffolding + optional `vector` extra | ◐ | `411945d` |
 
 ## 12. Update protocol
 
