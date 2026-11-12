@@ -219,7 +219,8 @@ within SLO at target load.
 - [ ] Remove Chroma/BM25 runtime dependency after cutover (rollback window documented)
 - [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision
 - [x] SQLAlchemy 2.0 `Mapped` models — already in place (ConversationRow/TurnRow use Mapped + mapped_column)
-- [ ] JSONB + partition plan for turns/traces (Postgres) — open
+- [x] JSONB conversion migration (0003) — Postgres only; models stay portable JSON
+- [ ] Partition plan for turns/traces (Postgres) — open
 - [ ] Retention/deletion APIs beyond tenant offboarding — open
 - [x] Tenant offboarding (conversations + turns) via `DELETE /api/admin/tenants/{tenant_id}` and `ConversationRepository.delete_tenant`; entity/index payloads are store-wide today
 - [ ] Global per-tenant LLM/token quotas — deferred to Phase 4 (per-pod admission control in place)
