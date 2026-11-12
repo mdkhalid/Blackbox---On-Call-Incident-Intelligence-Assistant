@@ -185,6 +185,30 @@ def _job_status(job_id: str, request: Request, principal: Principal, *, kind: st
     return body
 
 
+@router.delete("/api/admin/tenants/{tenant_id}", status_code=200)
+async def offboard_tenant(
+    tenant_id: str,
+    request: Request,
+    principal: Principal = _ADMIN_AUTH,
+):
+    """Offboard a tenant: remove its conversations, turns and index payloads."""
+    if not tenant_id or tenant_id == "default":
+        raise HTTPException(status_code=400, detail="invalid tenant_id")
+    services = get_services(request)
+    try:
+        await asyncio.to_thread(services.ensure_storage)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    removed = await asyncio.to_thread(services.conversations.delete_tenant, tenant_id)
+    logger.info(
+        "audit_admin_action",
+        action="tenant_offboard",
+        tenant_id=tenant_id,
+        conversations_removed=removed,
+    )
+    return {"tenant_id": tenant_id, "conversations_removed": removed}
+
+
 def _corpus_path(raw: str) -> Path:
     base = Path.cwd().resolve()
     candidate = Path(raw)

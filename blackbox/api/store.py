@@ -125,6 +125,8 @@ class ConversationRepository(Protocol):
     def get_turns(
         self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
     ) -> list[TurnRecord]: ...
+    def delete_tenant(self, tenant_id: str) -> int: ...
+
     def last_turn(
         self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
     ) -> TurnRecord | None: ...
@@ -185,6 +187,22 @@ class SqlAlchemyConversationRepository:
                 .all()
             )
             return [_turn(row) for row in rows]
+
+    def delete_tenant(self, tenant_id: str) -> int:
+        """Remove every conversation and turn owned by a tenant.
+
+        Returns the number of conversations deleted. Index payloads and entity
+        rows are store-wide today, so they are cleared separately by the caller.
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id must not be empty")
+        with self._session() as session:
+            turns = session.query(TurnRow).filter(TurnRow.tenant_id == tenant_id).delete()
+            convs = session.query(ConversationRow).filter(
+                ConversationRow.tenant_id == tenant_id
+            ).delete()
+            session.commit()
+            return int(convs or 0)
 
     def last_turn(
         self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
