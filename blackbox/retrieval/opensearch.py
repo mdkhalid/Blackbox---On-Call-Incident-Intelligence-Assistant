@@ -114,6 +114,10 @@ class OpenSearchSparseStore:
         self.text_field = text_field
         self.tokens_field = tokens_field
         self.chunk_id_field = chunk_id_field
+        # While a staged ingest is open, writes go to the new concrete index and
+        # reads keep hitting the alias (the previous version). The alias flips only
+        # after validation, so a failed rebuild is invisible to readers.
+        self.write_index: str | None = None
         self._client: Any = None
         self._async_client: Any = None
 
@@ -243,6 +247,77 @@ class OpenSearchSparseStore:
         actions.append({"add": {"index": target, "alias": self.index}})
         self.client.indices.update_aliases({"actions": actions})
 
+    # ---- staged ingest / validated cutover ----
+
+    @property
+    def write_target(self) -> str:
+        """Where ingest writes: the staged index while one is open, else the alias."""
+        return self.write_index or self.index
+
+    def begin_staged(self, version: int | None = None) -> int:
+        """Open a new versioned index for a complete rebuild.
+
+        Reads continue to use the alias until :meth:`commit_staged`, so queries see
+        the previous, complete index while the replacement is being built.
+        """
+        if not self.alias:
+            raise RuntimeError("staged ingest requires alias mode")
+        if self.write_index is not None:
+            raise RuntimeError("a staged ingest is already open")
+        if version is None:
+            version = max(self.list_versions() or [0]) + 1
+        self.create_versioned(version)
+        self.write_index = self.versioned_index_name(version)
+        logger.info(
+            "opensearch_staged_ingest_open",
+            alias=self.alias,
+            version=version,
+            index=self.write_index,
+        )
+        return version
+
+    def commit_staged(self, version: int) -> None:
+        """Validate-and-swap: point the alias at the staged index."""
+        expected = self.versioned_index_name(version)
+        if self.write_index != expected:
+            raise RuntimeError("no staged index for this version")
+        self.swap_alias(version)
+        self.write_index = None
+        logger.info("opensearch_staged_ingest_committed", alias=self.alias, version=version)
+
+    def abort_staged(self) -> None:
+        """Drop the staged index; the alias and readers are untouched."""
+        name = self.write_index
+        self.write_index = None
+        if not name:
+            return
+        try:
+            if self.client.indices.exists(index=name):
+                self.client.indices.delete(index=name)
+        except Exception as exc:  # noqa: BLE001 - cleanup must not mask the real error
+            logger.warning("opensearch_staged_cleanup_failed", index=name, error=str(exc))
+        logger.info("opensearch_staged_ingest_aborted", alias=self.alias, index=name)
+
+    def count_staged(self) -> int:
+        """Documents in the staged index (0 when no staged ingest is open)."""
+        if self.write_index is None:
+            return 0
+        try:
+            return int(self.client.count(index=self.write_index).get("count", 0))
+        except Exception:  # noqa: BLE001 - validation reports the zero
+            return 0
+
+    def count_tenant(self, tenant_id: str, *, index: str | None = None) -> int:
+        """Chunks for one tenant, optionally in a specific (e.g. staged) index."""
+        try:
+            response = self.client.count(
+                index=index or self.index,
+                body={"query": {"term": {"tenant_id": tenant_id}}},
+            )
+        except Exception:  # noqa: BLE001 - an unreachable cluster is not fatal
+            return 0
+        return int(response.get("count", 0))
+
     @property
     def size(self) -> int:
         try:
@@ -267,17 +342,19 @@ class OpenSearchSparseStore:
         batch = list(chunks)
         if not batch:
             return 0
-        self.ensure_index()
+        if self.write_index is None:
+            self.ensure_index()
         actions = [self._action(chunk) for chunk in batch]
         success, _failed = helpers.bulk(self.client, actions, chunk_size=500, refresh=True)
         return int(success)
 
     def delete_by_doc(self, doc_id: str) -> None:
         """Remove every chunk belonging to a document."""
-        if not self.client.indices.exists(index=self.index):
+        target = self.write_target
+        if not self.client.indices.exists(index=target):
             return
         self.client.delete_by_query(
-            index=self.index,
+            index=target,
             body={"query": {"term": {"doc_id": doc_id}}},
             refresh=True,
         )
@@ -303,7 +380,7 @@ class OpenSearchSparseStore:
             document["date_ord"] = int(date_ord)
         return {
             "_op_type": "index",
-            "_index": self.index,
+            "_index": self.write_target,
             "_id": chunk.chunk_id,
             "_source": document,
         }

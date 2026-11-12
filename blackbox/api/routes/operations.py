@@ -48,7 +48,11 @@ async def ingest(
 
     job = services.submit_job(
         "ingest",
-        {"corpus_dir": str(root), "refresh": payload.refresh},
+        {
+            "corpus_dir": str(root),
+            "refresh": payload.refresh,
+            "tenant_id": principal.tenant_id,
+        },
         tenant_id=principal.tenant_id,
         subject=principal.subject,
     )
@@ -59,17 +63,35 @@ def _run_ingest(services, params: dict[str, Any]) -> dict[str, Any]:
     """Ingest one corpus directory. Runs on a worker, never on the request path."""
     root = Path(params["corpus_dir"])
     refresh = bool(params.get("refresh", False))
+    tenant_id = params.get("tenant_id") or "default"
     services.ensure_runtime()
     if services.retriever is None or services.entity_store is None:
         raise RuntimeError("ingestion dependencies unavailable")
-    pipeline = IngestionPipeline(
-        services.retriever.vectorstore,
-        services.entity_store,
-        sparse_store=services.retriever.sparse,
-        batch_size=services.config.ingestion.batch_size_chunks,
-        shadow_store=getattr(services.retriever, "shadow_vectorstore", None),
+
+    def build_pipeline() -> IngestionPipeline:
+        return IngestionPipeline(
+            services.retriever.vectorstore,
+            services.entity_store,
+            sparse_store=services.retriever.sparse,
+            batch_size=services.config.ingestion.batch_size_chunks,
+            tenant_id=tenant_id,
+            shadow_store=getattr(services.retriever, "shadow_vectorstore", None),
+        )
+
+    from blackbox.ingestion.staged import run_staged_ingest
+
+    staged = run_staged_ingest(
+        services.retriever, root, tenant_id=tenant_id, pipeline_factory=build_pipeline
     )
-    results = pipeline.ingest_directory(root, force=refresh)
+    if staged is None:
+        results = build_pipeline().ingest_directory(root, force=refresh)
+        validation = None
+        index_version = None
+    else:
+        results = staged["results"]
+        validation = staged["validation"]
+        index_version = staged["version"]
+
     # The corpus-derived indexes are rebuilt here, on the worker, and published
     # atomically. A rebuild is O(corpus), so it must not happen on the request
     # path of the next query.
@@ -78,11 +100,15 @@ def _run_ingest(services, params: dict[str, Any]) -> dict[str, Any]:
     skipped = sum(1 for result in results if result["status"] == "skipped")
     body = {
         "corpus_dir": str(root),
+        "tenant_id": tenant_id,
         "documents": len(results),
         "ingested": ingested,
         "skipped": skipped,
         "chunks": services.retriever.vectorstore.count(),
-        "forced": refresh,
+        "forced": refresh or staged is not None,
+        "staged": staged is not None,
+        "index_version": index_version,
+        "validation": validation,
     }
     logger.info("ingest_complete", **body)
     return body
