@@ -9,7 +9,7 @@ next.
 - **Open bugs & scaling gaps (audit):** [`code-audit-findings.md`](code-audit-findings.md)
 - **Status legend:** ✅ done · ◐ in progress · ⬜ not started · ⚠ blocked
 
-Last updated: 2026-11-11
+Last updated: 2026-11-12
 
 ---
 
@@ -26,7 +26,7 @@ Last updated: 2026-11-11
 | Deployment | Docker Compose (two-replica smoke passing) |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
-## 2. Current status (2026-11-11)
+## 2. Current status (2026-11-12)
 
 **Phase 1 — complete (control plane).**
 - Auth/tenancy: JWT/RBAC, tenant-scoped conversations and turns, cross-tenant tests.
@@ -56,34 +56,56 @@ Last updated: 2026-11-11
   of occupying a request worker and refusing further work.
 - Quality: `mypy` reports no issues across the package and CI gates on it.
 
-**Next:** Phase 3 — async runtime and jobs (async stores, shared queue, trace store split).
+**Next:** Phase 3 — remaining: SSE cancellation, shared queue worker, staged ingest with
+alias swap, trace store split.
 **Not started:** Phase 4 Kubernetes/observability, Phase 5 multi-region/DR.
 
 ### Resume point (next session)
 
 State: clean working tree; **all tests green**, `ruff` clean, `mypy` clean; Docker available.
-Phase 1 (control plane) closed, audit remediation closed, and Phase 2 is essentially
-complete: tenant isolation (exit gate), RLS, Qdrant adapter, versioned indexes/alias,
-shadow indexing + dual-read, offboarding, retention, partition plan, JSONB migration and
-eval parity gate are all landed. Only two Phase 2 items remain open, both blocked on
-external infrastructure: the Qdrant+OpenSearch benchmark (needs live clusters) and global
-per-tenant quotas (deferred to Phase 4).
+Phase 1 (control plane) closed, audit remediation closed, Phase 2 functionally complete
+(two infra-bound items open), and **Phase 3 is in progress**.
 
-**Next: Phase 3 — async runtime and jobs.** First package:
-1. Async retrieval stores end-to-end (providers are already async; the stores are not).
-   Wrap the Chroma/Qdrant/OpenSearch store calls in async clients or threadpools and
-   expose `asearch` on `DenseStore`/`SparseStore`.
-2. Shared queue backend for ingest/eval/summary-compaction jobs (today in-process).
-   Swap `JobQueue` to Redis/SQS-backed so job state survives pod restarts.
-3. Trace store split: Postgres (recent) + ClickHouse/S3 (archive); paginated `/trace`;
-   retention jobs.
-4. Graceful shutdown/drain and SSE cancellation tests.
+**Done in Phase 3 so far:**
+1. ✅ Async retrieval stores end-to-end — `asearch` added to the `DenseStore`/`SparseStore`
+   protocols and to `DenseRetriever`, `SparseRetriever`, `OpenSearchSparseRetriever`;
+   `HybridRetriever` awaits both legs concurrently instead of offloading each to a thread.
+   (`blackbox/retrieval/stores.py`, `dense.py`, `sparse.py`, `opensearch.py`,
+   `hybrid_retriever.py`)
+2. ✅ Graceful shutdown/drain — the lifespan stops the job workers and shuts the thread
+   pool down; covered by `tests/test_graceful_shutdown.py`.
+
+**Next: Phase 3 — remaining items, in recommended order.**
+1. **SSE cancellation** (`⬜`): a client disconnect does not yet cancel the graph run — the
+   stream has no `request.is_disconnected()` check or `CancelledError` handling, and no test
+   covers it. Start in `blackbox/api/routes/chat.py` (SSE generator) and add a test that
+   disconnects mid-stream.
+2. **Shared queue backend** (`⬜`): `JobQueue` in `blackbox/api/jobs.py` is in-process, so a
+   job submitted to one pod is invisible to another. A Redis/SQS queue only stores job
+   *ids*, and the callable cannot be reconstructed from Redis, so this needs a
+   worker-process refactor: serialise job params (kind + kwargs) into Redis and execute
+   them in a dedicated worker process. Do **not** just flip a Redis flag — the current
+   draft path marks cross-pod jobs `failed`.
+3. **Staged ingest with validation and alias swap** (`⬜`): write to a new versioned index,
+   validate (doc count, tenant coverage, sample retrieval), then `swap_alias`. The
+   versioned-index helpers already exist in `blackbox/retrieval/opensearch.py`
+   (`create_versioned`, `swap_alias`, `list_versions`).
+4. **Trace store split** (`⬜`): Postgres for recent traces + ClickHouse/S3 for archive;
+   then paginated `/trace` and retention jobs. Decision is provisional in the decision log —
+   confirm before building.
+5. Optional/cleanup: the duplicate "Commands" block in this section can be merged when the
+   file is next touched.
 
 Phase 4 (Kubernetes/Helm/Terraform, observability) and Phase 5 (multi-region/DR) are
 not started.
 
 **Phase 2 exit gate met:** MRR 0.9167 (hybrid RRF), tenant filters proven (cross-tenant
 retrieval tests green), eval parity gate wired into CI.
+
+**Phase 2 open items (infra-bound, do not block Phase 3):**
+- Qdrant+OpenSearch vs OpenSearch-only benchmark — run `scripts/benchmark_backends.py`
+  once live Qdrant + OpenSearch clusters exist; record the decision in §9.
+- Global per-tenant LLM/token quotas — deferred to Phase 4.
 
 **Commands:**
 ```powershell
@@ -132,8 +154,8 @@ mandatory tenant payloads vs per-tenant indexes.
 | Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
 | Qdrant/OpenSearch migration | 2 | ◐ | store protocols + filter AST + OpenSearch adapter done; tenant filters done; Qdrant adapter wired + tested; versioned helpers landed; shadow/dual-read done |
-| Async graph + workers | 3 | ◐ | async graph, async providers, bounded pool and the ingest/eval job queue are done; shared queue backend and trace store open |
-| Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3 |
+| Async graph + workers | 3 | ◐ | async graph, async providers, async stores (`asearch`), bounded pool, graceful shutdown and the ingest/eval job queue are done; SSE cancellation, shared queue backend and staged ingest open |
+| Trace store split | 3 | ⬜ | Postgres recent + ClickHouse/S3; paginated `/trace` + retention jobs |
 | Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
 | Observability stack | 4 | ⬜ | OTel, Prometheus/Grafana/Loki |
 | CI/CD + security scanning | 4 | ⬜ | GitHub Actions + GitOps |
@@ -234,12 +256,13 @@ within SLO at target load.
 
 - [x] Async graph nodes and LangGraph execution — audit finding 5
 - [x] Async retrieval stores + provider clients end-to-end — asearch on DenseStore/SparseStore protocols and concrete stores/retrievers
+- [x] Graceful shutdown/drain — lifespan stops job workers and shuts the thread pool down; `tests/test_graceful_shutdown.py`
+- [ ] SSE cancellation — a client disconnect must cancel the graph run; no `is_disconnected` check or cancellation test yet
 - [ ] Queue worker: ingest, eval, summary compaction — ingest and eval run on a worker; the queue is in-process (cross-pod needs a worker-process refactor to reconstruct job bodies from params)
 - [x] `202 + job_id` ingest/eval APIs with status endpoints — audit finding 8
-- [ ] Staged ingest with validation and alias swap
-- [ ] Trace store split: Postgres recent + ClickHouse/S3 archive
+- [ ] Staged ingest with validation and alias swap — versioned-index helpers exist; validate before `swap_alias`
+- [ ] Trace store split: Postgres recent + ClickHouse/S3 archive — decision provisional; confirm before building
 - [ ] Paginated `/trace`; retention jobs
-- [x] Graceful shutdown/drain and SSE cancellation tests — lifespan stops jobs + executor; tests added
 
 ## 6. Phase 4 — Kubernetes and operations
 
@@ -350,6 +373,10 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-12 | Qdrant adapter scaffolding + optional `vector` extra | ◐ | `411945d` |
 | 2026-11-12 | OpenSearch versioned indexes + alias cutover helpers | ◐ | `f99b685` |
 | 2026-11-12 | Qdrant dense backend wired (config + factory + filter compilation) | ◐ | `1cb30a9` |
+| 2026-11-12 | Phase 2 completion: shadow indexing/dual-read, tenant offboarding, retention API, JSONB migration, partition month, eval parity gate in CI, backend benchmark harness | ✅ | `6b57b3b` |
+| 2026-11-12 | Phase 2 pushed to GitHub (31 commits); working tree clean | ✅ | `6b57b3b` |
+| 2026-11-12 | Phase 3: `asearch` on DenseStore/SparseStore protocols and concrete stores/retrievers; HybridRetriever awaits both legs | ✅ | `28958c5` |
+| 2026-11-12 | Phase 3: graceful shutdown/drain tests (lifespan stops job workers + executor) | ✅ | `84c55a2` |
 
 ## 12. Update protocol
 
