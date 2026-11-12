@@ -234,7 +234,7 @@ within SLO at target load.
 
 - [x] Async graph nodes and LangGraph execution — audit finding 5
 - [x] Async retrieval stores + provider clients end-to-end — asearch on DenseStore/SparseStore protocols and concrete stores/retrievers
-- [ ] Queue worker: ingest, eval, summary compaction — ingest and eval run on a worker; the queue is in-process and summary compaction is not queued
+- [ ] Queue worker: ingest, eval, summary compaction — ingest and eval run on a worker; the queue is in-process (cross-pod needs a worker-process refactor to reconstruct job bodies from params)
 - [x] `202 + job_id` ingest/eval APIs with status endpoints — audit finding 8
 - [ ] Staged ingest with validation and alias swap
 - [ ] Trace store split: Postgres recent + ClickHouse/S3 archive
