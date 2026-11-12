@@ -30,7 +30,10 @@ class QdrantVectorStore:
 
         self.collection_name = collection_name
         self.embedding_provider = embedding_provider
-        self._client = QdrantClient(url=url, api_key=api_key, prefer_grpc=prefer_grpc)
+        if url == ":memory:":
+            self._client = QdrantClient(location=":memory:")
+        else:
+            self._client = QdrantClient(url=url, api_key=api_key, prefer_grpc=prefer_grpc)
         self._collection_ready = False
         self._vector_size: int | None = None
 
@@ -63,10 +66,17 @@ class QdrantVectorStore:
             metas.append(meta)
         if not ids:
             return 0
+        import uuid as _uuid
+
         embeddings = self.embedding_provider.embed(docs)
         self._ensure_collection(len(embeddings[0]))
+        point_ids = [str(_uuid.uuid5(_uuid.NAMESPACE_URL, str(cid))) for cid in ids]
         points = [
-            qm.PointStruct(id=ids[i], vector=embeddings[i], payload={"text": docs[i], "metadata": metas[i]})
+            qm.PointStruct(
+                id=point_ids[i],
+                vector=embeddings[i],
+                payload={"text": docs[i], "metadata": metas[i], "chunk_id": ids[i]},
+            )
             for i in range(len(ids))
         ]
         self._client.upsert(collection_name=self.collection_name, points=points)
@@ -126,10 +136,16 @@ class QdrantVectorStore:
                 must.append(qm.FieldCondition(key=f"metadata.{key}", match=qm.MatchValue(value=val)))
             if must:
                 qfilter = qm.Filter(must=must)
-        results = self._client.search(
-            collection_name=self.collection_name, query_vector=embedding, limit=top_k, query_filter=qfilter
-        )
-        ids = [[r.id for r in results]]
+        if hasattr(self._client, "search"):
+            results = self._client.search(
+                collection_name=self.collection_name, query_vector=embedding, limit=top_k, query_filter=qfilter
+            )
+        else:
+            resp = self._client.query_points(
+                collection_name=self.collection_name, query=embedding, limit=top_k, query_filter=qfilter
+            )
+            results = resp.points
+        ids = [[(r.payload or {}).get("chunk_id", r.id) for r in results]]
         docs = [[(r.payload or {}).get("text", "") for r in results]]
         metas = [[(r.payload or {}).get("metadata", {}) for r in results]]
         dists = [[1.0 - float(r.score) for r in results]]
@@ -183,6 +199,21 @@ class QdrantVectorStore:
             if rng:
                 must.append(qm.FieldCondition(key="metadata.date_ord", range=qm.Range(**rng)))
         return qm.Filter(must=must) if must else None
+
+    def create_snapshot(self) -> str | None:
+        """Create a snapshot of the collection. Returns the snapshot name or None."""
+        try:
+            info = self._client.create_snapshot(collection_name=self.collection_name, wait=True)
+            return getattr(info, "name", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def list_snapshots(self) -> list[str]:
+        try:
+            snaps = self._client.list_snapshots(collection_name=self.collection_name)
+            return [getattr(s, "name", str(s)) for s in (snaps or [])]
+        except Exception:  # noqa: BLE001
+            return []
 
     def get_all(self, where=None):
         points, _ = self._client.scroll(
