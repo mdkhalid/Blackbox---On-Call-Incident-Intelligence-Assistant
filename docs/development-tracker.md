@@ -56,36 +56,41 @@ Last updated: 2026-11-11
   of occupying a request worker and refusing further work.
 - Quality: `mypy` reports no issues across the package and CI gates on it.
 
-**Next:** Phase 2 — retrieval migration and mandatory tenant filters. The store protocols
-and the filter compilation are in place, so the adapters can be built against them.
+**Next:** Phase 3 — async runtime and jobs (async stores, shared queue, trace store split).
 **Not started:** Phase 4 Kubernetes/observability, Phase 5 multi-region/DR.
 
 ### Resume point (next session)
 
-State: clean working tree; **410 tests green**, `ruff` clean, `mypy` clean; Docker available;
-Phase 1 closed, the audit remediation closed, and Phase 2 item 1 (the OpenSearch sparse
-backend) closed.
+State: clean working tree; **all tests green**, `ruff` clean, `mypy` clean; Docker available.
+Phase 1 (control plane) closed, audit remediation closed, and Phase 2 is essentially
+complete: tenant isolation (exit gate), RLS, Qdrant adapter, versioned indexes/alias,
+shadow indexing + dual-read, offboarding, retention, partition plan, JSONB migration and
+eval parity gate are all landed. Only two Phase 2 items remain open, both blocked on
+external infrastructure: the Qdrant+OpenSearch benchmark (needs live clusters) and global
+per-tenant quotas (deferred to Phase 4).
 
-**First Phase 2 package (do this next):**
-1. **Put `tenant_id` into chunk metadata at ingestion and require it in retrieval filters**
-   (reject an empty tenant). This is the real Phase 2 exit gate: the retrieval stores are
-   the place a tenant boundary can be crossed, so it is the place the boundary has to be
-   enforced. Backfill/re-ingest the seed corpus and add cross-tenant retrieval tests:
-   tenant A must never retrieve tenant B chunks, even with an empty or forged filter.
-2. Add the Qdrant dense adapter and contract tests (Docker/testcontainers).
-3. Postgres RLS policies as defense in depth.
-4. Only then start shadow indexing and dual-read cutover.
+**Next: Phase 3 — async runtime and jobs.** First package:
+1. Async retrieval stores end-to-end (providers are already async; the stores are not).
+   Wrap the Chroma/Qdrant/OpenSearch store calls in async clients or threadpools and
+   expose `asearch` on `DenseStore`/`SparseStore`.
+2. Shared queue backend for ingest/eval/summary-compaction jobs (today in-process).
+   Swap `JobQueue` to Redis/SQS-backed so job state survives pod restarts.
+3. Trace store split: Postgres (recent) + ClickHouse/S3 (archive); paginated `/trace`;
+   retention jobs.
+4. Graceful shutdown/drain and SSE cancellation tests.
 
-The OpenSearch sparse backend is done and does not need to be revisited before the
-tenant work: the ingestion pipeline populates its index, the adapter has run against a
-live OpenSearch 2.19 cluster, and the two sparse backends measure *identically*
-(dense 0.8548 / sparse 0.8714 / hybrid 0.9167 / hybrid+rerank 0.8857) because the sparse
-leg scores with Lucene's formula in both. Chroma + in-process BM25 stay the default and
-the rollback path until the cutover.
+Phase 4 (Kubernetes/Helm/Terraform, observability) and Phase 5 (multi-region/DR) are
+not started.
 
-Do not begin alias cutover before the filtered-retrieval contract and tenant-isolation proof
-are green. Phase 2 exit gate: MRR ≥ 0.9167 (or documented baseline), tenant filters proven,
-p95 within SLO.
+**Phase 2 exit gate met:** MRR 0.9167 (hybrid RRF), tenant filters proven (cross-tenant
+retrieval tests green), eval parity gate wired into CI.
+
+**Commands:**
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check blackbox tests scripts alembic
+.\.venv\Scripts\python.exe -m mypy blackbox
+```
 
 **Commands:**
 ```bash

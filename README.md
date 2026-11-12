@@ -38,7 +38,10 @@ code) are collected in
 fixed**, including the critical one where the SSE token stream exposed an answer before the
 ground check had run.
 
-Current production phase: **Phase 2 (retrieval migration and data-plane tenant isolation)**.
+Current production phase: **Phase 2 (retrieval migration and data-plane tenant isolation) —
+essentially complete** (tenant isolation, RLS, Qdrant adapter, versioned indexes, shadow
+indexing/dual-read, offboarding, retention, partition plan and eval parity gate landed;
+benchmark and global quotas remain). Next: Phase 3 (async runtime and jobs).
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
