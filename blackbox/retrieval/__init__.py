@@ -108,7 +108,7 @@ def build_default_retriever(
     collection_name: str | None = None,
     retrieval_config: RetrievalConfig | None = None,
     tenant_id: str | None = None,
-) -> HybridRetriever:
+) -> Any:
     """Construct the retriever from env settings plus YAML tunables.
 
     Shared by the API, the eval harness and scripts so all three exercise exactly the same
@@ -129,7 +129,25 @@ def build_default_retriever(
         collection_name=collection_name,
         embedding_provider=embedding_provider,
     )
-    return build_hybrid_retriever(
+    retriever = build_hybrid_retriever(
         vectorstore, rc, sparse_store=build_sparse_store(settings, rc),
         tenant_id=tenant_id,
     )
+    shadow_backend = getattr(rc, "shadow_dense_backend", None)
+    if shadow_backend:
+        shadow_rc = rc.model_copy(update={"dense_backend": shadow_backend})
+        shadow_vs = build_vectorstore(
+            settings=settings,
+            retrieval_config=shadow_rc,
+            persist_dir=persist_dir,
+            collection_name=collection_name,
+            embedding_provider=embedding_provider,
+        )
+        shadow_retriever = build_hybrid_retriever(
+            shadow_vs, shadow_rc, sparse_store=build_sparse_store(settings, shadow_rc),
+            tenant_id=tenant_id,
+        )
+        from blackbox.retrieval.shadow import ShadowingRetriever
+
+        return ShadowingRetriever(retriever, shadow_retriever)
+    return retriever

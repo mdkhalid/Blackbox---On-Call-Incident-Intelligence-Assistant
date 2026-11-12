@@ -31,6 +31,9 @@ class RetrievalConfig(BaseModel):
     # Which adapter serves the dense leg. `chroma` is the development adapter;
     # `qdrant` keeps vectors in the cluster.
     dense_backend: str = "chroma"
+    # Optional shadow dense backend run alongside the primary for dual-read
+    # comparison during a migration. None disables shadowing.
+    shadow_dense_backend: str | None = None
     # Which adapter serves the sparse leg. `bm25` keeps the index in the pod's
     # memory and is the development adapter; `opensearch` keeps it in the cluster.
     sparse_backend: str = "bm25"
@@ -82,6 +85,13 @@ class RetrievalConfig(BaseModel):
     def dense_backend_known(cls, v):
         if v not in ("chroma", "qdrant"):
             raise ValueError("dense_backend must be 'chroma' or 'qdrant'")
+        return v
+
+    @field_validator("shadow_dense_backend")
+    @classmethod
+    def shadow_dense_backend_known(cls, v):
+        if v is not None and v not in ("chroma", "qdrant"):
+            raise ValueError("shadow_dense_backend must be None, 'chroma' or 'qdrant'")
         return v
 
     @model_validator(mode="after")
