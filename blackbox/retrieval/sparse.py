@@ -294,3 +294,13 @@ class SparseRetriever:
                 )
             )
         return out
+
+    async def asearch(
+        self,
+        query: str,
+        top_k: int,
+        filter: MetadataFilter | None = None,
+    ) -> list[RetrievedChunk]:
+        import asyncio
+
+        return await asyncio.to_thread(self.search, query, top_k, filter)

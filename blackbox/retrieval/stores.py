@@ -31,6 +31,13 @@ class DenseStore(Protocol):
         filter: MetadataFilter | None = None,
     ) -> list[RetrievedChunk]: ...
 
+    async def asearch(
+        self,
+        query: str,
+        top_k: int,
+        filter: MetadataFilter | None = None,
+    ) -> list[RetrievedChunk]: ...
+
 
 @runtime_checkable
 class SparseStore(Protocol):
@@ -45,6 +52,13 @@ class SparseStore(Protocol):
     """
 
     def search(
+        self,
+        query: str,
+        top_k: int,
+        filter: MetadataFilter | None = None,
+    ) -> list[RetrievedChunk]: ...
+
+    async def asearch(
         self,
         query: str,
         top_k: int,

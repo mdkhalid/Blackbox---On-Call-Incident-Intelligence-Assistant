@@ -1,6 +1,8 @@
 """Dense retrieval: embedding similarity over the Chroma collection."""
 from __future__ import annotations
 
+import asyncio
+
 from blackbox.ingestion.vectorstore import ChromaVectorStore
 from blackbox.retrieval.filters import MetadataFilter
 from blackbox.retrieval.models import RetrievedChunk
@@ -47,3 +49,11 @@ class DenseRetriever:
                 )
             )
         return chunks
+
+    async def asearch(
+        self,
+        query: str,
+        top_k: int,
+        filter: MetadataFilter | None = None,
+    ) -> list[RetrievedChunk]:
+        return await asyncio.to_thread(self.search, query, top_k, filter)

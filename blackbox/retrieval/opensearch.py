@@ -169,6 +169,16 @@ class OpenSearchSparseStore:
     def warm_up(self) -> None:
         """Nothing to warm up: there is no in-process index."""
 
+    async def asearch(
+        self,
+        query: str,
+        top_k: int,
+        filter: MetadataFilter | None = None,
+    ) -> list[RetrievedChunk]:
+        import asyncio
+
+        return await asyncio.to_thread(self.search, query, top_k, filter)
+
     def rebuild(self) -> None:
         """Nothing to rebuild: the index is maintained by the cluster."""
 
@@ -307,17 +317,6 @@ class OpenSearchSparseStore:
         filter: MetadataFilter | None = None,
     ) -> list[RetrievedChunk]:
         response = self.client.search(
-            index=self.index, body=self._body(query, top_k, filter)
-        )
-        return self._parse(response)
-
-    async def asearch(
-        self,
-        query: str,
-        top_k: int,
-        filter: MetadataFilter | None = None,
-    ) -> list[RetrievedChunk]:
-        response = await self.async_client.search(
             index=self.index, body=self._body(query, top_k, filter)
         )
         return self._parse(response)
