@@ -39,6 +39,7 @@ class AppServices:
     cache_backend: Any | None = None
     lock_engine: Any | None = None
     rate_limiter: Any | None = None
+    trace_archive: Any | None = None
 
     conversation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     job_queues: dict[str, Any] = field(default_factory=dict)
@@ -315,6 +316,23 @@ class AppServices:
         """Stop the background job workers."""
         for queue in self.job_queues.values():
             queue.stop()
+
+    # ---- trace archive ----
+
+    def get_trace_archive(self):
+        """The configured cold-storage backend, built once per process."""
+        if self.trace_archive is None:
+            from blackbox.api.trace_archive import build_trace_archive
+
+            self.trace_archive = build_trace_archive(self.settings)
+        return self.trace_archive
+
+    def close(self) -> None:
+        """Release process-owned resources during shutdown."""
+        self.stop_jobs()
+        archive = self.trace_archive
+        if archive is not None:
+            archive.close()
 
 
 def build_services(settings: Settings) -> AppServices:

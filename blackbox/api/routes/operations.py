@@ -214,13 +214,28 @@ async def offboard_tenant(
 async def run_retention(
     request: Request,
     days: int = 90,
+    archive: bool = False,
     principal: Principal = _ADMIN_AUTH,
 ):
+    """Prune turns older than ``days``, archiving them first when requested."""
+    if days < 0:
+        raise HTTPException(status_code=400, detail="days must be >= 0")
     services = get_services(request)
     try:
         await asyncio.to_thread(services.ensure_storage)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if archive:
+        from blackbox.api.retention import archive_and_prune
+
+        archive_backend = await asyncio.to_thread(services.get_trace_archive)
+        body = await asyncio.to_thread(
+            archive_and_prune, services.conversations, archive_backend, days
+        )
+        logger.info("audit_admin_action", action="retention", **body)
+        return body
+
     removed = await asyncio.to_thread(services.conversations.delete_older_than, days)
     logger.info("audit_admin_action", action="retention", days=days, removed=removed)
     return {"days": days, "conversations_removed": removed}

@@ -47,7 +47,7 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
         try:
             yield
         finally:
-            app.state.services.stop_jobs()
+            app.state.services.close()
             executor.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="Blackbox", version=__version__, lifespan=lifespan)

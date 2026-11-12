@@ -325,6 +325,15 @@ class Settings(BaseSettings):
     opensearch_password: str = Field(default="", alias="OPENSEARCH_PASSWORD")
     opensearch_verify_certs: bool = Field(default=True, alias="OPENSEARCH_VERIFY_CERTS")
 
+    # Cold storage for pruned conversation turns. `none` disables archiving;
+    # `file` writes gzipped JSONL batches under TRACE_ARCHIVE_DIR; `s3` writes the
+    # same objects to the bucket (the optional `archive` extra provides boto3).
+    trace_archive_backend: str = Field(default="none", alias="TRACE_ARCHIVE_BACKEND")
+    trace_archive_dir: str = Field(default="./data/traces", alias="TRACE_ARCHIVE_DIR")
+    trace_archive_bucket: str = Field(default="", alias="TRACE_ARCHIVE_BUCKET")
+    trace_archive_prefix: str = Field(default="traces", alias="TRACE_ARCHIVE_PREFIX")
+    trace_archive_region: str | None = Field(default=None, alias="TRACE_ARCHIVE_REGION")
+
     @field_validator("llm_timeout_s")
     @classmethod
     def positive_timeout(cls, v):
@@ -359,6 +368,19 @@ class Settings(BaseSettings):
         if v < 0:
             raise ValueError("LLM_CIRCUIT_RESET_S must be >= 0")
         return v
+
+    @field_validator("trace_archive_backend")
+    @classmethod
+    def trace_archive_backend_known(cls, v):
+        if v not in ("none", "file", "s3"):
+            raise ValueError("TRACE_ARCHIVE_BACKEND must be none|file|s3")
+        return v
+
+    @model_validator(mode="after")
+    def archive_bucket_required(self):
+        if self.trace_archive_backend == "s3" and not self.trace_archive_bucket:
+            raise ValueError("TRACE_ARCHIVE_BUCKET is required when TRACE_ARCHIVE_BACKEND=s3")
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

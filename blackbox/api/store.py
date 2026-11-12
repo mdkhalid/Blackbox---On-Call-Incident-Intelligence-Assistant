@@ -126,6 +126,21 @@ class ConversationRepository(Protocol):
     def get_turns(
         self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
     ) -> list[TurnRecord]: ...
+    def get_turns_page(
+        self,
+        conversation_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TurnRecord]: ...
+    def count_turns(
+        self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
+    ) -> int: ...
+    def turns_older_than(
+        self, days: int, *, tenant_id: str | None = None
+    ) -> list[TurnRecord]: ...
+    def delete_turn_ids(self, ids: list[int]) -> int: ...
     def delete_tenant(self, tenant_id: str) -> int: ...
 
     def delete_older_than(self, days: int) -> int: ...
@@ -189,6 +204,71 @@ class SqlAlchemyConversationRepository:
                 .all()
             )
             return [_turn(row) for row in rows]
+
+    def get_turns_page(
+        self,
+        conversation_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TurnRecord]:
+        """One page of a conversation's turns, oldest first."""
+        with self._session() as session:
+            rows = (
+                session.query(TurnRow)
+                .filter(
+                    TurnRow.conversation_id == conversation_id,
+                    TurnRow.tenant_id == tenant_id,
+                )
+                .order_by(TurnRow.id)
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            return [_turn(row) for row in rows]
+
+    def count_turns(
+        self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
+    ) -> int:
+        with self._session() as session:
+            return int(
+                session.query(TurnRow)
+                .filter(
+                    TurnRow.conversation_id == conversation_id,
+                    TurnRow.tenant_id == tenant_id,
+                )
+                .count()
+            )
+
+    def turns_older_than(
+        self, days: int, *, tenant_id: str | None = None
+    ) -> list[TurnRecord]:
+        """Turns older than ``days``, oldest first, optionally for one tenant."""
+        if days < 0:
+            raise ValueError("days must be >= 0")
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        with self._session() as session:
+            query = session.query(TurnRow).filter(TurnRow.created_at < cutoff)
+            if tenant_id is not None:
+                query = query.filter(TurnRow.tenant_id == tenant_id)
+            rows = query.order_by(TurnRow.id).all()
+            return [_turn(row) for row in rows]
+
+    def delete_turn_ids(self, ids: list[int]) -> int:
+        """Delete exactly the turns that were archived."""
+        if not ids:
+            return 0
+        with self._session() as session:
+            removed = (
+                session.query(TurnRow)
+                .filter(TurnRow.id.in_(ids))
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+            return int(removed or 0)
 
     def delete_tenant(self, tenant_id: str) -> int:
         """Remove every conversation and turn owned by a tenant.

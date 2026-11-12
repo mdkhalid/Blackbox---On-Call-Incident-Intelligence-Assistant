@@ -48,6 +48,10 @@ search = [
 vector = [
     "qdrant-client>=1.9",
 ]
+# optional: cold trace storage in S3-compatible object storage
+archive = [
+    "boto3>=1.34",
+]
 db = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
@@ -95,6 +99,7 @@ show_error_codes = true
 [[tool.mypy.overrides]]
 module = [
     "anthropic.*",
+    "boto3.*",
     "chromadb.*",
     "openai.*",
     "opensearchpy.*",
