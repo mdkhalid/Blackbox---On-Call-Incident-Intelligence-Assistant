@@ -14,7 +14,14 @@ from blackbox.api.guardrails import detect_injection
 from blackbox.api.locks import ConversationBusy
 from blackbox.api.schemas import ChatRequest
 from blackbox.api.services import PersistenceUnavailable
-from blackbox.api.sse import chunk_trails, public_update, sse_event, token_chunks
+from blackbox.api.sse import (
+    ClientDisconnected,
+    chunk_trails,
+    public_update,
+    sse_event,
+    stream_with_disconnect,
+    token_chunks,
+)
 from blackbox.api.store import ConversationTenantMismatch
 from blackbox.graph import initial_state, stream_graph_events
 from blackbox.graph.prompts import CHAT_SYSTEM_PROMPT
@@ -173,7 +180,9 @@ async def chat(
             )
 
             result: dict = {}
-            async for event in stream_graph_events(services.graph, state):
+            async for event in stream_with_disconnect(
+                request, stream_graph_events(services.graph, state)
+            ):
                 if event["event"] == "node":
                     yield sse_event(
                         "node",
@@ -253,6 +262,16 @@ async def chat(
                 tokens=(result.get("usage") or {}).get("total_tokens"),
             )
             yield sse_event("final", final_payload)
+        except ClientDisconnected:
+            # The client went away mid-answer. The turn is deliberately not persisted:
+            # there is nobody to show it to, and recording a partial turn would make a
+            # later retry look like a duplicate. The finally block still releases the
+            # conversation lock, the tenant slot and the idempotency key.
+            logger.info(
+                "chat_client_disconnected",
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+            )
         except Exception as exc:
             logger.exception("chat_stream_failed", conversation_id=conversation_id)
             yield sse_event(
