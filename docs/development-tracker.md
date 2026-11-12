@@ -239,7 +239,7 @@ within SLO at target load.
 - [ ] Staged ingest with validation and alias swap
 - [ ] Trace store split: Postgres recent + ClickHouse/S3 archive
 - [ ] Paginated `/trace`; retention jobs
-- [ ] Graceful shutdown/drain and SSE cancellation tests
+- [x] Graceful shutdown/drain and SSE cancellation tests — lifespan stops jobs + executor; tests added
 
 ## 6. Phase 4 — Kubernetes and operations
 
