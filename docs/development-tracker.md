@@ -215,7 +215,7 @@ within SLO at target load.
   (dense 0.8548 / sparse 0.8714 / hybrid 0.9167 / hybrid+rerank 0.8857)
 - [ ] Versioned indexes + `chunks-current` alias; staged ingest and atomic cutover
 - [ ] Shadow indexing and dual-read comparison
-- [ ] Eval parity gate wired into CI
+- [x] Eval parity gate wired into CI — `--min-mrr` flag on retrieval_eval, CI step added
 - [ ] Remove Chroma/BM25 runtime dependency after cutover (rollback window documented)
 - [ ] Benchmark Qdrant+OpenSearch vs OpenSearch-only; record decision
 - [x] SQLAlchemy 2.0 `Mapped` models — already in place (ConversationRow/TurnRow use Mapped + mapped_column)
