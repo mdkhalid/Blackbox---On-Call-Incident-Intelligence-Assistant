@@ -35,6 +35,16 @@ class ShadowingRetriever:
     def corpus_size(self) -> int:
         return getattr(self.primary, "corpus_size", 0)
 
+    @property
+    def vectorstore(self) -> Any:
+        return getattr(self.primary, "vectorstore", None)
+
+    @property
+    def shadow_vectorstore(self) -> Any:
+        if self.shadow is None:
+            return None
+        return getattr(self.shadow, "vectorstore", None)
+
     def invalidate(self) -> None:
         self.primary.invalidate()
         if self.shadow is not None:

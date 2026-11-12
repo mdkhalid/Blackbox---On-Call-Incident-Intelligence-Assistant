@@ -50,6 +50,7 @@ class IngestionPipeline:
         sparse_store: Any | None = None,
         batch_size: int = 64,
         tenant_id: str = DEFAULT_TENANT,
+        shadow_store: Any | None = None,
     ):
         self.vs = vectorstore
         self.es = entity_store
@@ -61,6 +62,9 @@ class IngestionPipeline:
         if not tenant_id:
             raise ValueError("tenant_id must not be empty")
         self.tenant_id = tenant_id
+        # Shadow dense store written alongside the primary during a migration so
+        # the two cannot drift apart. Failures here are logged, never fatal.
+        self.shadow = shadow_store
 
     def _loader_chunker(self, doc_type: str):
         # find in CHUNKER_MAP by doc_type
@@ -94,6 +98,11 @@ class IngestionPipeline:
             self.vs.delete_by_doc(doc.doc_id)
             if self.sparse is not None:
                 self.sparse.delete_by_doc(doc.doc_id)
+            if self.shadow is not None:
+                try:
+                    self.shadow.delete_by_doc(doc.doc_id)
+                except Exception:  # noqa: BLE001, S110
+                    pass
             self.es.delete_doc_entities(doc.doc_id)
 
         # extract entities
@@ -126,6 +135,11 @@ class IngestionPipeline:
             n = self.vs.upsert_chunks(batch)
             if self.sparse is not None:
                 self.sparse.upsert_chunks(batch)
+            if self.shadow is not None:
+                try:
+                    self.shadow.upsert_chunks(batch)
+                except Exception:  # noqa: BLE001, S110
+                    pass
             total += n
         self.es.record_ingested(doc.doc_id, h, [c.chunk_id for c in chunks])
         return {"doc_id": doc.doc_id, "status": "ingested", "chunks": total}

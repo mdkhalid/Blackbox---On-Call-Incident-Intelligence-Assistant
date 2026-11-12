@@ -54,6 +54,7 @@ async def ingest(
             services.entity_store,
             sparse_store=services.retriever.sparse,
             batch_size=services.config.ingestion.batch_size_chunks,
+            shadow_store=getattr(services.retriever, "shadow_vectorstore", None),
         )
         results = pipeline.ingest_directory(root, force=payload.refresh)
         # The corpus-derived indexes are rebuilt here, on the worker, and published
