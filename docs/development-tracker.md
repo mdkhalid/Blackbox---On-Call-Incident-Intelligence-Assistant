@@ -222,7 +222,7 @@ within SLO at target load.
 - [ ] JSONB + partition plan for turns/traces (Postgres) — open
 - [ ] Retention/deletion APIs beyond tenant offboarding — open
 - [x] Tenant offboarding (conversations + turns) via `DELETE /api/admin/tenants/{tenant_id}` and `ConversationRepository.delete_tenant`; entity/index payloads are store-wide today
-- [ ] Global per-tenant LLM/token quotas (per-pod admission control already in place)
+- [ ] Global per-tenant LLM/token quotas — deferred to Phase 4 (per-pod admission control in place)
 
 ## 5. Phase 3 — Async runtime and jobs
 
