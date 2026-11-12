@@ -27,7 +27,6 @@ from blackbox.eval.metrics import (
 from blackbox.ingestion.embeddings import build_embedding_provider
 from blackbox.ingestion.entity_extraction.store import SqlAlchemyEntityStore
 from blackbox.ingestion.pipeline import IngestionPipeline
-from blackbox.ingestion.vectorstore import ChromaVectorStore
 from blackbox.logging_setup import get_logger
 from blackbox.retrieval.filters import parse_filter
 from blackbox.retrieval.hybrid_retriever import HybridRetriever, build_hybrid_retriever
@@ -81,19 +80,25 @@ def build_retriever(
         model=settings.embedding_model,
         api_key=settings.openai_api_key,
     )
-    store = ChromaVectorStore(
-        persist_dir=persist_dir or settings.chroma_persist_dir,
+    from blackbox.retrieval import build_sparse_store, build_vectorstore
+
+    store = build_vectorstore(
+        settings=settings,
+        retrieval_config=cfg.retrieval,
+        persist_dir=persist_dir,
         collection_name=cfg.retrieval.collection_name,
         embedding_provider=provider,
     )
 
-    should_ingest = refresh or store.count() == 0
+    should_ingest = refresh or getattr(store, "count", lambda: 0)() == 0
     if should_ingest:
         logger.info("ingesting_corpus", path=str(corpus_dir), refresh=refresh)
         entity_store = SqlAlchemyEntityStore(f"sqlite:///{pathlib.Path('data') / 'entities.db'}")
         pathlib.Path("data").mkdir(exist_ok=True)
         entity_store.init()
-        pipeline = IngestionPipeline(store, entity_store)
+        pipeline = IngestionPipeline(
+            store, entity_store, sparse_store=build_sparse_store(settings, cfg.retrieval)
+        )
         results = pipeline.ingest_directory(corpus_dir)
         logger.info(
             "ingest_complete",
@@ -101,7 +106,9 @@ def build_retriever(
             chunks=store.count(),
         )
 
-    return build_hybrid_retriever(store, cfg.retrieval)
+    return build_hybrid_retriever(
+        store, cfg.retrieval, sparse_store=build_sparse_store(settings, cfg.retrieval)
+    )
 
 
 def run_strategy(
