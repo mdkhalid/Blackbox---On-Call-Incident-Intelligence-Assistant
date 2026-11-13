@@ -1,0 +1,74 @@
+# OpenTelemetry Collector (contrib) configuration for Blackbox.
+#
+# Deploy as a Deployment/Service named `otel-collector` in the monitoring namespace;
+# the chart's prod values point OTEL_EXPORTER_OTLP_ENDPOINT at
+# http://otel-collector.monitoring.svc:4318.
+#
+# The collector, not the app, owns batching and backend choice. Sampling stays at the
+# app (OTEL_TRACES_SAMPLER_ARG) so the decision happens before spans are exported and
+# does not consume collector CPU at 2k concurrent streams.
+#
+#   kubectl -n monitoring create configmap otel-collector --from-file=config.yaml=otel-collector.yaml
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 2s
+    override: false
+  # Make the cluster visible in Tempo/Grafana without asking every app instance to
+  # know its cluster name.
+  attributes/cluster:
+    actions:
+      - key: k8s.cluster.name
+        value: ${env:CLUSTER_NAME}
+        action: upsert
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo.monitoring.svc:4317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+  # Useful while bringing the stack up; remove or set to `basic` in production.
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 127.0.0.1:1777
+
+service:
+  extensions: [health_check, pprof]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, attributes/cluster, batch]
+      exporters: [otlp/tempo]
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

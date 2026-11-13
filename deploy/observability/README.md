@@ -79,6 +79,39 @@ no-op tracer: the service keeps serving without a collector.
 be joined to its trace. Span names are a contract: dashboards and TraceQL queries should
 use these names, not free-form ones.
 
+## Dashboards and the logs/traces stack
+
+The directory contains a complete reference bundle:
+
+| File | Purpose |
+|---|---|
+| [`grafana/dashboards/blackbox-overview.json`](grafana/dashboards/blackbox-overview.json) | Grafana dashboard: SLO/error ratio, latency, SSE concurrency, retrieval stages, LLM calls/tokens/errors, queue depth, recent traces and trace-correlated logs |
+| [`grafana/provisioning/datasources/datasources.yaml`](grafana/provisioning/datasources/datasources.yaml) | Prometheus, Loki and Tempo datasources; Loki `trace_id` → Tempo link and Tempo → Loki/metrics links |
+| [`grafana/provisioning/dashboards/dashboards.yaml`](grafana/provisioning/dashboards/dashboards.yaml) | File provider for the dashboard JSON (mount at `/var/lib/grafana/dashboards`) |
+| [`otel-collector.yaml`](otel-collector.yaml) | OTLP receiver, memory limiter, batching, cluster label and Tempo exporter |
+| [`tempo.yaml`](tempo.yaml) | Single-binary Tempo with local blocks, 24h retention and service-graph generation |
+| [`loki.yaml`](loki.yaml) | Single-binary Loki with TSDB/filesystem storage, 7-day retention and structured metadata |
+| [`promtail-values.yaml`](promtail-values.yaml) | Promtail Helm values: Blackbox namespace only, JSON fields as labels, `trace_id` extracted |
+
+Apply the rules and feed the stack configs to the charts (or mount them as ConfigMaps):
+
+```bash
+kubectl apply -n monitoring -f deploy/observability/prometheus-rules.yaml
+# Collector / Tempo / Loki: use your chart's config value, e.g.
+#   --set-file config=deploy/observability/otel-collector.yaml
+```
+
+The Tempo/Loki/collector files are **config references**, not Kubernetes manifests and
+not HA deployments: they use local disk and single binaries. For production, use the
+upstream `tempo-distributed`/`loki` Helm charts with object storage, and deploy the
+collector as a Deployment (or DaemonSet) named `otel-collector` in `monitoring`. Keep the
+`tempo.monitoring.svc:4317` exporter endpoint or update the chart's
+`OTEL_EXPORTER_OTLP_ENDPOINT` to match.
+
+Sampling is decided in the app (`OTEL_TRACES_SAMPLER_ARG`), not in the collector, so
+tail sampling cannot re-admit spans that were never exported. Keep probe/scrape paths
+out of tracing with `OTEL_IGNORE_PATHS`.
+
 ## Alerts
 
 ```bash

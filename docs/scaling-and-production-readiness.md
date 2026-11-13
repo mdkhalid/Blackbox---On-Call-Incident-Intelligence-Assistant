@@ -2,9 +2,9 @@
 
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
 jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference,
-image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, External
-Secrets and CI image/security gates landed; Grafana/Loki/Tempo, GitOps, load/chaos, quotas
-and the runbooks remain.**
+image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, Grafana/
+Loki/Tempo configs, External Secrets and CI image/security gates landed; GitOps, load/chaos,
+quotas and the runbooks remain.**
 This document is the production contract for the codebase: target architecture, capacity
 model, tenancy, retrieval migration, runtime, operations and the phased path from the current
 single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
@@ -370,8 +370,17 @@ with tenant affinity.
 > never a conversation id; tenant-level cost must aggregate from the existing counters rather
 > than add an unbounded label.
 >
-> Still open: Grafana dashboards, Loki/Tempo storage, synthetic probes and error tracking. The
-> metric names are the contract the dashboards will build against.
+> Still open: synthetic probes and error tracking. The metric names are the contract the
+> dashboards build against.
+
+> **Dashboards and stack configs (2026-11-13, Phase 4).** `deploy/observability` ships a
+> Grafana overview dashboard pinned to those metric names, Prometheus/Loki/Tempo datasource
+> provisioning, an OTel Collector pipeline (memory limiter, batching, cluster label, Tempo
+> exporter), single-binary Tempo and Loki references, and Promtail values that keep only the
+> Blackbox namespace and extract `trace_id` so log lines link into traces. The stack files
+> are offline references for development; production uses the upstream charts with object
+> storage. Tests in `tests/test_observability_assets.py` fail the dashboard when a panel
+> queries a metric the app no longer exports.
 
 > **Tracing (2026-11-13, Phase 4).** OpenTelemetry tracing is implemented as an optional
 > capability: `blackbox/observability/tracing.py` exposes a narrow facade (span, attributes,
@@ -425,7 +434,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + External Secrets + CI image/scan/SBOM done; Grafana/Loki/Tempo, GitOps, load/chaos, quotas, runbooks open |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + External Secrets + CI image/scan/SBOM done; GitOps, load/chaos, quotas, runbooks open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)
@@ -501,7 +510,8 @@ the retrieval stores are replaced there. Tenant offboarding and global quotas ar
 - [ ] Load test at target concurrency; failure injection
 - [x] Recording rules and SLO/error-budget alerts (`deploy/observability`)
 - [x] OpenTelemetry traces to an OTLP collector (optional `otel` extra; no-op when disabled)
-- [ ] Grafana dashboards and on-call runbooks
+- [x] Grafana overview dashboard + Prometheus/Loki/Tempo provisioning
+- [ ] Synthetic probes, on-call runbooks and error tracking
 - [ ] Multi-region failover and RTO/RPO drill
 - [x] Image scan/SBOM (CI: Trivy + SPDX)
 - [ ] Dependency and secret scanning in CI

@@ -1,0 +1,53 @@
+# Grafana Tempo single-binary configuration (development/small production).
+#
+# For a production deployment use the tempo-distributed Helm chart and object storage;
+# this local-storage config is the reference the collector exports to and is enough to
+# prove the pipeline end to end on one node.
+#
+# The collector sends OTLP/gRPC to :4317. Tempo's HTTP API on :3200 is the Grafana
+# datasource.
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: info
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Keep traces long enough for an incident review, short enough for local disk.
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus.monitoring.svc:9090/api/v1/write
+        send_exemplars: true
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

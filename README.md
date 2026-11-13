@@ -67,6 +67,10 @@ Phase 4 progress so far:
   (`http.request` → `chat.turn` → `graph.node.*` → `retrieval.retrieve` / `llm.complete` →
   `db.record_turn`). A no-op unless `OTEL_ENABLED=true` and the `otel` extra is installed;
   trace ids are bound into structured logs. OTLP/HTTP exports to a collector.
+- **Dashboards and stack configs:** [`deploy/observability`](deploy/observability) — a
+  Grafana overview dashboard pinned to the metric contract, Prometheus/Loki/Tempo
+  datasource provisioning, an OTel Collector pipeline, Tempo/Loki references and Promtail
+  values that extract `trace_id` for log↔trace links.
 - **AWS reference infrastructure:** [`deploy/terraform`](deploy/terraform) — VPC with flow
   logs, EKS (private endpoint by default, CMK-encrypted Secrets, tainted batch node group),
   Aurora PostgreSQL 16 with an RDS-managed password, ElastiCache Redis with TLS and
@@ -78,10 +82,9 @@ Phase 4 progress so far:
   password key.
 - **CI:** coverage gate, chart lint/render with kubeconform, Terraform fmt/validate + Trivy
   config, image build, Trivy scan and SPDX SBOM.
-Still open in Phase 4: Grafana dashboards and Loki/Tempo, GitOps/canary delivery, load and
-failure-injection suites, global per-tenant quotas, and the pen-test/secret-rotation
-checklists. OpenSearch/Qdrant are added to Terraform once the backend benchmark decides their
-shape.
+Still open in Phase 4: GitOps/canary delivery, load and failure-injection suites, global
+per-tenant quotas, and the pen-test/secret-rotation checklists. OpenSearch/Qdrant are added
+to Terraform once the backend benchmark decides their shape.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
