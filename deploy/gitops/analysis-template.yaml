@@ -1,0 +1,45 @@
+# Argo Rollouts AnalysisTemplate used by the canary steps.
+#
+# The Prometheus queries mirror the alert rules: they run against the same metric
+# names and the same `job="blackbox"` scrape target. A canary that breaches the SLO
+# fails the analysis and rolls back automatically.
+
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: blackbox-slo-analysis
+  namespace: blackbox
+spec:
+  metrics:
+    - name: error-ratio
+      interval: 1m
+      count: 3
+      successCondition: result[0] < 0.01
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            blackbox:http_error_ratio5m
+    - name: p95-latency
+      interval: 1m
+      count: 3
+      successCondition: result[0] < 8
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            blackbox:http_request_duration_p95_5m
+    - name: llm-error-ratio
+      interval: 1m
+      count: 3
+      successCondition: result[0] < 0.02
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(blackbox_llm_errors_total{job="blackbox"}[5m]))
+              /
+            clamp_min(sum(rate(blackbox_llm_calls_total{job="blackbox"}[5m])), 1e-9)

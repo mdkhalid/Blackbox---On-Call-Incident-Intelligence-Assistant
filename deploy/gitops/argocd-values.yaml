@@ -1,0 +1,128 @@
+# Values used by the Argo CD Application above. Copied from the production example
+# with the workload ownership split: the chart renders everything except the API
+# Deployment, which the Rollout in manifests/ owns.
+
+existingSecret: blackbox-secrets
+
+config:
+  ENV: prod
+  LOG_LEVEL: INFO
+  AUTH_ENABLED: "true"
+  AUTH_JWT_ISSUER: https://login.example.com/
+  AUTH_JWT_AUDIENCE: blackbox
+  TRUSTED_PROXY_CIDRS: 10.0.0.0/16
+  CORS_ORIGINS: https://blackbox.example.com
+  QDRANT_URL: http://qdrant.blackbox.svc:6333
+  OPENSEARCH_HOSTS: https://opensearch.blackbox.svc:9200
+  OPENSEARCH_INDEX: blackbox_chunks
+  TRACE_ARCHIVE_BACKEND: s3
+  TRACE_ARCHIVE_BUCKET: example-blackbox-traces
+  TRACE_ARCHIVE_REGION: eu-west-1
+  LLM_MAX_CONCURRENCY: "16"
+  OTEL_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc:4318
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/blackbox
+
+# The Rollout owns the API pods, so the chart must not create its own Deployment
+# or try to scale one.
+api:
+  enabled: false
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+
+worker:
+  replicaCount: 1
+  keda:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 20
+    address: blackbox-redis.example.cache.amazonaws.com:6379
+    tls: true
+    queueLength: 3
+    authenticationRef: blackbox-redis-auth
+
+migration:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+
+networkPolicy:
+  enabled: true
+  api:
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: ingress-nginx
+        ports:
+          - protocol: TCP
+            port: 8000
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: monitoring
+        ports:
+          - protocol: TCP
+            port: 8000
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: blackbox
+        ports:
+          - protocol: TCP
+            port: 5432
+          - protocol: TCP
+            port: 6379
+          - protocol: TCP
+            port: 9200
+          - protocol: TCP
+            port: 6333
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: monitoring
+        ports:
+          - protocol: TCP
+            port: 4318
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                - 169.254.169.254/32
+        ports:
+          - protocol: TCP
+            port: 443
+  worker:
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: blackbox
+        ports:
+          - protocol: TCP
+            port: 5432
+          - protocol: TCP
+            port: 6379
+          - protocol: TCP
+            port: 9200
+          - protocol: TCP
+            port: 6333
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                - 169.254.169.254/32
+        ports:
+          - protocol: TCP
+            port: 443

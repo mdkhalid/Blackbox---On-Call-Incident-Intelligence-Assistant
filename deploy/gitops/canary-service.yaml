@@ -1,0 +1,23 @@
+# Canary Service for the Argo Rollout. Argo Rollouts patches its selector with
+# `rollouts-pod-template-hash` during the rollout, so it only needs the stable
+# labels here. It is rendered by the chart's ServiceMonitor-less chart only when the
+# Rollout is applied; keep it in sync with the chart's Service ports.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-canary
+  namespace: blackbox
+  labels:
+    app.kubernetes.io/name: blackbox
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: blackbox
+    app.kubernetes.io/component: api

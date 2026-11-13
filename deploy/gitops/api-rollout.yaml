@@ -1,0 +1,126 @@
+# Argo Rollout for the Blackbox API: canary on the SLOs above, with header-based
+# access to the canary for manual verification before the weight steps.
+#
+# Install Argo Rollouts first:
+#   kubectl create namespace argo-rollouts
+#   kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+#
+# Apply together with analysis-template.yaml and canary-service.yaml:
+#   kubectl apply -n blackbox -f deploy/gitops/analysis-template.yaml
+#   kubectl apply -n blackbox -f deploy/gitops/canary-service.yaml
+#   kubectl apply -n blackbox -f deploy/gitops/api-rollout.yaml
+#
+# Promote or abort with:
+#   kubectl argo rollouts promote blackbox -n blackbox
+#   kubectl argo rollouts abort blackbox -n blackbox
+
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: blackbox
+  namespace: blackbox
+  labels:
+    app.kubernetes.io/name: blackbox
+    app.kubernetes.io/component: api
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: api
+  strategy:
+    canary:
+      canaryService: blackbox-canary
+      stableService: blackbox
+      trafficRouting:
+        nginx:
+          stableIngress: blackbox
+          annotationPrefix: nginx.ingress.kubernetes.io
+          additionalIngressAnnotations:
+            canary-by-header: X-Canary
+            canary-by-header-value: "true"
+      steps:
+        - setWeight: 10
+        - pause:
+            duration: 5m
+        - analysis:
+            templates:
+              - templateRef: blackbox-slo-analysis
+        - setWeight: 50
+        - pause:
+            duration: 5m
+        - analysis:
+            templates:
+              - templateRef: blackbox-slo-analysis
+        - setWeight: 100
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blackbox
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: placeholder-recompute-in-argocd
+    spec:
+      serviceAccountName: blackbox
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: api
+          image: ghcr.io/example/blackbox:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: blackbox-config
+            - secretRef:
+                name: blackbox-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 500m
+              memory: 768Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]

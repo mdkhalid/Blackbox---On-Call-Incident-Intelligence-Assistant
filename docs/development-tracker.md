@@ -98,6 +98,10 @@ Last updated: 2026-11-13
   pinned to the exported metric names, Prometheus/Loki/Tempo datasource provisioning,
   TraceQL/log panels, an OTel Collector pipeline (memory limiter + batch + Tempo exporter),
   single-binary Tempo/Loki references and Promtail values that extract `trace_id`.
+- **GitOps delivery reference** (`deploy/gitops`): Argo CD Application over the chart, an Argo
+  Rollouts canary with SLO analysis and canary Service, and a README covering promotion,
+  abort, blue-green, migration ordering and rollback. The chart gains `api.enabled` so the
+  Rollout can own the API pods without conflicting with the Deployment.
 - **CI:** coverage gate (80%, currently 81.2%), chart lint/render with kubeconform, Docker
   image build, Trivy scan and SPDX SBOM.
 - **Terraform reference** (`deploy/terraform`): a self-contained AWS root module — VPC with
@@ -155,12 +159,14 @@ infrastructure slices of Phase 4 are complete**.
 11. ✅ Dashboards and stack configs — Grafana overview dashboard over the metric contract,
     Prometheus/Loki/Tempo datasource provisioning, OTel Collector/Tempo/Loki references and
     Promtail values; `tests/test_observability_assets.py` pins panel queries to the registry.
+12. ✅ GitOps delivery reference — Argo CD Application, Argo Rollouts canary with SLO analysis,
+    canary Service and README; chart gains `api.enabled` so the Rollout owns the API pods;
+    `tests/test_gitops_assets.py`.
 
 **Next: finish Phase 4, in this order.**
-1. GitOps delivery with a canary/blue-green strategy (the migration Job already exists).
-2. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
-3. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
-4. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
+1. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
+2. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
+3. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
 
 **Carried over (infra-bound):**
 - Qdrant+OpenSearch vs OpenSearch-only benchmark — `scripts/benchmark_backends.py` needs
@@ -227,7 +233,7 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
 | Kubernetes/Helm/Terraform | 4 | ◐ | Helm chart complete (API, worker, migration Job, HPA, KEDA, PDB, NetPol, Ingress, ServiceMonitor); Terraform AWS reference complete and validate/scan-clean; OpenSearch/Qdrant pending the benchmark |
 | Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alerts + optional OpenTelemetry traces + Grafana dashboard/provisioning + collector/Tempo/Loki references done; synthetic probes and runbooks open |
-| CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM done; GitOps/canary open |
+| CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM, GitOps/canary reference done; live cluster validation open |
 | Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
 | Load/chaos suites | 5 | ⬜ | target SLO gates |
 
@@ -359,7 +365,8 @@ queue.
 - [x] CI: coverage (80% gate), image scan/SBOM (Trivy + Syft), image build, chart validation (mypy is done)
 - [x] CI: `terraform fmt -check`, `init -backend=false`, `validate` and Trivy config scan
 - [x] Migration Job (Helm pre-install/pre-upgrade `alembic upgrade head`)
-- [ ] GitOps + canary/blue-green delivery
+- [x] GitOps + canary/blue-green delivery (`deploy/gitops`: Argo CD Application, Argo Rollouts
+      canary with SLO analysis, canary Service, README)
 - [ ] Load tests at target concurrency; failure injection
 - [ ] Pen-test checklist and secret rotation
 - [ ] Global per-tenant LLM/token quotas (carried from Phase 2)
@@ -431,6 +438,8 @@ queue.
 | 2026-11-13 | Dashboards are tested against the metric registry | Accepted | A panel built on a metric the app no longer exports renders silently; the test fails the dashboard instead |
 | 2026-11-13 | Tempo/Loki/collector configs are single-binary references | Accepted | They prove the pipeline and validate offline; production uses the upstream charts with object storage |
 | 2026-11-13 | Promtail ships only the Blackbox namespace | Accepted | The agent should not label every pod in the cluster; a broader rollout needs a scoped namespace list |
+| 2026-11-13 | GitOps delivery keeps the chart as the platform layer | Accepted | The Rollout owns only the API pods; services, ingress, config and the migration hook stay chart-managed |
+| 2026-11-13 | Canary analysis uses the recorded SLO metrics | Accepted | The same queries as the alert rules; a canary fails on the same signal an operator would page on |
 | 2026-11-13 | EKS API endpoint is private by default | Accepted | The API server is the highest-value target; a VPN or bastion costs less than a public endpoint |
 | 2026-11-13 | Aurora uses the RDS-managed master password | Accepted | No credential in state or tfvars; pointing it at a CMK needs an extra grant for the RDS service role, documented as a follow-up |
 | 2026-11-13 | Two IRSA roles: app (S3 traces) and External Secrets (read secrets) | Accepted | A compromised pod should not be able to read the database password just because it can archive traces |

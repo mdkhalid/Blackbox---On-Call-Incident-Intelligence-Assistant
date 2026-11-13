@@ -1,0 +1,44 @@
+# Argo CD Application for the Blackbox Helm chart.
+#
+# The chart's API workload is disabled here (`api.enabled: false` in
+# argocd-values.yaml): the Argo Rollout in manifests/ owns the API pods, while the
+# chart still renders the Service, Ingress, ConfigMap, NetworkPolicy, PDB and the
+# migration Job. The worker Deployment remains chart-managed.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: blackbox
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/blackbox.git
+    targetRevision: main
+    path: deploy/helm/blackbox
+    helm:
+      valueFiles:
+        - ../../gitops/argocd-values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: blackbox
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      managedFieldsManagers:
+        - argocd-controller

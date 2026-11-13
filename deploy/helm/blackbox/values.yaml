@@ -101,6 +101,10 @@ secret:
 # ---- API ----------------------------------------------------------------------
 
 api:
+  # Set false only when the API workload is owned by an Argo Rollout in
+  # deploy/gitops (the chart still renders its Service, Ingress, ConfigMap,
+  # NetworkPolicy and probes). With it off, disable autoscaling/HPA too.
+  enabled: true
   replicaCount: 3
   containerPort: 8000
   terminationGracePeriodSeconds: 60
