@@ -102,6 +102,10 @@ Last updated: 2026-11-13
   Rollouts canary with SLO analysis and canary Service, and a README covering promotion,
   abort, blue-green, migration ordering and rollback. The chart gains `api.enabled` so the
   Rollout can own the API pods without conflicting with the Deployment.
+- **Load and failure-injection assets**: `scripts/load_test.py` (async, standard-library-only
+  SSE load harness reporting TTFT/turn percentiles, error rate and throughput) and
+  `deploy/chaos/*` (Chaos Mesh pod kill/failure and network delay experiments with success
+  criteria); `tests/test_load_test.py` and `tests/test_chaos_assets.py`.
 - **CI:** coverage gate (80%, currently 81.2%), chart lint/render with kubeconform, Docker
   image build, Trivy scan and SPDX SBOM.
 - **Terraform reference** (`deploy/terraform`): a self-contained AWS root module — VPC with
@@ -159,14 +163,15 @@ infrastructure slices of Phase 4 are complete**.
 11. ✅ Dashboards and stack configs — Grafana overview dashboard over the metric contract,
     Prometheus/Loki/Tempo datasource provisioning, OTel Collector/Tempo/Loki references and
     Promtail values; `tests/test_observability_assets.py` pins panel queries to the registry.
-12. ✅ GitOps delivery reference — Argo CD Application, Argo Rollouts canary with SLO analysis,
+12. ✅ GitOps delivery reference - Argo CD Application, Argo Rollouts canary with SLO analysis,
     canary Service and README; chart gains `api.enabled` so the Rollout owns the API pods;
     `tests/test_gitops_assets.py`.
+13. ✅ Load and failure-injection assets — `scripts/load_test.py` and `deploy/chaos/*`;
+    `tests/test_load_test.py` and `tests/test_chaos_assets.py`.
 
 **Next: finish Phase 4, in this order.**
-1. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
-2. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
-3. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
+1. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
+2. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
 
 **Carried over (infra-bound):**
 - Qdrant+OpenSearch vs OpenSearch-only benchmark — `scripts/benchmark_backends.py` needs
@@ -235,7 +240,7 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alerts + optional OpenTelemetry traces + Grafana dashboard/provisioning + collector/Tempo/Loki references done; synthetic probes and runbooks open |
 | CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM, GitOps/canary reference done; live cluster validation open |
 | Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
-| Load/chaos suites | 5 | ⬜ | target SLO gates |
+| Load/chaos suites | 5 | ◐ | load harness + Chaos Mesh experiments added; target-SLO run pending |
 
 ---
 
@@ -367,7 +372,7 @@ queue.
 - [x] Migration Job (Helm pre-install/pre-upgrade `alembic upgrade head`)
 - [x] GitOps + canary/blue-green delivery (`deploy/gitops`: Argo CD Application, Argo Rollouts
       canary with SLO analysis, canary Service, README)
-- [ ] Load tests at target concurrency; failure injection
+- [x] Load tests at target concurrency; failure injection (assets + success criteria; run pending)
 - [ ] Pen-test checklist and secret rotation
 - [ ] Global per-tenant LLM/token quotas (carried from Phase 2)
 
@@ -440,6 +445,8 @@ queue.
 | 2026-11-13 | Promtail ships only the Blackbox namespace | Accepted | The agent should not label every pod in the cluster; a broader rollout needs a scoped namespace list |
 | 2026-11-13 | GitOps delivery keeps the chart as the platform layer | Accepted | The Rollout owns only the API pods; services, ingress, config and the migration hook stay chart-managed |
 | 2026-11-13 | Canary analysis uses the recorded SLO metrics | Accepted | The same queries as the alert rules; a canary fails on the same signal an operator would page on |
+| 2026-11-13 | Load harness is standard-library only | Accepted | No new dependency in the default install; CI and operators can run it anywhere Python runs |
+| 2026-11-13 | Chaos experiments are namespace-scoped references | Accepted | They are runbooks in YAML form; nothing is applied by default |
 | 2026-11-13 | EKS API endpoint is private by default | Accepted | The API server is the highest-value target; a VPN or bastion costs less than a public endpoint |
 | 2026-11-13 | Aurora uses the RDS-managed master password | Accepted | No credential in state or tfvars; pointing it at a CMK needs an extra grant for the RDS service role, documented as a follow-up |
 | 2026-11-13 | Two IRSA roles: app (S3 traces) and External Secrets (read secrets) | Accepted | A compromised pod should not be able to read the database password just because it can archive traces |

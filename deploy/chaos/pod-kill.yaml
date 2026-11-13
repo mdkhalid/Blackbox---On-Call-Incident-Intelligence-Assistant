@@ -1,0 +1,32 @@
+# Chaos Mesh experiments for Blackbox.
+#
+# Install Chaos Mesh first (https://chaos-mesh.org/docs/quick-start/), then apply:
+#   kubectl apply -f deploy/chaos/
+#
+# Each experiment is short-lived and scoped to the `blackbox` namespace. Watch the
+# SLOs while it runs:
+#   - BlackboxApiDown / BlackboxErrorBudgetFastBurn must not fire
+#   - blackbox:http_request_duration_p95_5m should stay below 8s
+#   - BlackboxJobQueueBacklog should clear once the experiment ends
+#
+# Abort everything with:
+#   kubectl delete -f deploy/chaos/
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: blackbox-api-pod-kill
+  namespace: blackbox
+  labels:
+    app.kubernetes.io/name: blackbox
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: api
+  duration: 30s
+  gracePeriod: 0

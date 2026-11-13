@@ -1,0 +1,22 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: blackbox-provider-latency
+  namespace: blackbox
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: api
+  delay:
+    latency: 2s
+    correlation: "50"
+    jitter: 500ms
+  direction: to
+  externalTargets:
+    - api.openai.com
+  duration: 5m

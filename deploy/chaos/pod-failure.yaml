@@ -1,0 +1,15 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: blackbox-api-pod-failure
+  namespace: blackbox
+spec:
+  action: pod-failure
+  mode: one
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: api
+  duration: 2m

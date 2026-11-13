@@ -1,0 +1,22 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: blackbox-redis-latency
+  namespace: blackbox
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: api
+  delay:
+    latency: 100ms
+    correlation: "100"
+    jitter: 20ms
+  direction: to
+  externalTargets:
+    - blackbox-redis.example.cache.amazonaws.com
+  duration: 5m

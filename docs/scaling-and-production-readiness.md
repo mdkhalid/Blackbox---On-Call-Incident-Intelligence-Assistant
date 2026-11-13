@@ -3,8 +3,8 @@
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
 jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference,
 image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, Grafana/
-Loki/Tempo configs, GitOps/canary reference, External Secrets and CI image/security gates
-landed; load/chaos, quotas and the runbooks remain.**
+Loki/Tempo configs, GitOps/canary reference, load/chaos assets, External Secrets and CI
+image/security gates landed; quotas and the runbooks remain.**
 This document is the production contract for the codebase: target architecture, capacity
 model, tenancy, retrieval migration, runtime, operations and the phased path from the current
 single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
@@ -434,7 +434,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + External Secrets + CI image/scan/SBOM done; load/chaos, quotas, runbooks open |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + load/chaos assets + External Secrets + CI image/scan/SBOM done; quotas, runbooks open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)

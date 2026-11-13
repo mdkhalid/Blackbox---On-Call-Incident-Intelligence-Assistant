@@ -74,6 +74,9 @@ Phase 4 progress so far:
 - **GitOps delivery:** [`deploy/gitops`](deploy/gitops) — Argo CD Application, an Argo
   Rollouts canary with SLO analysis, a canary Service and a README covering promotion,
   abort, blue-green, migration ordering and rollback.
+- **Load and failure injection:** [`scripts/load_test.py`](scripts/load_test.py) (async SSE
+  load harness reporting TTFT/turn percentiles, error rate and throughput) and
+  [`deploy/chaos`](deploy/chaos) (Chaos Mesh experiments with success criteria).
 - **AWS reference infrastructure:** [`deploy/terraform`](deploy/terraform) — VPC with flow
   logs, EKS (private endpoint by default, CMK-encrypted Secrets, tainted batch node group),
   Aurora PostgreSQL 16 with an RDS-managed password, ElastiCache Redis with TLS and
@@ -85,9 +88,8 @@ Phase 4 progress so far:
   password key.
 - **CI:** coverage gate, chart lint/render with kubeconform, Terraform fmt/validate + Trivy
   config, image build, Trivy scan and SPDX SBOM.
-Still open in Phase 4: load and failure-injection suites, global per-tenant quotas, and the
-pen-test/secret-rotation checklists. OpenSearch/Qdrant are added to Terraform once the backend
-benchmark decides their shape.
+Still open in Phase 4: global per-tenant quotas, and the pen-test/secret-rotation checklists.
+OpenSearch/Qdrant are added to Terraform once the backend benchmark decides their shape.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
