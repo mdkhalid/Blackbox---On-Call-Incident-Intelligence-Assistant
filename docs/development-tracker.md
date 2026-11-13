@@ -502,6 +502,8 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-13 | Phase 4: Terraform CI job (`fmt -check`, `init -backend=false`, `validate`, Trivy config) | ✅ | `b5b8658` |
 | 2026-11-13 | Phase 4: optional OpenTelemetry tracing — no-op facade, `otel` extra, spans for HTTP/chat/graph/retrieval/LLM/DB, trace id in logs | ✅ | `43683cc` |
 | 2026-11-13 | Phase 4: chart OTEL env + prod collector endpoint/NetworkPolicy egress; image installs the `otel` extra | ✅ | `43683cc` |
+| 2026-11-13 | Phase 4: Grafana overview dashboard + Prometheus/Loki/Tempo datasource provisioning | ✅ | `6a9af95` |
+| 2026-11-13 | Phase 4: OTel Collector/Tempo/Loki configs + Promtail values (`trace_id` extraction); dashboard queries tested against the registry | ✅ | `6a9af95` |
 | 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | `18c0266` |
 
 ## 12. Update protocol
