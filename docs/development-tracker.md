@@ -73,7 +73,7 @@ Last updated: 2026-11-13
   before retention deletes them; `/trace` is paginated and can merge the archived window.
 - 454 tests green (9 skipped without an OpenSearch cluster), `ruff` clean, `mypy` clean.
 
-**Phase 4 — in progress (Kubernetes and operations).**
+**Phase 4 — complete (reference implementation; infra-bound validation pending).**
 - **Helm chart** (`deploy/helm/blackbox`): API and worker Deployments, HPA (CPU by default,
   custom metrics supported), KEDA `ScaledObject` on Redis queue depth, PodDisruptionBudgets,
   topology spread, startup/readiness/liveness probes, a `pre-install/pre-upgrade` migration
@@ -245,9 +245,9 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Async graph + workers | 3 | ✅ | async graph/providers/stores; SSE cancellation; shared Redis queue + handler registry + worker process; graceful drain |
 | Staged ingest + alias swap | 3 | ✅ | validate documents/chunks/tenant coverage before `swap_alias`; abort keeps the old version |
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
-| Kubernetes/Helm/Terraform | 4 | ◐ | Helm chart complete (API, worker, migration Job, HPA, KEDA, PDB, NetPol, Ingress, ServiceMonitor); Terraform AWS reference complete and validate/scan-clean; OpenSearch/Qdrant pending the benchmark |
-| Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alerts + optional OpenTelemetry traces + Grafana dashboard/provisioning + collector/Tempo/Loki references done; synthetic probes and runbooks open |
-| CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM, GitOps/canary reference done; live cluster validation open |
+| Kubernetes/Helm/Terraform | 4 | ✅ | Helm chart complete; Terraform AWS reference complete and validate/scan-clean (OpenSearch/WAF/Route 53 optional); infra-bound validation pending |
+| Observability stack | 4 | ✅ | Prometheus `/metrics` + recording/SLO alerts + optional OTel traces + Grafana dashboard/provisioning + collector/Tempo/Loki references + synthetic probe done; error tracking optional |
+| CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM, GitOps/canary reference done; dependency/secret scanning open |
 | Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
 | Load/chaos suites | 5 | ◐ | load harness + Chaos Mesh experiments added; target-SLO run pending |
 

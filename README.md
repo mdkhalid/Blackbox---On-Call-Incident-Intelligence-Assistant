@@ -43,7 +43,8 @@ code) are collected in
 fixed**, including the critical one where the SSE token stream exposed an answer before the
 ground check had run.
 
-Current production phase: **Phase 4 (Kubernetes and operations) — in progress**. Phase 3
+Current production phase: **Phase 4 (Kubernetes and operations) — complete as a reference
+implementation**. Phase 3
 (async runtime and jobs) is complete: async store interfaces (`asearch`), SSE cancellation on
 client disconnect, a shared Redis job store with a handler registry and a dedicated worker
 process (`python -m blackbox.worker`), staged ingest with validation before the alias swap,

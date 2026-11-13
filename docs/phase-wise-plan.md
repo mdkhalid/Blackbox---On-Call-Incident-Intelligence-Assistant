@@ -12,7 +12,7 @@ The original assignment is complete. Further work is tracked separately:
   architecture, capacity/SLOs, tenancy, retrieval migration, Kubernetes and multi-region plan.
 - [`development-tracker.md`](development-tracker.md) — living checklist, status dashboard,
   decisions and change log. Update it with every production PR.
-Current production state: **Phase 4 (Kubernetes and operations) in progress**. Phase 3
+Current production state: **Phase 4 (Kubernetes and operations) complete as a reference implementation**. Phase 3
 (async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package, the AWS
 Terraform reference (EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA + optional OpenSearch/
 WAF/Route 53), unprivileged image, Prometheus metrics with SLO/error-budget alert rules,

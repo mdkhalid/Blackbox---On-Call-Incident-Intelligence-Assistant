@@ -1,7 +1,7 @@
 # Scaling & Production Readiness — Blackbox
 
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
-jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference
+jobs); Phase 4 (Kubernetes and operations) complete as a reference implementation — Helm, the Terraform AWS reference
 (+ optional OpenSearch/WAF/Route 53), image hardening, Prometheus metrics/SLO alerts,
 optional OpenTelemetry tracing, Grafana/Loki/Tempo configs, GitOps/canary reference,
 load/chaos assets, global per-tenant quotas, pen-test checklist, secret-rotation runbook,
@@ -438,7 +438,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + load/chaos assets + global per-tenant quotas + pen-test/rotation runbooks + External Secrets + CI image/scan/SBOM done; Terraform backend shapes open |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ✅ Done (reference implementation; infra-bound validation pending) | Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + load/chaos assets + global per-tenant quotas + pen-test/rotation runbooks + External Secrets + CI image/scan/SBOM done; Terraform backend shapes open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)
