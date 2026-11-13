@@ -1,0 +1,32 @@
+{{- if .Values.worker.keda.enabled }}
+{{- if not .Values.worker.keda.address }}
+{{- fail "worker.keda.address is required when worker.keda.enabled is true" }}
+{{- end }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "blackbox.fullname" . }}-worker
+  labels:
+    {{- include "blackbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: {{ include "blackbox.fullname" . }}-worker
+  minReplicaCount: {{ .Values.worker.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicaCount }}
+  pollingInterval: {{ .Values.worker.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.worker.keda.cooldownPeriod }}
+  triggers:
+    {{- range .Values.worker.keda.queueKinds }}
+    - type: redis
+      metadata:
+        address: {{ $.Values.worker.keda.address | quote }}
+        listName: {{ printf "blackbox:jobs:pending:%s" . | quote }}
+        listLength: {{ $.Values.worker.keda.queueLength | quote }}
+        enableTLS: {{ $.Values.worker.keda.tls | quote }}
+      {{- with $.Values.worker.keda.authenticationRef }}
+      authenticationRef:
+        name: {{ . }}
+      {{- end }}
+    {{- end }}
+{{- end }}

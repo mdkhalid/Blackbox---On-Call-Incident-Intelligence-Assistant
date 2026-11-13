@@ -1,0 +1,146 @@
+# Prometheus recording and alerting rules for Blackbox.
+#
+# Install with:
+#   kubectl apply -n monitoring -f deploy/observability/prometheus-rules.yaml
+#
+# The rules assume the scrape job is named `blackbox` (ServiceMonitor or a static
+# scrape config). Adjust `job` below if your Prometheus names it differently.
+
+groups:
+  - name: blackbox-recording
+    interval: 30s
+    rules:
+      - record: blackbox:http_error_ratio5m
+        expr: |
+          sum(rate(blackbox_http_requests_total{status=~"5.."}[5m]))
+            /
+          sum(rate(blackbox_http_requests_total[5m]))
+      - record: blackbox:http_error_ratio1h
+        expr: |
+          sum(rate(blackbox_http_requests_total{status=~"5.."}[1h]))
+            /
+          sum(rate(blackbox_http_requests_total[1h]))
+      - record: blackbox:http_error_ratio6h
+        expr: |
+          sum(rate(blackbox_http_requests_total{status=~"5.."}[6h]))
+            /
+          sum(rate(blackbox_http_requests_total[6h]))
+      - record: blackbox:http_request_duration_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(blackbox_http_request_duration_seconds_bucket{path!="/metrics"}[5m])) by (le)
+          )
+      - record: blackbox:retrieval_duration_p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(blackbox_retrieval_duration_seconds_bucket{stage="total"}[5m])) by (le)
+          )
+      - record: blackbox:llm_error_ratio5m
+        expr: |
+          sum(rate(blackbox_llm_errors_total[5m]))
+            /
+          clamp_min(sum(rate(blackbox_llm_calls_total[5m])), 0.001)
+
+  - name: blackbox-alerts
+    rules:
+      - alert: BlackboxApiDown
+        expr: absent(blackbox_build_info)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: No Blackbox API replica is being scraped.
+          description: >-
+            `blackbox_build_info` has disappeared from Prometheus. Either every API
+            pod is down or the scrape target is gone. Check Deployments, the Service
+            endpoints and the ServiceMonitor.
+
+      - alert: BlackboxErrorBudgetFastBurn
+        # 99.9% availability ⇒ 0.1% error budget. 14.4× burn over 5m and 1h is the
+        # standard multi-window fast-burn pair; both must agree to page.
+        expr: |
+          blackbox:http_error_ratio5m > (14.4 * 0.001)
+            and
+          blackbox:http_error_ratio1h > (14.4 * 0.001)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Blackbox is burning its monthly error budget 14.4× too fast.
+          description: >-
+            5m error ratio {{ $value | humanizePercentage }}. Page the on-call and
+            check provider 5xx, Postgres/Redis availability and the error tracker.
+
+      - alert: BlackboxErrorBudgetSlowBurn
+        expr: blackbox:http_error_ratio6h > (6 * 0.001)
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Blackbox is burning its monthly error budget 6× too fast.
+          description: >-
+            6h error ratio {{ $value | humanizePercentage }}. Investigate before it
+            becomes a page.
+
+      - alert: BlackboxAnswerLatencySloBreach
+        # SLO: complete answer p95 ≤ 8s. The /api/chat request duration includes the
+        # whole SSE stream, so this measures the user-visible turn, not just routing.
+        expr: blackbox:http_request_duration_p95_5m > 8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Blackbox turn p95 latency is above the 8s SLO.
+          description: >-
+            p95 {{ $value }}s over 5m. Check LLM latency, provider 429s and retrieval
+            stage timings (blackbox_retrieval_duration_seconds).
+
+      - alert: BlackboxRetrievalSloBreach
+        expr: blackbox:retrieval_duration_p95_5m > 0.4
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Retrieval p95 is above the 400ms SLO.
+          description: >-
+            p95 {{ $value }}s. Check dense/sparse store health, cache hit ratio
+            (blackbox_retrieval_cache_events_total) and OpenSearch/Qdrant saturation.
+
+      - alert: BlackboxLlmErrorRateHigh
+        expr: blackbox:llm_error_ratio5m > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 5% of LLM calls are failing after retries.
+          description: >-
+            Check the provider status page, quota/429s and the circuit breaker. The
+            graph degrades to an honest failure, but the answer rate drops.
+
+      - alert: BlackboxJobQueueBacklog
+        expr: max by (kind) (blackbox_job_queue_depth) > 25
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Background job queue {{ $labels.kind }} is backing up.
+          description: >-
+            {{ $value }} pending jobs. Check the worker deployment, KEDA scaling and
+            job failures (job status endpoints / worker logs).
+
+      - alert: BlackboxNoSseTraffic
+        # A busy service with zero active streams for ten minutes is more likely a
+        # scrape/ingress problem than a genuinely idle product; treat it as a signal,
+        # not a page.
+        expr: |
+          sum(blackbox_sse_active_streams) == 0
+            and
+          sum(rate(blackbox_http_requests_total{path="/api/chat"}[10m])) == 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: No chat streams have started in ten minutes.
+          description: Verify the ingress and the client; this alert is informational.

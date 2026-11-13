@@ -1,0 +1,14 @@
+apiVersion: v2
+name: blackbox
+description: Blackbox — on-call incident intelligence assistant (API, worker, jobs, SSE)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - incident-response
+  - rag
+  - fastapi
+  - sse
+maintainers:
+  - name: Blackbox

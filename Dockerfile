@@ -20,7 +20,18 @@ RUN pip install --upgrade pip && pip install -e ".[rag,db]"
 
 COPY seed ./seed
 COPY scripts ./scripts
+COPY alembic.ini ./
+COPY alembic ./alembic
 COPY .env.example ./.env.example
+
+# Run unprivileged. The chart sets the same uid/gid, so a read-only root filesystem
+# or a restricted PodSecurity policy can be applied without a chown surprise.
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /app/data \
+    && chown -R app:app /app
+
+USER 10001:10001
 
 EXPOSE 8000
 

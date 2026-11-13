@@ -4,7 +4,7 @@ On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
 Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅, Phase 9 ✅. **All phases complete.**
 
-Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **454 passing** (9 skipped without a live OpenSearch cluster), `ruff` clean, `mypy` clean.
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **465 passing** (9 skipped without a live OpenSearch cluster), `ruff` clean, `mypy` clean.
 
 ## Production Program (post-assignment)
 The original assignment is complete. Further work is tracked separately:
@@ -12,9 +12,12 @@ The original assignment is complete. Further work is tracked separately:
   architecture, capacity/SLOs, tenancy, retrieval migration, Kubernetes and multi-region plan.
 - [`development-tracker.md`](development-tracker.md) — living checklist, status dashboard,
   decisions and change log. Update it with every production PR.
-Current production state: **Phase 3 complete (async runtime and jobs); Phase 4
-(Kubernetes and operations) next**. Phase 2 open items are the live-cluster backend
-benchmark and global quotas (deferred to Phase 4).
+Current production state: **Phase 4 (Kubernetes and operations) in progress**. Phase 3
+(async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package,
+unprivileged image, Prometheus metrics with SLO/error-budget alert rules, and the CI
+coverage/image/SBOM gates; Terraform, OpenTelemetry, Grafana/Loki/Tempo, GitOps, load/chaos
+and the runbooks remain. Phase 2 open items are the live-cluster backend benchmark and global
+quotas (Phase 4).
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -400,7 +403,7 @@ re-runnable eval scripts.
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
-pytest -q                            # 454 tests
+pytest -q                            # 465 tests
 python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep --tie-break-sweep
 python -m blackbox.eval.groundedness_eval --write
 uvicorn blackbox.main:app --reload   # then POST /api/ingest and open /

@@ -28,6 +28,7 @@ from blackbox.llm.base import LLMProvider, LLMResponse
 from blackbox.logging_setup import get_logger
 from blackbox.memory.tokens import count_tokens
 from blackbox.observability.callbacks import log_llm_call
+from blackbox.observability.metrics import record_llm_error, record_retrieval
 from blackbox.retrieval.models import RetrievalResult
 
 logger = get_logger(__name__)
@@ -60,6 +61,7 @@ async def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
         )
         chunks = [_serialize_chunk(hit) for hit in result.chunks]
         timings.update(result.timings)
+        record_retrieval(result.timings)
     except Exception as exc:  # noqa: BLE001 - a store failure must become an honest answer
         error = f"retrieval_failed:{type(exc).__name__}"
         logger.warning("retrieve_node_failed", query=query[:120], error=error)
@@ -113,6 +115,7 @@ async def grade_node(state: GraphState, deps: GraphDeps) -> dict:
     call_started = time.perf_counter()
     response = await _acomplete(
         deps.llm,
+        node="grade",
         system=GRADE_SYSTEM,
         prompt=grade_prompt(query, state.get("chunks") or []),
         model=deps.settings.grading_model,
@@ -174,6 +177,7 @@ async def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
     call_started = time.perf_counter()
     response = await _acomplete(
         deps.llm,
+        node="rewrite",
         system=REWRITE_SYSTEM,
         prompt=rewrite_prompt(query, attempt),
         model=deps.settings.rewrite_model,
@@ -264,6 +268,7 @@ async def generate_node(state: GraphState, deps: GraphDeps) -> dict:
     call_started = time.perf_counter()
     response = await _acomplete(
         deps.llm,
+        node="generate",
         system=GENERATE_SYSTEM,
         prompt=prompt,
         model=deps.settings.generation_model,
@@ -483,16 +488,22 @@ async def _aretrieve(
     return RetrievalResult(chunks=list(chunks))
 
 
-async def _acomplete(llm: Any, **kwargs: Any) -> LLMResponse:
+async def _acomplete(llm: Any, *, node: str, **kwargs: Any) -> LLMResponse:
     """Call the provider's async entry point, falling back to a worker thread.
 
     A provider that only implements the synchronous `complete` still works, but it
-    occupies a worker thread for the duration of the call.
+    occupies a worker thread for the duration of the call. A failure after retries
+    is counted against the node that asked, then re-raised: the graph's existing
+    error path still decides what the user sees.
     """
     acomplete = getattr(llm, "acomplete", None)
-    if callable(acomplete):
-        return await acomplete(**kwargs)
-    return await asyncio.to_thread(llm.complete, **kwargs)
+    try:
+        if callable(acomplete):
+            return await acomplete(**kwargs)
+        return await asyncio.to_thread(llm.complete, **kwargs)
+    except Exception:
+        record_llm_error(node)
+        raise
 
 
 def _fit_chunks(chunks: list[dict], token_cap: int) -> list[dict]:

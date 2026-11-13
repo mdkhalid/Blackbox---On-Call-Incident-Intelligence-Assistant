@@ -1,7 +1,9 @@
 # Scaling & Production Readiness — Blackbox
 
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
-jobs); Phase 4 (Kubernetes and operations) next.** This document
+jobs); Phase 4 (Kubernetes and operations) in progress — Helm, image hardening, Prometheus
+metrics/SLO alerts and CI image/security gates landed; Terraform, OpenTelemetry, Grafana/
+Loki/Tempo, GitOps, load/chaos and the runbooks remain.** This document
 is the production contract for the codebase: target architecture, capacity model, tenancy,
 retrieval migration, runtime, operations and the phased path from the current single-node demo
 to an org-wide, multi-region service. It is deliberately explicit about what is **implemented
@@ -19,7 +21,7 @@ The current application is a correct, measured, single-process corrective-RAG se
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
 - Local Chroma for dense vectors; in-process BM25; Redis-shared rate limits and Postgres
   advisory turn locks; JWT/RBAC with tenant-scoped conversations.
-- 454 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- 465 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
 
 It is suitable for a demo or a small internal team. It is **not** yet horizontally scalable
 as written: the dense retrieval index is node-local (Qdrant and OpenSearch adapters are
@@ -301,6 +303,19 @@ EKS, Aurora PostgreSQL, ElastiCache Redis, SQS/MSK, OpenSearch, Qdrant on EKS (o
 S3, KMS, WAF, Route 53, Secrets Manager, CloudWatch. Two regions; per-region stores; global DNS
 with tenant affinity.
 
+> **State (2026-11-13, Phase 4).** The Kubernetes half of this section is implemented as a
+> chart in [`deploy/helm/blackbox`](../deploy/helm/blackbox): API and worker Deployments,
+> HPA and KEDA, PodDisruptionBudgets, topology spread, SSE-correct Ingress annotations,
+> NetworkPolicy templates, a ServiceMonitor, and an `alembic upgrade head` Job that runs as a
+> pre-install/pre-upgrade hook. The image runs as uid/gid 10001. The Terraform reference is
+> **not** written yet; the chart is provider-agnostic and expects managed Postgres/Redis and
+> external Qdrant/OpenSearch.
+>
+> Runtime warm-up is still open: readiness calls `/health/ready` (which checks the
+> conversation store) but does not build the retriever or LLM, so the first chat after a pod
+> starts pays cold start. The chart's startup probe allows up to 60s, which is enough to warm
+> on startup once that is wired.
+
 ---
 
 ## 10. Security
@@ -334,6 +349,21 @@ with tenant affinity.
   index lag, replica lag.
 - Error tracking with release/version tags.
 - Synthetic probes per region; read-only smoke through retrieval and SSE.
+
+> **State (2026-11-13, Phase 4).** The metrics half is implemented. `GET /metrics` serves a
+> dependency-free Prometheus exposition with bounded labels: HTTP requests/duration by route
+> template, `blackbox_sse_active_streams`, retrieval stage histograms (dense, sparse, fuse,
+> rerank, cache, total), LLM calls/duration/tokens/errors by graph node, and job queue depth
+> by kind. The job queue gauge is read at scrape time so it reflects work drained by another
+> replica. `deploy/observability/prometheus-rules.yaml` adds recording rules and alerts for
+> the documented SLOs: absent-service, 14.4×/6× multi-window error-budget burn, answer p95,
+> retrieval p95, LLM error ratio and queue backlog. The HTTP path label is the route template,
+> never a conversation id; tenant-level cost must aggregate from the existing counters rather
+> than add an unbounded label.
+>
+> Still open: OpenTelemetry spans (HTTP → graph node → store → LLM → DB), Grafana dashboards,
+> Loki/Tempo and error tracking. The metric names are the contract the dashboards will build
+> against.
 
 ---
 
@@ -376,7 +406,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ⬜ Planned |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Prometheus/SLO alerts + CI image/scan/SBOM done; Terraform, OTel, Grafana/Loki/Tempo, GitOps, load/chaos, runbooks open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)
@@ -448,10 +478,13 @@ the retrieval stores are replaced there. Tenant offboarding and global quotas ar
 - [ ] SSE drain and graceful shutdown tested; idempotency tested.
 
 ### Operations
-- [ ] HPA/KEDA and PDBs; load test at target concurrency.
-- [ ] Dashboards/alerts/SLO burn; on-call runbooks.
-- [ ] Multi-region failover and RTO/RPO drill.
-- [ ] Image scan/SBOM; dependency and secret scanning.
+- [x] HPA/KEDA and PDBs (chart: HPA on CPU with custom-metric override, KEDA on Redis queue depth)
+- [ ] Load test at target concurrency; failure injection
+- [x] Recording rules and SLO/error-budget alerts (`deploy/observability`)
+- [ ] Grafana dashboards and on-call runbooks
+- [ ] Multi-region failover and RTO/RPO drill
+- [x] Image scan/SBOM (CI: Trivy + SPDX)
+- [ ] Dependency and secret scanning in CI
 
 ---
 

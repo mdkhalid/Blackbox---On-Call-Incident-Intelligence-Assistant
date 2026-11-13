@@ -9,7 +9,7 @@ next.
 - **Open bugs & scaling gaps (audit):** [`code-audit-findings.md`](code-audit-findings.md)
 - **Status legend:** ✅ done · ◐ in progress · ⬜ not started · ⚠ blocked
 
-Last updated: 2026-11-12
+Last updated: 2026-11-13
 
 ---
 
@@ -18,12 +18,13 @@ Last updated: 2026-11-12
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 454 passing, `ruff` clean, `mypy` clean |
+| Tests | 465 passing, `ruff` clean, `mypy` clean, coverage 80.6% (gate 80%) |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
 | Stores | Postgres/SQLite conversation + entity store |
-| Deployment | Docker Compose (two-replica smoke passing) |
+| Deployment | Docker Compose (two-replica smoke) + Helm chart (`deploy/helm/blackbox`) |
+| Observability | Prometheus `/metrics` + recording/alert rules; OTel/Grafana/Loki/Tempo pending |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
 ## 2. Current status (2026-11-12)
@@ -71,51 +72,81 @@ Last updated: 2026-11-12
   before retention deletes them; `/trace` is paginated and can merge the archived window.
 - 454 tests green (9 skipped without an OpenSearch cluster), `ruff` clean, `mypy` clean.
 
-**Next:** Phase 4 — Kubernetes and operations (Helm, Terraform, observability, CI image
-build, load tests).
+**Phase 4 — in progress (Kubernetes and operations).**
+- **Helm chart** (`deploy/helm/blackbox`): API and worker Deployments, HPA (CPU by default,
+  custom metrics supported), KEDA `ScaledObject` on Redis queue depth, PodDisruptionBudgets,
+  topology spread, startup/readiness/liveness probes, a `pre-install/pre-upgrade` migration
+  Job, optional SSE-correct Ingress, NetworkPolicy templates, ServiceMonitor and a Helm test.
+  `helm lint` and `helm template` are clean for both the default and prod-example values.
+- **Image hardening:** the Dockerfile now creates uid/gid 10001 and runs unprivileged; it
+  ships `alembic.ini` and `alembic/` so the migration Job works.
+- **Metrics:** dependency-free Prometheus registry (`blackbox/observability/metrics.py`) and
+  `/metrics`; HTTP route-template labels, SSE active gauge, retrieval stage histograms, LLM
+  calls/duration/tokens/errors, job queue depth. `/metrics` is rate-limit exempt and meant to
+  be NetworkPolicy-restricted (Prometheus cannot carry a user JWT).
+- **Alerting:** recording rules plus multi-window error-budget burn and SLO alerts
+  (`deploy/observability/prometheus-rules.yaml`).
+- **CI:** coverage gate (80%, currently 80.6%), chart lint/render with kubeconform, Docker
+  image build, Trivy scan and SPDX SBOM.
+- **Bug fixed:** `python -m blackbox.worker` imported the empty routes package, not the
+  operations module, so a fresh worker registered no job handlers. It now imports
+  `blackbox.api.routes.operations`; a subprocess test proves every job kind is registered.
+- 465 tests green, `ruff`/`mypy` clean.
+
+**Next:** finish Phase 4 — Terraform reference (EKS/Aurora/ElastiCache/S3/KMS), OpenTelemetry
+traces, Grafana dashboards + Loki/Tempo, GitOps/canary delivery, load and failure-injection
+suites, and the pen-test/secret-rotation checklist.
 **Not started:** Phase 5 multi-region/DR.
 
 ### Resume point (next session)
 
-State: clean working tree; **454 tests green** (9 skipped: live-cluster OpenSearch tests),
-`ruff` clean, `mypy` clean (98 source files); Docker available.
+State: **465 tests green** (9 skipped: live-cluster OpenSearch tests), `ruff` clean, `mypy`
+clean (100 source files), coverage 80.6% (gate 80%); Docker CLI present but the daemon was
+not running during this session, so CI images were validated by the workflow definition, not
+a local build. Helm 3.16 was used to lint/render the chart.
 Phase 1 (control plane), the audit remediation, Phase 2 (retrieval migration and tenant
-isolation) and **Phase 3 (async runtime and jobs) are complete**.
+isolation), Phase 3 (async runtime and jobs) and the **deployment/observability slice of
+Phase 4 are complete**.
 
-**Phase 3 delivered (all committed):**
-1. ✅ Async stores — `asearch` in `blackbox/retrieval/stores.py` and adapters; hybrid legs
-   run concurrently.
-2. ✅ SSE cancellation — `stream_with_disconnect` in `blackbox/api/sse.py`, wired into
-   `blackbox/api/routes/chat.py`; tests in `tests/test_sse_cancellation.py`.
-3. ✅ Shared queue — `blackbox/api/jobs.py` (`RedisJobStore`, `register_handler`),
-   `blackbox/worker.py`; tests in `tests/test_shared_jobs.py`.
-4. ✅ Staged ingest — `blackbox/ingestion/staged.py` (validate, then `swap_alias`; abort
-   keeps the old version serving); tests in `tests/test_staged_ingest.py`.
-5. ✅ Trace split — `blackbox/api/trace_archive.py`, `blackbox/api/retention.py`,
-   paginated `/trace`; tests in `tests/test_trace_archive.py` and
-   `tests/test_trace_pagination.py`.
+**Phase 4 delivered:**
+1. ✅ Metrics — `blackbox/observability/metrics.py`, `/metrics` route, HTTP/SSE/retrieval/LLM/
+   queue instrumentation; tests in `tests/test_metrics.py`.
+2. ✅ Helm chart — `deploy/helm/blackbox` (API, worker, migration Job, HPA, KEDA, PDB,
+   NetworkPolicy, Ingress, ServiceMonitor, probes, topology spread, per-component README).
+3. ✅ Image hardening — unprivileged uid/gid 10001; `alembic.ini` + migrations in the image.
+4. ✅ Alerting — `deploy/observability/prometheus-rules.yaml` (recording rules, multi-window
+   burn, latency/retrieval/LLM/backlog alerts) and metric contract in its README.
+5. ✅ CI — coverage gate, chart lint/render + kubeconform, image build, Trivy, SPDX SBOM.
+6. ✅ Worker registration fix — `blackbox/worker.py` now imports the operations module;
+   `tests/test_worker_entrypoint.py` guards it in a fresh interpreter.
 
-**Next: Phase 4 — start with the deployment package, in this order.**
-1. Helm chart: API deployment, worker deployment (`python -m blackbox.worker`), HPA/KEDA,
-   PodDisruptionBudget, NetworkPolicies, and an initContainer/Job for `alembic upgrade head`.
-2. Terraform reference: EKS, Aurora Postgres, ElastiCache Redis, S3 (trace archive), then
-   OpenSearch/Qdrant once the Phase 2 benchmark decision is made.
-3. Observability: OpenTelemetry traces/metrics/logs, Prometheus/Grafana/Loki, SLO burn alerts.
-4. CI: coverage threshold, image build + SBOM/scan; GitOps with a canary/blue-green rollout.
-5. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
+**Next: finish Phase 4, in this order.**
+1. Terraform reference: EKS, Aurora Postgres, ElastiCache Redis, S3 (trace archive), KMS,
+   Secrets Manager/External Secrets, then OpenSearch/Qdrant once the backend benchmark is
+   decided. No local cluster is available, so the module must be `terraform validate`-clean
+   and documented rather than applied.
+2. OpenTelemetry traces across HTTP → graph node → retrieval store → LLM → DB; Grafana
+   dashboards over the metric names in `deploy/observability/README.md`; Loki/Tempo.
+3. GitOps delivery with a canary/blue-green strategy (the migration Job already exists).
+4. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
+5. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
 
 **Carried over (infra-bound):**
 - Qdrant+OpenSearch vs OpenSearch-only benchmark — `scripts/benchmark_backends.py` needs
   live clusters; record the decision in §9.
 - Global per-tenant LLM/token quotas — Phase 4.
+- Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are
+  built; first chat pays cold start).
 - Summary compaction remains inline in the turn (deliberate: it mutates the memory the
   same turn reads).
 
 **Commands:**
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q --cov=blackbox --cov-fail-under=80
 .\.venv\Scripts\python.exe -m ruff check blackbox tests scripts alembic
 .\.venv\Scripts\python.exe -m mypy blackbox
+helm lint deploy/helm/blackbox -f deploy/helm/blackbox/values-prod.example.yaml
+helm template blackbox deploy/helm/blackbox --namespace blackbox | less
 ```
 
 **Commands (Docker / live cluster):**
@@ -159,9 +190,9 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Async graph + workers | 3 | ✅ | async graph/providers/stores; SSE cancellation; shared Redis queue + handler registry + worker process; graceful drain |
 | Staged ingest + alias swap | 3 | ✅ | validate documents/chunks/tenant coverage before `swap_alias`; abort keeps the old version |
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
-| Kubernetes/Helm/Terraform | 4 | ⬜ | EKS reference, HPA/KEDA |
-| Observability stack | 4 | ⬜ | OTel, Prometheus/Grafana/Loki |
-| CI/CD + security scanning | 4 | ⬜ | GitHub Actions + GitOps |
+| Kubernetes/Helm/Terraform | 4 | ◐ | Helm chart complete (API, worker, migration Job, HPA, KEDA, PDB, NetPol, Ingress, ServiceMonitor); Terraform reference open |
+| Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alert rules done; OpenTelemetry, Grafana dashboards, Loki/Tempo open |
+| CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM done; GitOps/canary open |
 | Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
 | Load/chaos suites | 5 | ⬜ | target SLO gates |
 
@@ -274,17 +305,21 @@ queue.
 
 ## 6. Phase 4 — Kubernetes and operations
 
-- [ ] Helm chart: API, workers, HPA/KEDA, PDB, NetworkPolicies
+- [x] Helm chart: API, workers, HPA/KEDA, PDB, NetworkPolicies
 - [ ] Terraform: EKS, Aurora, ElastiCache, SQS/MSK, OpenSearch, Qdrant, S3, KMS, WAF
-- [ ] Ingress SSE config: buffering off, idle timeout, body cap, TLS
-- [ ] Startup/readiness/liveness probes and warm-up
-- [ ] OpenTelemetry traces/metrics/logs; Prometheus/Grafana/Loki/Tempo
-- [ ] Dashboards, alerts, SLO burn
+- [x] Ingress SSE config: buffering off, idle timeout, body cap, TLS
+- [x] Startup/readiness/liveness probes — startup `/health`, readiness `/health/ready`, liveness `/health`
+- [ ] Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are built)
+- [x] Prometheus metrics + `/metrics` (HTTP, SSE, retrieval, LLM, queue)
+- [x] Prometheus recording rules and SLO/burn alerts (`deploy/observability`)
+- [ ] OpenTelemetry traces/logs; Grafana dashboards; Loki/Tempo
 - [x] GitHub Actions: lint, tests, migration check
-- [ ] CI: coverage, image scan/SBOM, image build (mypy is done)
-- [ ] GitOps + canary/blue-green; migration Job
+- [x] CI: coverage (80% gate), image scan/SBOM (Trivy + Syft), image build, chart validation (mypy is done)
+- [x] Migration Job (Helm pre-install/pre-upgrade `alembic upgrade head`)
+- [ ] GitOps + canary/blue-green delivery
 - [ ] Load tests at target concurrency; failure injection
 - [ ] Pen-test checklist and secret rotation
+- [ ] Global per-tenant LLM/token quotas (carried from Phase 2)
 
 ## 7. Phase 5 — Multi-region and DR
 
@@ -302,10 +337,10 @@ queue.
 ## 8. Cross-cutting backlog
 
 - [x] Fix remaining mypy errors; CI type-check gate — audit finding 9
-- [ ] Coverage threshold and coverage report in CI
+- [x] Coverage threshold and coverage report in CI — 80% gate, currently 80.6%
 - [ ] Provider contract tests (OpenAI/Anthropic against mock servers)
 - [ ] Postgres/Redis integration tests (testcontainers)
-- [ ] Docker image build in CI (local two-replica smoke passes)
+- [x] Docker image build in CI (local two-replica smoke passes)
 - [ ] Load test script (k6/Locust) committed
 - [ ] PII redaction and query-log policy
 - [ ] Security headers and dependency scanning
@@ -339,6 +374,13 @@ queue.
 | 2026-11-12 | Background jobs are described by `kind + params`, not closures, on a shared store | Accepted | A closure cannot travel through Redis; `python -m blackbox.worker` executes registered handlers from any replica |
 | 2026-11-12 | Summary compaction stays inline in the turn | Accepted | It mutates the memory the same turn reads; queueing it would race the turn |
 | 2026-11-12 | A staged ingest is always a full rebuild (force=True) | Accepted | Reusing the dedupe skip would leave the new index missing unchanged documents |
+| 2026-11-13 | Metrics are dependency-free and label on the route template | Accepted | The exposition format is small and stable; a raw path (conversation id) would create unbounded time series |
+| 2026-11-13 | `/metrics` is unauthenticated and NetworkPolicy-restricted | Accepted | Prometheus cannot present a user JWT; the monitoring namespace is the access boundary |
+| 2026-11-13 | Migrations run as a Helm pre-install/pre-upgrade hook | Accepted | A failed migration aborts the release; the previous pods keep serving on the previous schema |
+| 2026-11-13 | KEDA scales the worker on Redis pending-list length | Accepted | With a shared queue it is the only signal that sees work submitted by other pods; CPU is blind to a waiting worker |
+| 2026-11-13 | Chart ships NetworkPolicy disabled by default | Accepted | The allowlist is cluster-specific; the prod example enables it with an explicit ingress/monitoring/store policy |
+| 2026-11-13 | Container runs as uid/gid 10001 | Accepted | Matches PodSecurity restricted; the chart sets the same identity so no volume chown surprise |
+| 2026-11-13 | CI coverage gate is 80% | Accepted | Current coverage is 80.6%; high enough to catch an untested module, low enough not to reward assertion-free tests |
 
 ## 10. Open questions
 
@@ -396,6 +438,12 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-12 | Phase 3: shared Redis job store + handler registry + `python -m blackbox.worker`; retention is a job | ✅ | local |
 | 2026-11-12 | Phase 3: staged ingest with validation and alias swap (abort keeps the old version serving) | ✅ | local |
 | 2026-11-12 | Phase 3 complete: 454 tests green, `ruff`/`mypy` clean; compose gains a worker service | ✅ | local |
+| 2026-11-13 | Phase 4: Prometheus registry + `/metrics` + HTTP/SSE/retrieval/LLM/queue instrumentation | ✅ | local |
+| 2026-11-13 | Phase 4: Helm chart (API, worker, migration Job, HPA/KEDA, PDB, NetworkPolicy, Ingress, ServiceMonitor) | ✅ | local |
+| 2026-11-13 | Phase 4: unprivileged image; `alembic.ini`/migrations shipped for the migration Job | ✅ | local |
+| 2026-11-13 | Phase 4: recording rules + multi-window error-budget and SLO alerts | ✅ | local |
+| 2026-11-13 | Phase 4: CI coverage gate, chart lint/render + kubeconform, image build, Trivy scan, SPDX SBOM | ✅ | local |
+| 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | local |
 
 ## 12. Update protocol
 

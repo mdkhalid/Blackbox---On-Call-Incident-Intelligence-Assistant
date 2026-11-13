@@ -21,6 +21,12 @@ import signal
 import threading
 
 from blackbox.api.jobs import JOB_KINDS
+
+# Importing the operations routes registers the job handlers. The worker executes the
+# same bodies the API would, so the two can never diverge in behaviour. The routes
+# package `__init__` is intentionally empty, so the module has to be imported by name;
+# importing the package alone registers nothing.
+from blackbox.api.routes import operations  # noqa: F401
 from blackbox.api.services import build_services
 from blackbox.config.settings import get_settings
 from blackbox.logging_setup import get_logger, setup_logging
@@ -31,10 +37,6 @@ logger = get_logger(__name__)
 def main() -> None:  # pragma: no cover - process entry point
     settings = get_settings()
     setup_logging(settings)
-
-    # Importing the routes registers the job handlers. The worker executes the same
-    # bodies the API would, so the two can never diverge in behaviour.
-    from blackbox.api import routes  # noqa: F401
 
     services = build_services(settings)
     services.ensure_storage()

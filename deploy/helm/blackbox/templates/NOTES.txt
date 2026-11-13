@@ -1,0 +1,42 @@
+{{- if .Values.existingSecret }}
+A Secret named {{ .Values.existingSecret }} is used for sensitive environment
+variables.
+{{- else if .Values.secret.create }}
+A Secret was created from values. For production, prefer `existingSecret`
+managed by External Secrets, Sealed Secrets or SOPS.
+{{- else }}
+WARNING: no Secret is configured. In `ENV=prod` the app refuses to start
+without DATABASE_URL, an LLM provider key and AUTH_JWT_SECRET (or AUTH_JWKS_URL).
+Set `existingSecret` or `secret.create`.
+{{- end }}
+
+{{- if .Values.migration.enabled }}
+
+Database migrations run as a Helm pre-install/pre-upgrade hook
+({{ include "blackbox.fullname" . }}-migrate) with `alembic upgrade head`.
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress hosts:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+SSE requires proxy buffering off (annotated by default) and an idle timeout
+longer than the slowest turn.
+{{- else }}
+
+Service:
+  kubectl port-forward svc/{{ include "blackbox.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl http://127.0.0.1:{{ .Values.service.port }}/health
+{{- end }}
+
+Metrics are served at /metrics (Prometheus text format). Scrape them from the
+monitoring namespace; the endpoint is intentionally unauthenticated and is
+expected to be restricted by NetworkPolicy.
+
+{{- if .Values.worker.keda.enabled }}
+
+KEDA scales the worker on the Redis pending lists. Pods must share Redis:
+without REDIS_URL the worker sees no jobs from other replicas.
+{{- end }}

@@ -12,6 +12,7 @@ from typing import Any
 from langchain_core.callbacks import BaseCallbackHandler
 
 from blackbox.logging_setup import get_logger
+from blackbox.observability.metrics import record_llm_call
 
 
 class LoggingCallbackHandler(BaseCallbackHandler):
@@ -90,12 +91,26 @@ class LoggingCallbackHandler(BaseCallbackHandler):
 
 def log_llm_call(logger, *, node: str, response, duration_ms: float) -> None:
     """Structured metrics for our provider seam (which is not a LangChain Runnable)."""
+    model = str(getattr(response, "model", "") or "")
+    prompt_tokens = int(getattr(response, "prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(response, "completion_tokens", 0) or 0)
+    cached = bool(getattr(response, "cached", False))
     logger.info(
         "llm_call",
         node=node,
-        model=getattr(response, "model", ""),
-        prompt_tokens=getattr(response, "prompt_tokens", 0),
-        completion_tokens=getattr(response, "completion_tokens", 0),
-        cached=bool(getattr(response, "cached", False)),
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached=cached,
         duration_ms=round(duration_ms, 2),
+    )
+    # The structured log is for humans and log search; the counter is what the SLO
+    # dashboards and per-node cost panels actually read.
+    record_llm_call(
+        node=node,
+        model=model,
+        cached=cached,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        duration_ms=duration_ms,
     )

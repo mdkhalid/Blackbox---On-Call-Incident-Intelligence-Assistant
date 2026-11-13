@@ -28,6 +28,7 @@ from blackbox.graph.prompts import CHAT_SYSTEM_PROMPT
 from blackbox.logging_setup import get_logger
 from blackbox.memory import build_context
 from blackbox.memory.updates import update_entity_memory
+from blackbox.observability.metrics import SSE_ACTIVE
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["chat"])
@@ -154,6 +155,7 @@ async def chat(
         raise
 
     async def event_stream():
+        SSE_ACTIVE.inc()
         try:
             memory = record.memory
             if memory.compression_due:
@@ -282,6 +284,7 @@ async def chat(
             await turn_lock.release()
             services.release_tenant(tenant_id)
             await _release_idempotency_lock()
+            SSE_ACTIVE.dec()
 
     return StreamingResponse(
         event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS

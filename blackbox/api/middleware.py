@@ -10,6 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from blackbox.api.client_ip import resolve_client_ip
+from blackbox.observability.metrics import record_http
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -18,6 +19,7 @@ _EXEMPT_PATHS = {
     "/ui",
     "/health",
     "/health/ready",
+    "/metrics",
     "/docs",
     "/openapi.json",
     "/redoc",
@@ -41,14 +43,19 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         log = structlog.get_logger("http")
         start = time.perf_counter()
         response: Response = await call_next(request)
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        duration = time.perf_counter() - start
         log.info(
             "request",
             method=request.method,
             path=request.url.path,
             status_code=response.status_code,
-            duration_ms=duration_ms,
+            duration_ms=round(duration * 1000, 2),
         )
+        # Label on the route template, not the raw path: a conversation id in the
+        # path would create one time series per conversation and melt Prometheus.
+        route = request.scope.get("route")
+        template = getattr(route, "path", None) or "unmatched"
+        record_http(request.method, template, response.status_code, duration)
         return response
 
 

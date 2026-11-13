@@ -112,6 +112,8 @@ class JobStore(Protocol):
 
     def dequeue(self, timeout: float) -> tuple[str, Callable[[], Any] | None] | None: ...
 
+    def pending_count(self, kind: str) -> int: ...
+
     def close(self) -> None: ...
 
 
@@ -123,6 +125,7 @@ class InProcessJobStore:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
         self._pending: queue.Queue[tuple[str, Callable[[], Any] | None]] = queue.Queue()
+        self._pending_by_kind: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def save(self, job: Job) -> None:
@@ -137,13 +140,28 @@ class InProcessJobStore:
         return self.load(job_id)
 
     def enqueue(self, job_id: str, fn: Callable[[], Any] | None = None) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                self._pending_by_kind[job.kind] = (
+                    self._pending_by_kind.get(job.kind, 0) + 1
+                )
         self._pending.put((job_id, fn))
 
     def dequeue(self, timeout: float) -> tuple[str, Callable[[], Any] | None] | None:
         try:
-            return self._pending.get(timeout=timeout)
+            item = self._pending.get(timeout=timeout)
         except queue.Empty:
             return None
+        with self._lock:
+            job = self._jobs.get(item[0])
+            if job is not None and self._pending_by_kind.get(job.kind, 0) > 0:
+                self._pending_by_kind[job.kind] -= 1
+        return item
+
+    def pending_count(self, kind: str) -> int:
+        with self._lock:
+            return max(0, self._pending_by_kind.get(kind, 0))
 
     def close(self) -> None:
         return None
@@ -200,6 +218,15 @@ class RedisJobStore:
         if isinstance(job_id, bytes):
             job_id = job_id.decode()
         return job_id, None
+
+    def pending_count(self, kind: str) -> int:
+        """Queued (not yet dequeued) jobs for one kind.
+
+        BLMOVE removes the entry as soon as a worker picks it up, so this is the
+        backlog, not the number of running jobs. That is the number a scaler wants.
+        """
+        raw = self.client.llen(_PENDING_KEY.format(kind=kind))
+        return int(raw or 0)
 
     def close(self) -> None:
         return None
@@ -276,6 +303,9 @@ class JobQueue:
 
     def get(self, job_id: str) -> Job | None:
         return self.store.load(job_id)
+
+    def pending_count(self) -> int:
+        return self.store.pending_count(self.kind)
 
     def snapshot(self, job: Job) -> dict[str, Any]:
         """A consistent copy of a job's state.

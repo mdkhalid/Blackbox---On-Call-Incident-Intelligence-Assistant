@@ -31,6 +31,9 @@ The original assignment is complete. Work beyond it is tracked in two living doc
   multi-region and the phased production plan.
 - [`docs/development-tracker.md`](docs/development-tracker.md) — phase-by-phase checklist,
   status dashboard, decision log and change log. Update this file with every production PR.
+- [`deploy/helm/blackbox`](deploy/helm/blackbox) and
+  [`deploy/observability`](deploy/observability) — the Helm deployment package and the
+  Prometheus metric/alert contract.
 
 Open defects and scaling gaps found by the code audit (all reproduced against the running
 code) are collected in
@@ -38,17 +41,31 @@ code) are collected in
 fixed**, including the critical one where the SSE token stream exposed an answer before the
 ground check had run.
 
-Current production phase: **Phase 3 (async runtime and jobs) — complete**. Phase 2
-(retrieval migration and data-plane tenant isolation) is functionally complete: tenant
-isolation, RLS, Qdrant adapter, versioned indexes, shadow indexing/dual-read, offboarding,
-retention, partition plan and eval parity gate landed; only the live-cluster backend
-benchmark and global quotas (deferred to Phase 4) remain.
-Phase 3 delivered: async store interfaces (`asearch`), SSE cancellation on client
-disconnect, a shared Redis job store with a handler registry and a dedicated worker
-process (`python -m blackbox.worker`), staged ingest with validation before the alias
-swap, and the trace store split (Postgres recent + file/S3 archive, paginated `/trace`,
+Current production phase: **Phase 4 (Kubernetes and operations) — in progress**. Phase 3
+(async runtime and jobs) is complete: async store interfaces (`asearch`), SSE cancellation on
+client disconnect, a shared Redis job store with a handler registry and a dedicated worker
+process (`python -m blackbox.worker`), staged ingest with validation before the alias swap,
+and the trace store split (Postgres recent + file/S3 archive, paginated `/trace`,
 archive-before-prune retention).
-Next: Phase 4 (Kubernetes and operations).
+Phase 2 (retrieval migration and data-plane tenant isolation) is functionally complete:
+tenant isolation, RLS, Qdrant adapter, versioned indexes, shadow indexing/dual-read,
+offboarding, retention, partition plan and eval parity gate landed; only the live-cluster
+backend benchmark and global quotas remain.
+
+Phase 4 progress so far:
+- **Deployment package:** [`deploy/helm/blackbox`](deploy/helm/blackbox) — API and worker
+  Deployments, `alembic upgrade head` pre-upgrade Job, startup/readiness/liveness probes,
+  HPA, KEDA worker scaling on queue depth, PodDisruptionBudgets, topology spread, optional
+  SSE-correct Ingress, NetworkPolicies, ServiceMonitor, and an unprivileged image.
+- **Metrics and SLOs:** a dependency-free Prometheus registry and `/metrics` endpoint
+  (`blackbox_http_*`, `blackbox_sse_active_streams`, retrieval stages, LLM calls/tokens/errors,
+  job queue depth), with recording and multi-window burn-rate alert rules in
+  [`deploy/observability`](deploy/observability).
+- **CI:** coverage gate, chart lint/render with kubeconform, image build, Trivy scan and
+  SPDX SBOM.
+Still open in Phase 4: Terraform (EKS/Aurora/ElastiCache/S3), OpenTelemetry traces, Grafana
+dashboards and Loki/Tempo, GitOps/canary delivery, load and failure-injection suites, and the
+pen-test/secret-rotation checklist.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
@@ -77,7 +94,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 454 tests
+pytest -q                            # 465 tests
 uvicorn blackbox.main:app --reload
 ```
 
@@ -429,8 +446,8 @@ python -m blackbox.eval.groundedness_eval --write
 - The offline provider is extractive, so its groundedness number is a floor; use a hosted
   model for the generator's real overreach (the harness is unchanged).
 - Rate limiting is Redis-backed (shared across replicas) with a local fallback; turn locks are
-  Postgres advisory locks. Per-tenant turn admission control is per pod; global quotas are on
-  the Phase 2 backlog.
+  Postgres advisory locks. Per-tenant turn admission control is per pod; global quotas remain
+  on the Phase 4 backlog.
 - The corpus is synthetic and templated; `paraphrase` retrieval is intentionally weak and
   reported as measured rather than tuned away.
 - The cross-encoder reranker requires the optional `rerank` extra; without it the lexical
@@ -456,7 +473,7 @@ python -m blackbox.eval.groundedness_eval --write
 
 ## Tests
 
-454 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+465 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

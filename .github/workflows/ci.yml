@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -26,10 +29,62 @@ jobs:
       - name: Type check
         run: python -m mypy blackbox
       - name: Tests
-        run: python -m pytest -q
+        run: |
+          python -m pytest -q --cov=blackbox --cov-report=term \
+            --cov-fail-under=80
       - name: Retrieval eval parity gate
         run: python -m blackbox.eval.retrieval_eval --k 5 --min-mrr 0.9167
       - name: Migration check
         run: |
           alembic upgrade head
           alembic downgrade base
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: Lint
+        run: |
+          helm lint deploy/helm/blackbox
+          helm lint deploy/helm/blackbox -f deploy/helm/blackbox/values-prod.example.yaml
+      - name: Render
+        run: |
+          helm template blackbox deploy/helm/blackbox --namespace blackbox > /tmp/default.yaml
+          helm template blackbox deploy/helm/blackbox --namespace blackbox \
+            -f deploy/helm/blackbox/values-prod.example.yaml > /tmp/prod.yaml
+          # The KEDA and Prometheus-Operator CRDs are not part of the Kubernetes
+          # schema bundle; every core object is still validated strictly.
+          docker run --rm -v /tmp:/tmp ghcr.io/yannh/kubeconform:latest \
+            -strict -summary -ignore-missing-schemas /tmp/default.yaml /tmp/prod.yaml
+
+  image:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: blackbox:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: blackbox:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: blackbox:ci
+          artifact-name: blackbox-sbom.spdx.json
+          format: spdx-json
