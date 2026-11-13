@@ -97,6 +97,25 @@ curl -fsS localhost:8000/health/ready
 curl -fsS localhost:8000/metrics | head
 ```
 
+## Observability
+
+`/metrics` is always available and is scraped by the optional ServiceMonitor.
+Distributed tracing is opt-in and ships as a no-op unless enabled:
+
+```yaml
+config:
+  OTEL_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc:4318
+  OTEL_SERVICE_NAME: blackbox-api
+  OTEL_TRACES_SAMPLER_ARG: "0.1"   # 10% of root turns; parent sampling respected
+```
+
+The image includes the `otel` extra. The collector, Tempo, Loki, Grafana dashboard and
+provisioning examples live in [`deploy/observability`](../observability); the alert rules
+there are the metric-name contract. Span names are documented in that directory's README.
+The worker process does not call `configure_tracing` yet: job tracing is a later item, so
+`OTEL_*` currently affects the API pods only.
+
 ## Known limits of this chart
 
 - No bundled Postgres/Redis/OpenSearch/Qdrant. Managed stores are the target; the

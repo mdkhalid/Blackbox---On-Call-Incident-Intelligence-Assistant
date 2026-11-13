@@ -87,7 +87,14 @@ Last updated: 2026-11-13
   be NetworkPolicy-restricted (Prometheus cannot carry a user JWT).
 - **Alerting:** recording rules plus multi-window error-budget burn and SLO alerts
   (`deploy/observability/prometheus-rules.yaml`).
-- **CI:** coverage gate (80%, currently 80.6%), chart lint/render with kubeconform, Docker
+- **Tracing:** optional OpenTelemetry spans (`blackbox/observability/tracing.py`) across
+  HTTP requests, graph nodes, retrieval, LLM calls, chat turns and the turn write. The
+  facade is a no-op unless `OTEL_ENABLED=true` and the `otel` extra is installed, so the
+  default install stays dependency-light. The HTTP span is pure-ASGI so it covers the whole
+  SSE stream; span names and attributes use route templates, and `trace_id` is bound into
+  structlog context for log/trace correlation. OTLP/HTTP goes to a collector (the
+  deployment seam), not directly to a storage backend.
+- **CI:** coverage gate (80%, currently 81.2%), chart lint/render with kubeconform, Docker
   image build, Trivy scan and SPDX SBOM.
 - **Terraform reference** (`deploy/terraform`): a self-contained AWS root module — VPC with
   flow logs, EKS (private endpoint by default, CMK-encrypted Secrets, managed node groups,
@@ -103,19 +110,21 @@ Last updated: 2026-11-13
 - **Bug fixed:** `python -m blackbox.worker` imported the empty routes package, not the
   operations module, so a fresh worker registered no job handlers. It now imports
   `blackbox.api.routes.operations`; a subprocess test proves every job kind is registered.
-- 465 tests green, `ruff`/`mypy` clean.
+- 477 tests collected (468 passing, 9 skipped: live-cluster OpenSearch tests),
+  `ruff`/`mypy` clean; coverage 81.2%.
 
-**Next:** finish Phase 4 — OpenTelemetry traces, Grafana dashboards + Loki/Tempo, GitOps/canary
-delivery, load and failure-injection suites, and the pen-test/secret-rotation checklist.
-OpenSearch/Qdrant remain unwritten in Terraform until the Phase 2 benchmark decides the shape.
+**Next:** finish Phase 4 — Grafana dashboards over the metric names, Loki/Tempo configs,
+GitOps/canary delivery, load and failure-injection suites, global per-tenant quotas, and the
+pen-test/secret-rotation checklists. OpenSearch/Qdrant remain unwritten in Terraform until
+the Phase 2 benchmark decides the shape.
 **Not started:** Phase 5 multi-region/DR.
 
 ### Resume point (next session)
 
-State: **465 tests green** (9 skipped: live-cluster OpenSearch tests), `ruff` clean, `mypy`
-clean (100 source files), coverage 80.6% (gate 80%); Docker CLI present but the daemon was
-not running during this session, so CI images were validated by the workflow definition, not
-a local build. Helm 3.16 was used to lint/render the chart.
+State: **477 tests collected (468 passing, 9 skipped: live-cluster OpenSearch)**,
+`ruff` clean, `mypy` clean (101 source files), coverage 81.2% (gate 80%); Docker CLI
+present but the daemon was not running during this session, so CI images were validated by
+the workflow definition, not a local build. Helm 3.16 was used to lint/render the chart.
 Phase 1 (control plane), the audit remediation, Phase 2 (retrieval migration and tenant
 isolation), Phase 3 (async runtime and jobs) and the **deployment, observability and
 infrastructure slices of Phase 4 are complete**.
@@ -137,10 +146,13 @@ infrastructure slices of Phase 4 are complete**.
 8. ✅ External Secrets example — `deploy/external-secrets` builds the chart's
    `existingSecret` from Terraform's secrets and documents the rotation/restart step.
 9. ✅ CI Terraform job — `terraform fmt -check`, `init -backend=false`, `validate`, Trivy config.
+10. ✅ OpenTelemetry tracing — optional `otel` extra; no-op facade; spans for HTTP (ASGI,
+    stream-covering), graph nodes, retrieval, LLM, chat turn and DB write; trace id in logs;
+    chart/values and Dockerfile wiring; `tests/test_tracing.py` (including a fake-SDK path).
 
 **Next: finish Phase 4, in this order.**
-1. OpenTelemetry traces across HTTP → graph node → retrieval store → LLM → DB; Grafana
-   dashboards over the metric names in `deploy/observability/README.md`; Loki/Tempo.
+1. Grafana dashboards over the metric names in `deploy/observability/README.md`; Loki/Tempo
+   configs and the OTel Collector pipeline to ship traces there.
 2. GitOps delivery with a canary/blue-green strategy (the migration Job already exists).
 3. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
 4. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
@@ -210,7 +222,7 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Staged ingest + alias swap | 3 | ✅ | validate documents/chunks/tenant coverage before `swap_alias`; abort keeps the old version |
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
 | Kubernetes/Helm/Terraform | 4 | ◐ | Helm chart complete (API, worker, migration Job, HPA, KEDA, PDB, NetPol, Ingress, ServiceMonitor); Terraform AWS reference complete and validate/scan-clean; OpenSearch/Qdrant pending the benchmark |
-| Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alert rules done; OpenTelemetry, Grafana dashboards, Loki/Tempo open |
+| Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alert rules + optional OpenTelemetry traces done; Grafana dashboards, Loki/Tempo open |
 | CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM done; GitOps/canary open |
 | Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
 | Load/chaos suites | 5 | ⬜ | target SLO gates |
@@ -334,7 +346,9 @@ queue.
 - [ ] Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are built)
 - [x] Prometheus metrics + `/metrics` (HTTP, SSE, retrieval, LLM, queue)
 - [x] Prometheus recording rules and SLO/burn alerts (`deploy/observability`)
-- [ ] OpenTelemetry traces/logs; Grafana dashboards; Loki/Tempo
+- [x] OpenTelemetry traces across HTTP → graph node → retrieval → LLM → DB (optional
+      `otel` extra; no-op when disabled)
+- [ ] Loki log shipping, Tempo storage and Grafana dashboards
 - [x] GitHub Actions: lint, tests, migration check
 - [x] CI: coverage (80% gate), image scan/SBOM (Trivy + Syft), image build, chart validation (mypy is done)
 - [x] CI: `terraform fmt -check`, `init -backend=false`, `validate` and Trivy config scan
@@ -403,8 +417,11 @@ queue.
 | 2026-11-13 | KEDA scales the worker on Redis pending-list length | Accepted | With a shared queue it is the only signal that sees work submitted by other pods; CPU is blind to a waiting worker |
 | 2026-11-13 | Chart ships NetworkPolicy disabled by default | Accepted | The allowlist is cluster-specific; the prod example enables it with an explicit ingress/monitoring/store policy |
 | 2026-11-13 | Container runs as uid/gid 10001 | Accepted | Matches PodSecurity restricted; the chart sets the same identity so no volume chown surprise |
-| 2026-11-13 | CI coverage gate is 80% | Accepted | Current coverage is 80.6%; high enough to catch an untested module, low enough not to reward assertion-free tests |
+| 2026-11-13 | CI coverage gate is 80% | Accepted | Current coverage is 81.2%; high enough to catch an untested module, low enough not to reward assertion-free tests |
 | 2026-11-13 | Terraform reference is a flat root module, no registry modules | Accepted | The plan is reviewable in this repo, `validate` works offline, and a registry module's defaults would hide the security decisions |
+| 2026-11-13 | Tracing is an optional extra behind a no-op facade | Accepted | Serving must not depend on a collector; the default install stays small and every call site is testable with a recording tracer |
+| 2026-11-13 | OTLP/HTTP goes to a collector, not directly to Tempo | Accepted | The collector is the deployment seam: sampling, batching and backend choice change without an app release |
+| 2026-11-13 | HTTP tracing is pure ASGI, not `BaseHTTPMiddleware` | Accepted | A `BaseHTTPMiddleware` span ends when `call_next` returns, which for SSE is before the answer is produced |
 | 2026-11-13 | EKS API endpoint is private by default | Accepted | The API server is the highest-value target; a VPN or bastion costs less than a public endpoint |
 | 2026-11-13 | Aurora uses the RDS-managed master password | Accepted | No credential in state or tfvars; pointing it at a CMK needs an extra grant for the RDS service role, documented as a follow-up |
 | 2026-11-13 | Two IRSA roles: app (S3 traces) and External Secrets (read secrets) | Accepted | A compromised pod should not be able to read the database password just because it can archive traces |

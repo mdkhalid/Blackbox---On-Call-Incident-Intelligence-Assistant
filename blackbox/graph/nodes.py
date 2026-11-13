@@ -29,6 +29,7 @@ from blackbox.logging_setup import get_logger
 from blackbox.memory.tokens import count_tokens
 from blackbox.observability.callbacks import log_llm_call
 from blackbox.observability.metrics import record_llm_error, record_retrieval
+from blackbox.observability.tracing import span
 from blackbox.retrieval.models import RetrievalResult
 
 logger = get_logger(__name__)
@@ -55,10 +56,25 @@ async def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
     timings: dict[str, float] = dict(state.get("timings") or {})
     error = state.get("error")
     try:
-        result = await _aretrieve(
-            deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters,
-            tenant_id=state.get("tenant_id"),
-        )
+        with span(
+            "retrieval.retrieve",
+            **{
+                "retrieval.top_k": deps.config.retrieval.top_k,
+                "retrieval.tenant_id": state.get("tenant_id"),
+            },
+        ) as retrieval_span:
+            result = await _aretrieve(
+                deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters,
+                tenant_id=state.get("tenant_id"),
+            )
+            retrieval_span.set_attribute("retrieval.chunks", len(result.chunks))
+            retrieval_span.set_attribute(
+                "retrieval.cached", "cache_ms" in result.timings
+            )
+            if "total_ms" in result.timings:
+                retrieval_span.set_attribute(
+                    "retrieval.total_ms", float(result.timings["total_ms"])
+                )
         chunks = [_serialize_chunk(hit) for hit in result.chunks]
         timings.update(result.timings)
         record_retrieval(result.timings)
@@ -497,13 +513,29 @@ async def _acomplete(llm: Any, *, node: str, **kwargs: Any) -> LLMResponse:
     error path still decides what the user sees.
     """
     acomplete = getattr(llm, "acomplete", None)
-    try:
-        if callable(acomplete):
-            return await acomplete(**kwargs)
-        return await asyncio.to_thread(llm.complete, **kwargs)
-    except Exception:
-        record_llm_error(node)
-        raise
+    with span(
+        "llm.complete",
+        **{
+            "llm.node": node,
+            "llm.model": kwargs.get("model"),
+            "llm.max_tokens": kwargs.get("max_tokens"),
+            "llm.json_mode": kwargs.get("json_mode"),
+        },
+    ) as current:
+        try:
+            if callable(acomplete):
+                response = await acomplete(**kwargs)
+            else:
+                response = await asyncio.to_thread(llm.complete, **kwargs)
+        except Exception as exc:
+            current.record_exception(exc)
+            record_llm_error(node)
+            raise
+        current.set_attribute("llm.prompt_tokens", response.prompt_tokens)
+        current.set_attribute("llm.completion_tokens", response.completion_tokens)
+        current.set_attribute("llm.total_tokens", response.total_tokens)
+        current.set_attribute("llm.cached", response.cached)
+        return response
 
 
 def _fit_chunks(chunks: list[dict], token_cap: int) -> list[dict]:

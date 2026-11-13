@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the package (and its static/config/eval data) at build time.
 COPY pyproject.toml ./
 COPY blackbox ./blackbox
-RUN pip install --upgrade pip && pip install -e ".[rag,db]"
+RUN pip install --upgrade pip && pip install -e ".[rag,db,otel]"
 
 COPY seed ./seed
 COPY scripts ./scripts

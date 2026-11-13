@@ -75,6 +75,15 @@ config:
   LLM_MAX_RETRIES: "2"
   LLM_MAX_CONCURRENCY: "8"
   MAX_WORKER_THREADS: "32"
+  # Distributed tracing is opt-in. The image ships the `otel` extra; set
+  # OTEL_ENABLED=true and point the endpoint at an OTLP/HTTP collector
+  # (deploy/observability has a collector, Tempo and Grafana example).
+  OTEL_ENABLED: "false"
+  OTEL_SERVICE_NAME: blackbox-api
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+  OTEL_IGNORE_PATHS: /health,/health/ready,/metrics
 
 # Name of an existing Secret containing sensitive env vars. Recommended in prod.
 existingSecret: ""

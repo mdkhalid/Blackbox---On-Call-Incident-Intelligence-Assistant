@@ -50,6 +50,35 @@ name is the configured model, so no conversation id, query or tenant value becom
 time series. Tenant-level cost reporting is a Phase 5 item and must use a bounded
 aggregation, not a per-tenant label on these counters.
 
+## Traces
+
+Tracing is opt-in and dependency-free until enabled. Install the `otel` extra (the
+Dockerfile already does), then:
+
+```yaml
+config:
+  OTEL_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc:4318
+  OTEL_SERVICE_NAME: blackbox-api
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+```
+
+`OTEL_ENABLED=false`, a missing SDK or an invalid exporter config all resolve to the
+no-op tracer: the service keeps serving without a collector.
+
+| Span | Attributes | Notes |
+|---|---|---|
+| `http.request` | `http.method`, `http.route` (template), `http.status_code` | Pure-ASGI; stays open for the whole SSE body. Renamed to `<METHOD> <route>` after routing |
+| `chat.turn` | `tenant.id`, `conversation.id`, `chat.status`, `chat.route`, `chat.answer_chars`, `chat.total_tokens`, `chat.idempotent` | One turn, including persistence and the final event |
+| `graph.node.<node>` | `graph.node`, `graph.route`, `graph.chunks`, `graph.status`, `graph.error`, `graph.grade_sufficient` | router, retrieve, grade, rewrite, generate, ground_check, honest_failure, entity_lookup, direct_answer |
+| `retrieval.retrieve` | `retrieval.top_k`, `retrieval.tenant_id`, `retrieval.chunks`, `retrieval.cached`, `retrieval.total_ms` | Store spans are children of the retrieve node |
+| `llm.complete` | `llm.node`, `llm.model`, `llm.max_tokens`, `llm.json_mode`, token counts, `llm.cached` | Exceptions are attached to the span |
+| `db.record_turn` | `db.operation`, `tenant.id`, `db.trace_events`, `db.status` | The turn write, after the graph finishes |
+
+`structlog` binds `trace_id` (and `request_id`) for the request, so a JSON log line can
+be joined to its trace. Span names are a contract: dashboards and TraceQL queries should
+use these names, not free-form ones.
+
 ## Alerts
 
 ```bash
@@ -60,5 +89,6 @@ The rules implement the documented SLOs: 99.9% availability (multi-window 14.4×
 6× error-budget burn), complete-answer p95 ≤ 8s, retrieval p95 ≤ 400ms, LLM error
 ratio, job backlog and an informational "no chat traffic" signal.
 
-Grafana dashboards and the on-call runbooks are tracked in the development tracker;
-the metric names above are the stable contract they will be built against.
+Grafana dashboards, the Loki/Tempo/collector bundle and the on-call runbooks are tracked in
+the development tracker; the metric names and span names above are the stable contract they
+will be built against.

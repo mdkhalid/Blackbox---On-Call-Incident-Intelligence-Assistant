@@ -29,6 +29,11 @@ config:
   TRACE_ARCHIVE_BUCKET: example-blackbox-traces
   TRACE_ARCHIVE_REGION: eu-west-1
   LLM_MAX_CONCURRENCY: "16"
+  # Traces go to the OTel Collector, which fans out to Tempo (see
+  # deploy/observability). Sample 10% of root turns; upstream sampling is respected.
+  OTEL_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc:4318
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
 
 serviceAccount:
   create: true
@@ -121,6 +126,14 @@ networkPolicy:
             port: 9200
           - protocol: TCP
             port: 6333
+      - to:
+          # OTLP/HTTP to the collector when OTEL_ENABLED=true.
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: monitoring
+        ports:
+          - protocol: TCP
+            port: 4318
       - to:
           - ipBlock:
               cidr: 0.0.0.0/0

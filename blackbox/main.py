@@ -14,6 +14,7 @@ from blackbox.api.middleware import (
     LoggingMiddleware,
     RateLimitMiddleware,
     RequestIdMiddleware,
+    TracingMiddleware,
 )
 from blackbox.api.routes.chat import router as chat_router
 from blackbox.api.routes.conversations import router as conversations_router
@@ -25,6 +26,7 @@ from blackbox.api.services import AppServices, build_services
 from blackbox.config.settings import Settings, get_settings
 from blackbox.logging_setup import setup_logging
 from blackbox.observability.metrics import set_build_info
+from blackbox.observability.tracing import configure_tracing, shutdown_tracing
 
 
 def create_app(settings: Settings | None = None, *, services: AppServices | None = None):
@@ -36,6 +38,7 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
         app.state.settings = settings
         app.state.services = services or build_services(settings)
         setup_logging(settings)
+        configure_tracing(settings)
         set_build_info(__version__, settings.env)
         # LangGraph offloads any synchronous node to the event loop's default
         # executor. The default is `min(32, cpu_count + 4)`, which ties the request
@@ -51,6 +54,7 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
             yield
         finally:
             app.state.services.close()
+            shutdown_tracing()
             executor.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(title="Blackbox", version=__version__, lifespan=lifespan)
@@ -68,6 +72,11 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     )
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
+    # Added last, so it is the outermost layer: the request span covers middleware,
+    # routing and the full streamed response body.
+    app.add_middleware(
+        TracingMiddleware, ignore_paths=tuple(settings.otel_ignore_path_list)
+    )
     origins = settings.cors_origin_list
     if origins:
         app.add_middleware(

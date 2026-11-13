@@ -15,10 +15,10 @@ The original assignment is complete. Further work is tracked separately:
 Current production state: **Phase 4 (Kubernetes and operations) in progress**. Phase 3
 (async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package, the AWS
 Terraform reference (EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA), unprivileged image,
-Prometheus metrics with SLO/error-budget alert rules, External Secrets wiring, and the CI
-coverage/image/SBOM plus Terraform validate/scan gates; OpenTelemetry, Grafana/Loki/Tempo,
-GitOps, load/chaos and the runbooks remain. Phase 2 open items are the live-cluster backend
-benchmark and global quotas (Phase 4).
+Prometheus metrics with SLO/error-budget alert rules, optional OpenTelemetry tracing, External
+Secrets wiring, and the CI coverage/image/SBOM plus Terraform validate/scan gates;
+Grafana/Loki/Tempo, GitOps, load/chaos, global quotas and the runbooks remain. Phase 2 open
+items are the live-cluster backend benchmark and global quotas (Phase 4).
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.

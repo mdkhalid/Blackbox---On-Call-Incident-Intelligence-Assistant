@@ -25,6 +25,7 @@ from blackbox.graph.router import direct_answer_node, entity_lookup_node, router
 from blackbox.graph.state import GraphState
 from blackbox.llm import FakeLLMProvider, build_llm_provider
 from blackbox.logging_setup import get_logger
+from blackbox.observability.tracing import span
 
 logger = get_logger(__name__)
 
@@ -55,22 +56,33 @@ def build_graph(
     builder = StateGraph(GraphState)
     builder.add_node(
         "router",
-        partial(
-            router_node,
-            entity_store=entity_store,
-            direct_answers=config.graph.direct_answers,
+        _traced_node(
+            "router",
+            partial(
+                router_node,
+                entity_store=entity_store,
+                direct_answers=config.graph.direct_answers,
+            ),
         ),
     )
     builder.add_node(
-        "entity_lookup", partial(entity_lookup_node, entity_store=entity_store)
+        "entity_lookup",
+        _traced_node(
+            "entity_lookup", partial(entity_lookup_node, entity_store=entity_store)
+        ),
     )
-    builder.add_node("direct_answer", direct_answer_node)
-    builder.add_node("retrieve", partial(retrieve_node, deps=deps))
-    builder.add_node("grade", partial(grade_node, deps=deps))
-    builder.add_node("rewrite", partial(rewrite_node, deps=deps))
-    builder.add_node("generate", partial(generate_node, deps=deps))
-    builder.add_node("ground_check", partial(ground_check_node, deps=deps))
-    builder.add_node("honest_failure", partial(honest_failure_node, deps=deps))
+    builder.add_node("direct_answer", _traced_node("direct_answer", direct_answer_node))
+    builder.add_node("retrieve", _traced_node("retrieve", partial(retrieve_node, deps=deps)))
+    builder.add_node("grade", _traced_node("grade", partial(grade_node, deps=deps)))
+    builder.add_node("rewrite", _traced_node("rewrite", partial(rewrite_node, deps=deps)))
+    builder.add_node("generate", _traced_node("generate", partial(generate_node, deps=deps)))
+    builder.add_node(
+        "ground_check", _traced_node("ground_check", partial(ground_check_node, deps=deps))
+    )
+    builder.add_node(
+        "honest_failure",
+        _traced_node("honest_failure", partial(honest_failure_node, deps=deps)),
+    )
 
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
@@ -130,6 +142,40 @@ async def stream_graph_events(graph, state: GraphState) -> AsyncIterator[dict]:
                     merged[key] = value
             yield {"event": "node", "node": node, "data": values}
     yield {"event": "final", "data": merged}
+
+
+def _traced_node(name: str, handler: Any):
+    """Wrap a graph node so each step is a span in the active trace.
+
+    Every node already contributes a trace event; the span adds parent/child structure
+    to the distributed trace and carries the outcome (status, chunk count, error)
+    without duplicating the full trace payload.
+    """
+
+    async def wrapped(state: Any):
+        with span(
+            f"graph.node.{name}",
+            **{"graph.node": name, "graph.route": state.get("route")},
+        ) as current:
+            result = await handler(state)
+            if isinstance(result, dict):
+                chunks = result.get("chunks")
+                if isinstance(chunks, list):
+                    current.set_attribute("graph.chunks", len(chunks))
+                status = result.get("status")
+                if status:
+                    current.set_attribute("graph.status", str(status))
+                error = result.get("error")
+                if error:
+                    current.set_attribute("graph.error", str(error))
+                grade = result.get("grade")
+                if isinstance(grade, dict) and "sufficient" in grade:
+                    current.set_attribute(
+                        "graph.grade_sufficient", bool(grade["sufficient"])
+                    )
+            return result
+
+    return wrapped
 
 
 def _resolve_llm(settings: Settings):

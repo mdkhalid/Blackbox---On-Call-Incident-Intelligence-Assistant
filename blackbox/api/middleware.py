@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 
 from blackbox.api.client_ip import resolve_client_ip
 from blackbox.observability.metrics import record_http
+from blackbox.observability.tracing import current_trace_id, span
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -31,11 +32,55 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         rid = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
         structlog.contextvars.clear_contextvars()
-        structlog.contextvars.bind_contextvars(request_id=rid)
+        trace_id = current_trace_id()
+        structlog.contextvars.bind_contextvars(
+            request_id=rid, **({"trace_id": trace_id} if trace_id else {})
+        )
         response: Response = await call_next(request)
         response.headers[REQUEST_ID_HEADER.lower()] = rid
         structlog.contextvars.clear_contextvars()
         return response
+
+
+class TracingMiddleware:
+    """Pure-ASGI tracing so a streamed response stays inside its request span.
+
+    A ``BaseHTTPMiddleware`` span ends when ``call_next`` returns, which for SSE is
+    before the body is produced. Wrapping ``send`` keeps the span open for the whole
+    response and lets the route template (known only after routing) name the span.
+    """
+
+    def __init__(self, app, *, ignore_paths: tuple[str, ...] = ()) -> None:
+        self.app = app
+        self.ignore_paths = frozenset(ignore_paths)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") in self.ignore_paths:
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET")
+        with span("http.request", **{"http.method": method}) as current:
+            async def send_with_route(message):
+                if message["type"] == "http.response.start":
+                    status = int(message["status"])
+                    current.set_attribute("http.status_code", status)
+                    route = scope.get("route")
+                    template = getattr(route, "path", None)
+                    if template:
+                        # Attribute and span name use the route template, never the
+                        # raw path: a conversation id in the URL must not become a
+                        # distinct span name.
+                        current.set_attribute("http.route", template)
+                        current.set_name(f"{method} {template}")
+                await send(message)
+
+            try:
+                await self.app(scope, receive, send_with_route)
+            except Exception as exc:
+                current.record_exception(exc)
+                raise
+
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):

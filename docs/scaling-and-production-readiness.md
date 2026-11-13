@@ -2,8 +2,9 @@
 
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
 jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference,
-image hardening, Prometheus metrics/SLO alerts, External Secrets and CI image/security gates
-landed; OpenTelemetry, Grafana/Loki/Tempo, GitOps, load/chaos and the runbooks remain.**
+image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, External
+Secrets and CI image/security gates landed; Grafana/Loki/Tempo, GitOps, load/chaos, quotas
+and the runbooks remain.**
 This document is the production contract for the codebase: target architecture, capacity
 model, tenancy, retrieval migration, runtime, operations and the phased path from the current
 single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
@@ -369,9 +370,19 @@ with tenant affinity.
 > never a conversation id; tenant-level cost must aggregate from the existing counters rather
 > than add an unbounded label.
 >
-> Still open: OpenTelemetry spans (HTTP → graph node → store → LLM → DB), Grafana dashboards,
-> Loki/Tempo and error tracking. The metric names are the contract the dashboards will build
-> against.
+> Still open: Grafana dashboards, Loki/Tempo storage, synthetic probes and error tracking. The
+> metric names are the contract the dashboards will build against.
+
+> **Tracing (2026-11-13, Phase 4).** OpenTelemetry tracing is implemented as an optional
+> capability: `blackbox/observability/tracing.py` exposes a narrow facade (span, attributes,
+> exception, trace id) that is a no-op unless `OTEL_ENABLED=true` and the `otel` extra is
+> installed. Spans cover `http.request` (pure ASGI, so it stays open for the whole SSE body),
+> `chat.turn`, `db.record_turn`, `retrieval.retrieve`, `llm.complete` and `graph.node.*`.
+> Attributes use route templates and bounded values; `trace_id` is bound into the structlog
+> context so a JSON log line can be joined to its trace. OTLP/HTTP exports to a collector,
+> which is the deployment seam for sampling and backend choice. Span names are stable and
+> documented in `deploy/observability/README.md`; the worker does not call
+> `configure_tracing` yet, so job tracing remains open.
 
 ---
 
@@ -414,7 +425,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + External Secrets + CI image/scan/SBOM done; OpenTelemetry, Grafana/Loki/Tempo, GitOps, load/chaos, runbooks open |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + External Secrets + CI image/scan/SBOM done; Grafana/Loki/Tempo, GitOps, load/chaos, quotas, runbooks open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)
@@ -489,6 +500,7 @@ the retrieval stores are replaced there. Tenant offboarding and global quotas ar
 - [x] HPA/KEDA and PDBs (chart: HPA on CPU with custom-metric override, KEDA on Redis queue depth)
 - [ ] Load test at target concurrency; failure injection
 - [x] Recording rules and SLO/error-budget alerts (`deploy/observability`)
+- [x] OpenTelemetry traces to an OTLP collector (optional `otel` extra; no-op when disabled)
 - [ ] Grafana dashboards and on-call runbooks
 - [ ] Multi-region failover and RTO/RPO drill
 - [x] Image scan/SBOM (CI: Trivy + SPDX)

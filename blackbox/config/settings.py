@@ -334,6 +334,29 @@ class Settings(BaseSettings):
     trace_archive_prefix: str = Field(default="traces", alias="TRACE_ARCHIVE_PREFIX")
     trace_archive_region: str | None = Field(default=None, alias="TRACE_ARCHIVE_REGION")
 
+    # Optional distributed tracing. The instrumentation is always present; these
+    # settings decide whether it resolves to a real OpenTelemetry tracer or a no-op.
+    otel_enabled: bool = Field(default=False, alias="OTEL_ENABLED")
+    otel_service_name: str = Field(default="blackbox-api", alias="OTEL_SERVICE_NAME")
+    otel_exporter_otlp_endpoint: str = Field(
+        default="http://localhost:4318", alias="OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+    otel_exporter_otlp_headers: str = Field(
+        default="", alias="OTEL_EXPORTER_OTLP_HEADERS"
+    )
+    otel_exporter_timeout_s: float = Field(default=10.0, alias="OTEL_EXPORTER_TIMEOUT_S")
+    otel_traces_sampler: str = Field(
+        default="parentbased_traceidratio", alias="OTEL_TRACES_SAMPLER"
+    )
+    otel_traces_sampler_arg: float = Field(
+        default=1.0, alias="OTEL_TRACES_SAMPLER_ARG"
+    )
+    # Probes and scrapes are frequent and uninteresting; tracing them would multiply
+    # spans and exporter traffic without adding diagnostic value.
+    otel_ignore_paths: str = Field(
+        default="/health,/health/ready,/metrics", alias="OTEL_IGNORE_PATHS"
+    )
+
     @field_validator("llm_timeout_s")
     @classmethod
     def positive_timeout(cls, v):
@@ -376,6 +399,30 @@ class Settings(BaseSettings):
             raise ValueError("TRACE_ARCHIVE_BACKEND must be none|file|s3")
         return v
 
+    @field_validator("otel_traces_sampler")
+    @classmethod
+    def otel_sampler_known(cls, v):
+        if v not in ("always_on", "always_off", "traceidratio", "parentbased_traceidratio"):
+            raise ValueError(
+                "OTEL_TRACES_SAMPLER must be "
+                "always_on|always_off|traceidratio|parentbased_traceidratio"
+            )
+        return v
+
+    @field_validator("otel_traces_sampler_arg")
+    @classmethod
+    def otel_sampler_arg_range(cls, v):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("OTEL_TRACES_SAMPLER_ARG must be in [0,1]")
+        return v
+
+    @field_validator("otel_exporter_timeout_s")
+    @classmethod
+    def otel_timeout_positive(cls, v):
+        if v <= 0:
+            raise ValueError("OTEL_EXPORTER_TIMEOUT_S must be > 0")
+        return v
+
     @model_validator(mode="after")
     def archive_bucket_required(self):
         if self.trace_archive_backend == "s3" and not self.trace_archive_bucket:
@@ -385,6 +432,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def otel_ignore_path_list(self) -> list[str]:
+        return [path.strip() for path in self.otel_ignore_paths.split(",") if path.strip()]
 
     @property
     def trusted_proxy_networks(self) -> list[Network]:
