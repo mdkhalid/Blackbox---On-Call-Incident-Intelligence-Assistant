@@ -19,7 +19,9 @@ Prometheus metrics with SLO/error-budget alert rules, optional OpenTelemetry tra
 and Loki/Tempo/collector configs, GitOps/canary reference, load/chaos assets, global
 per-tenant quotas, pen-test checklist, secret-rotation runbook, synthetic probe, on-call
 runbook, External Secrets wiring, and the CI coverage/image/SBOM plus Terraform validate/scan
-gates; only the Terraform backend shapes remain. Phase 2 open items are the live-cluster
+gates; remaining Phase 4 items are the Terraform backend shapes (blocked on the benchmark),
+runtime warm-up, global per-tenant concurrency, error tracking, per-region probes,
+dependency/secret scanning and applying Terraform. Phase 2 open items are the live-cluster
 backend benchmark and global concurrency (Phase 4).
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE

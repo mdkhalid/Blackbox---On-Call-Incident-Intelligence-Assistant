@@ -5,7 +5,9 @@ jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform A
 image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, Grafana/
 Loki/Tempo configs, GitOps/canary reference, load/chaos assets, global per-tenant quotas,
 pen-test checklist, secret-rotation runbook, synthetic probe, on-call runbook, External
-Secrets and CI image/security gates landed; the Terraform backend shapes remain.**
+Secrets and CI image/security gates landed; remaining Phase 4 items are the Terraform backend
+shapes (blocked on the benchmark), runtime warm-up, global per-tenant concurrency, error
+tracking, per-region probes, dependency/secret scanning and applying Terraform.**
 This document is the production contract for the codebase: target architecture, capacity
 model, tenancy, retrieval migration, runtime, operations and the phased path from the current
 single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
