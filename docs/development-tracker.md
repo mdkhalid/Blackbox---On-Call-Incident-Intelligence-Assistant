@@ -438,12 +438,12 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-12 | Phase 3: shared Redis job store + handler registry + `python -m blackbox.worker`; retention is a job | ✅ | local |
 | 2026-11-12 | Phase 3: staged ingest with validation and alias swap (abort keeps the old version serving) | ✅ | local |
 | 2026-11-12 | Phase 3 complete: 454 tests green, `ruff`/`mypy` clean; compose gains a worker service | ✅ | local |
-| 2026-11-13 | Phase 4: Prometheus registry + `/metrics` + HTTP/SSE/retrieval/LLM/queue instrumentation | ✅ | local |
-| 2026-11-13 | Phase 4: Helm chart (API, worker, migration Job, HPA/KEDA, PDB, NetworkPolicy, Ingress, ServiceMonitor) | ✅ | local |
-| 2026-11-13 | Phase 4: unprivileged image; `alembic.ini`/migrations shipped for the migration Job | ✅ | local |
-| 2026-11-13 | Phase 4: recording rules + multi-window error-budget and SLO alerts | ✅ | local |
-| 2026-11-13 | Phase 4: CI coverage gate, chart lint/render + kubeconform, image build, Trivy scan, SPDX SBOM | ✅ | local |
-| 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | local |
+| 2026-11-13 | Phase 4: Prometheus registry + `/metrics` + HTTP/SSE/retrieval/LLM/queue instrumentation | ✅ | `18c0266` |
+| 2026-11-13 | Phase 4: Helm chart (API, worker, migration Job, HPA/KEDA, PDB, NetworkPolicy, Ingress, ServiceMonitor) | ✅ | `18c0266` |
+| 2026-11-13 | Phase 4: unprivileged image; `alembic.ini`/migrations shipped for the migration Job | ✅ | `18c0266` |
+| 2026-11-13 | Phase 4: recording rules + multi-window error-budget and SLO alerts | ✅ | `18c0266` |
+| 2026-11-13 | Phase 4: CI coverage gate, chart lint/render + kubeconform, image build, Trivy scan, SPDX SBOM | ✅ | `18c0266` |
+| 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | `18c0266` |
 
 ## 12. Update protocol
 
