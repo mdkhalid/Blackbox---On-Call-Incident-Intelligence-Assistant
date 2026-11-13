@@ -34,9 +34,16 @@ async def ready(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=503, detail="storage unavailable") from exc
 
+    if getattr(request.app.state, "warmup_attempted", False) and not getattr(
+        services, "runtime_ready", False
+    ):
+        detail = getattr(request.app.state, "warmup_error", None) or "runtime unavailable"
+        raise HTTPException(status_code=503, detail=detail)
+
     return {
         "status": "ok",
         "env": settings.env,
         "storage": services.storage_backend or "unknown",
+        "runtime": "ready" if getattr(services, "runtime_ready", False) else "cold",
         "cache": type(services.cache_backend).__name__ if services.cache_backend else "off",
     }

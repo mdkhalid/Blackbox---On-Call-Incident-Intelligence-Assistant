@@ -390,24 +390,22 @@ queue.
 
 ### Remaining to close Phase 4
 
-- [ ] **Terraform backend shapes** (blocked): OpenSearch, Qdrant, WAF, Route 53 — waiting on
-      the Phase 2 backend benchmark decision (OpenSearch-only vs Qdrant+OpenSearch).
-- [ ] **Terraform apply**: first `terraform plan`/apply against a real AWS account; review
-      regional engine versions and quotas.
-- [ ] **Runtime warm-up at pod start**: build the retriever/LLM during lifespan so readiness
-      does not pass before they exist; needs storage + runtime ordering and a test update.
-- [ ] **Global per-tenant concurrency**: move `try_acquire_tenant` from per-pod counters to a
-      Redis-backed counter so one tenant cannot exceed the limit across replicas.
-- [ ] **Error tracking**: wire an error tracker (Sentry or equivalent) with release/version
-      tags; currently only structured logs and traces.
-- [ ] **Per-region synthetic probes**: schedule `scripts/smoke_probe.py` as a CronJob in each
-      region; alert on failure.
-- [ ] **Dependency and secret scanning in CI**: add `pip-audit`/`npm audit` equivalent and a
-      secret scanner (gitleaks/trufflehog) to the workflow.
-- [ ] **Run the load/chaos suites** against a staging cluster and record the measured
-      capacity vs the provisional SLOs.
-- [ ] **Live-cluster backend benchmark**: run `scripts/benchmark_backends.py` against
-      Qdrant + OpenSearch and record the decision in §9.
+- [x] **Terraform backend shapes**: optional OpenSearch domain, WAFv2 web ACL and Route 53
+      zone added behind feature flags (`enable_opensearch`, `enable_waf`, `enable_route53`);
+      OpenSearch vs Qdrant shape still follows the Phase 2 benchmark, but the module is
+      ready.
+- [x] **Runtime warm-up at pod start**: lifespan now calls `ensure_runtime()` before serving;
+      `/health/ready` reports `runtime` state and returns 503 when warm-up was attempted but
+      failed.
+- [x] **Error tracking**: optional Sentry init from `SENTRY_DSN` (fail-open; extra `sentry`).
+- [x] **Per-region synthetic probes**: `deploy/probes/synthetic-probe-cronjob.yaml`.
+- [ ] **Global per-tenant concurrency**: still per-pod; needs a Redis-backed counter (carried).
+- [ ] **Dependency and secret scanning in CI**: add `pip-audit` and a secret scanner.
+- [ ] **Terraform apply**: first `terraform plan`/apply against a real AWS account.
+- [ ] **Live-cluster backend benchmark**: run `scripts/benchmark_backends.py` and record
+      the OpenSearch-only vs Qdrant+OpenSearch decision in §9.
+- [ ] **Run the load/chaos suites** against a staging cluster and record measured capacity
+      vs the provisional SLOs.
 
 - [ ] Tenant home-region routing (DNS/GSLB)
 - [ ] Regional Postgres with cross-region DR; failover runbook

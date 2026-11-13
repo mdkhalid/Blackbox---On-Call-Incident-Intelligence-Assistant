@@ -324,3 +324,34 @@ variable "secret_recovery_window_days" {
     error_message = "Use 0 or 7-30 days; Secrets Manager rejects other values."
   }
 }
+# ---- backend shapes (Phase 2 benchmark decides the final shape) ---------------
+
+variable "enable_opensearch" {
+  description = "Create a managed OpenSearch domain for the sparse retrieval leg. Leave false until the Phase 2 backend benchmark picks OpenSearch-only vs Qdrant+OpenSearch."
+  type        = bool
+  default     = false
+}
+
+variable "opensearch_instance_type" {
+  description = "Instance type for the optional OpenSearch domain."
+  type        = string
+  default     = "t3.small.search"
+}
+
+variable "enable_waf" {
+  description = "Create a regional WAFv2 web ACL for the ALB. Associate it with the ingress ALB ARN via aws_wafv2_web_acl_association in your overlay."
+  type        = bool
+  default     = false
+}
+
+variable "enable_route53" {
+  description = "Create a Route 53 hosted zone for var.domain_name. Records are managed in the overlay."
+  type        = bool
+  default     = false
+}
+
+variable "domain_name" {
+  description = "Public domain name for the optional Route 53 zone."
+  type        = string
+  default     = ""
+}

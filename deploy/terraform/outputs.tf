@@ -119,3 +119,20 @@ output "helm_values_hint" {
     "worker.keda.tls"              = "true"
   }
 }
+
+# ---- optional backend shapes --------------------------------------------------
+
+output "opensearch_endpoint" {
+  description = "OpenSearch domain endpoint when enable_opensearch is true."
+  value       = var.enable_opensearch ? aws_opensearch_domain.search[0].endpoint : null
+}
+
+output "waf_web_acl_arn" {
+  description = "WAFv2 web ACL ARN when enable_waf is true."
+  value       = var.enable_waf ? aws_wafv2_web_acl.main[0].arn : null
+}
+
+output "route53_zone_id" {
+  description = "Route 53 hosted zone id when enable_route53 is true."
+  value       = var.enable_route53 && var.domain_name != "" ? aws_route53_zone.main[0].zone_id : null
+}

@@ -1,0 +1,33 @@
+# Synthetic probe CronJob. Runs the standard-library probe against the public URL
+# every 5 minutes and fails the job (alertable) on any check failure.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: blackbox-synthetic-probe
+  namespace: blackbox
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: probe
+              image: python:3.11-slim
+              command:
+                - python
+                - -c
+                - |
+                  import urllib.request, sys
+                  for path in ("/health", "/health/ready"):
+                      with urllib.request.urlopen("http://blackbox.blackbox.svc:80" + path, timeout=10) as r:
+                          assert r.status == 200, path
+                  with urllib.request.urlopen("http://blackbox.blackbox.svc:80/metrics", timeout=10) as r:
+                      body = r.read().decode()
+                      assert "blackbox_build_info" in body
+                  print("probe: OK")

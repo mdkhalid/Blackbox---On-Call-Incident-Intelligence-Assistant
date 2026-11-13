@@ -356,6 +356,12 @@ class Settings(BaseSettings):
     otel_ignore_paths: str = Field(
         default="/health,/health/ready,/metrics", alias="OTEL_IGNORE_PATHS"
     )
+    # Optional error tracking. Empty disables it; the SDK is an optional dependency.
+    sentry_dsn: str | None = Field(default=None, alias="SENTRY_DSN")
+    sentry_environment: str | None = Field(default=None, alias="SENTRY_ENVIRONMENT")
+    sentry_traces_sample_rate: float = Field(
+        default=0.0, alias="SENTRY_TRACES_SAMPLE_RATE"
+    )
     # Global per-tenant LLM/token quotas. Disabled by default; enable in prod with a
     # shared Redis so every replica sees the same budget.
     tenant_quota_enabled: bool = Field(default=False, alias="TENANT_QUOTA_ENABLED")
@@ -432,11 +438,11 @@ class Settings(BaseSettings):
             raise ValueError("OTEL_EXPORTER_TIMEOUT_S must be > 0")
         return v
 
-    @field_validator("tenant_quota_tokens_per_day", "tenant_quota_llm_calls_per_day")
+    @field_validator("sentry_traces_sample_rate")
     @classmethod
-    def quota_positive(cls, v):
-        if v < 1:
-            raise ValueError("tenant quota limits must be >= 1")
+    def sentry_sample_rate_range(cls, v):
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("SENTRY_TRACES_SAMPLE_RATE must be in [0,1]")
         return v
 
     @model_validator(mode="after")

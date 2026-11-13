@@ -24,9 +24,11 @@ from blackbox.api.routes.operations import router as operations_router
 from blackbox.api.routes.ui import router as ui_router
 from blackbox.api.services import AppServices, build_services
 from blackbox.config.settings import Settings, get_settings
-from blackbox.logging_setup import setup_logging
+from blackbox.logging_setup import get_logger, setup_logging
 from blackbox.observability.metrics import set_build_info
 from blackbox.observability.tracing import configure_tracing, shutdown_tracing
+
+logger = get_logger(__name__)
 
 
 def create_app(settings: Settings | None = None, *, services: AppServices | None = None):
@@ -36,11 +38,39 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = settings
+        app.state.settings = settings
         app.state.services = services or build_services(settings)
+        app.state.warmup_attempted = False
+        app.state.warmup_error = None
         setup_logging(settings)
+        if settings.sentry_dsn:
+            try:
+                import sentry_sdk
+
+                sentry_sdk.init(
+                    dsn=settings.sentry_dsn,
+                    environment=settings.sentry_environment or settings.env,
+                    release=__version__,
+                    traces_sample_rate=settings.sentry_traces_sample_rate,
+                )
+                logger.info("sentry_enabled")
+            except ImportError:  # pragma: no cover - optional dependency
+                logger.warning(
+                    "sentry_sdk_unavailable",
+                    hint="pip install sentry-sdk",
+                )
         configure_tracing(settings)
         set_build_info(__version__, settings.env)
-        # LangGraph offloads any synchronous node to the event loop's default
+        # Warm up the runtime (retriever + LLM) before serving traffic so the
+        # first chat does not pay cold start. A failure is logged but does not
+        # stop the pod; /health/ready reports the runtime state.
+        app.state.warmup_attempted = True
+        try:
+            await asyncio.to_thread(app.state.services.ensure_runtime)
+        except Exception as exc:  # noqa: BLE001 - warm-up is best effort
+            app.state.warmup_error = str(exc)
+            logger.warning("runtime_warmup_failed", error=str(exc))
+        # LangGraph offloads...
         # executor. The default is `min(32, cpu_count + 4)`, which ties the request
         # path's concurrency to the machine size; bounding it explicitly makes the
         # ceiling a configured number rather than an accident of the host.

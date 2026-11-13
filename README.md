@@ -94,10 +94,10 @@ Phase 4 progress so far:
   password key.
 - **CI:** coverage gate, chart lint/render with kubeconform, Terraform fmt/validate + Trivy
   config, image build, Trivy scan and SPDX SBOM.
-Still open in Phase 4: OpenSearch/Qdrant are added to Terraform once the backend benchmark
-decides their shape; runtime warm-up, global per-tenant concurrency, error tracking,
-per-region synthetic probes, dependency/secret scanning in CI and applying Terraform to a
-real account. Global per-tenant *token and LLM-call* quotas are now shared when enabled.
+Still open in Phase 4: OpenSearch/Qdrant Terraform modules are optional until the backend
+benchmark decides their shape; global per-tenant *concurrency* is still per-pod; token and
+LLM-call quotas are now shared when enabled; dependency/secret scanning in CI, applying
+Terraform and the live-cluster benchmark remain.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint

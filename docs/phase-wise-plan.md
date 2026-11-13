@@ -14,15 +14,15 @@ The original assignment is complete. Further work is tracked separately:
   decisions and change log. Update it with every production PR.
 Current production state: **Phase 4 (Kubernetes and operations) in progress**. Phase 3
 (async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package, the AWS
-Terraform reference (EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA), unprivileged image,
-Prometheus metrics with SLO/error-budget alert rules, optional OpenTelemetry tracing, Grafana
-and Loki/Tempo/collector configs, GitOps/canary reference, load/chaos assets, global
-per-tenant quotas, pen-test checklist, secret-rotation runbook, synthetic probe, on-call
-runbook, External Secrets wiring, and the CI coverage/image/SBOM plus Terraform validate/scan
-gates; remaining Phase 4 items are the Terraform backend shapes (blocked on the benchmark),
-runtime warm-up, global per-tenant concurrency, error tracking, per-region probes,
-dependency/secret scanning and applying Terraform. Phase 2 open items are the live-cluster
-backend benchmark and global concurrency (Phase 4).
+Terraform reference (EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA + optional OpenSearch/
+WAF/Route 53), unprivileged image, Prometheus metrics with SLO/error-budget alert rules,
+optional OpenTelemetry tracing, Grafana and Loki/Tempo/collector configs, GitOps/canary
+reference, load/chaos assets, global per-tenant quotas, pen-test checklist, secret-rotation
+runbook, synthetic probe, on-call runbook, runtime warm-up, optional Sentry, External Secrets
+wiring, and the CI coverage/image/SBOM plus Terraform validate/scan gates; remaining Phase 4
+items are global per-tenant concurrency, dependency/secret scanning in CI, applying Terraform
+to a real account, the live-cluster backend benchmark and running the load/chaos suites.
+Phase 2 open items are the live-cluster backend benchmark and global concurrency (Phase 4).
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
