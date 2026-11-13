@@ -81,6 +81,8 @@ Phase 4 progress so far:
   ([`blackbox/api/quotas.py`](blackbox/api/quotas.py)) with a Redis-backed shared budget and
   local fallback, plus [`docs/pen-test-checklist.md`](docs/pen-test-checklist.md) and
   [`docs/secret-rotation-runbook.md`](docs/secret-rotation-runbook.md).
+- **Synthetic probe and on-call runbook:** [`scripts/smoke_probe.py`](scripts/smoke_probe.py)
+  and [`docs/on-call-runbook.md`](docs/on-call-runbook.md).
 - **AWS reference infrastructure:** [`deploy/terraform`](deploy/terraform) — VPC with flow
   logs, EKS (private endpoint by default, CMK-encrypted Secrets, tainted batch node group),
   Aurora PostgreSQL 16 with an RDS-managed password, ElastiCache Redis with TLS and

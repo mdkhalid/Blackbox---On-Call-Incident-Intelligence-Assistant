@@ -4,8 +4,8 @@ Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, asyn
 jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference,
 image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, Grafana/
 Loki/Tempo configs, GitOps/canary reference, load/chaos assets, global per-tenant quotas,
-pen-test checklist, secret-rotation runbook, External Secrets and CI image/security gates
-landed; the Terraform backend shapes remain.**
+pen-test checklist, secret-rotation runbook, synthetic probe, on-call runbook, External
+Secrets and CI image/security gates landed; the Terraform backend shapes remain.**
 This document is the production contract for the codebase: target architecture, capacity
 model, tenancy, retrieval migration, runtime, operations and the phased path from the current
 single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
@@ -513,7 +513,8 @@ the retrieval stores are replaced there. Tenant offboarding and global quotas ar
 - [x] OpenTelemetry traces to an OTLP collector (optional `otel` extra; no-op when disabled)
 - [x] Grafana overview dashboard + Prometheus/Loki/Tempo provisioning
 - [x] Secret rotation runbook and pen-test checklist (`docs/`)
-- [ ] Synthetic probes and on-call runbooks
+- [x] Synthetic probe (`scripts/smoke_probe.py`) and on-call runbook (`docs/on-call-runbook.md`)
+- [ ] Multi-region failover and RTO/RPO drill
 - [ ] Multi-region failover and RTO/RPO drill
 - [x] Image scan/SBOM (CI: Trivy + SPDX)
 - [ ] Dependency and secret scanning in CI

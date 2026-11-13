@@ -109,6 +109,8 @@ Last updated: 2026-11-13
 - **Quotas and runbooks**: global per-tenant LLM/token quotas (`blackbox/api/quotas.py`,
   Redis-backed with local fallback, wired into chat admission and turn recording),
   `docs/pen-test-checklist.md` and `docs/secret-rotation-runbook.md`.
+- **Synthetic probes and on-call runbook**: `scripts/smoke_probe.py` and
+  `docs/on-call-runbook.md`.
 - **CI:** coverage gate (80%, currently 81.2%), chart lint/render with kubeconform, Docker
   image build, Trivy scan and SPDX SBOM.
 - **Terraform reference** (`deploy/terraform`): a self-contained AWS root module — VPC with
@@ -174,6 +176,8 @@ infrastructure slices of Phase 4 are complete**.
 14. ✅ Global per-tenant LLM/token quotas + pen-test checklist + secret-rotation runbook;
     `blackbox/api/quotas.py`, `tests/test_quotas.py`, `docs/pen-test-checklist.md`,
     `docs/secret-rotation-runbook.md`.
+15. ✅ Synthetic probe and on-call runbook — `scripts/smoke_probe.py`,
+    `docs/on-call-runbook.md`, `tests/test_smoke_probe.py`.
 
 **Next: finish Phase 4, in this order.**
 1. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
@@ -379,6 +383,7 @@ queue.
       canary with SLO analysis, canary Service, README)
 - [x] Load tests at target concurrency; failure injection (assets + success criteria; run pending)
 - [x] Pen-test checklist and secret rotation (`docs/pen-test-checklist.md`, `docs/secret-rotation-runbook.md`)
+- [x] Synthetic probe and on-call runbook (`scripts/smoke_probe.py`, `docs/on-call-runbook.md`)
 - [x] Global per-tenant LLM/token quotas (Redis-backed, fail open)
 - [x] Pen-test checklist and secret rotation (`docs/pen-test-checklist.md`,
       `docs/secret-rotation-runbook.md`)
@@ -454,6 +459,7 @@ queue.
 | 2026-11-13 | Canary analysis uses the recorded SLO metrics | Accepted | The same queries as the alert rules; a canary fails on the same signal an operator would page on |
 | 2026-11-13 | Load harness is standard-library only | Accepted | No new dependency in the default install; CI and operators can run it anywhere Python runs |
 | 2026-11-13 | Chaos experiments are namespace-scoped references | Accepted | They are runbooks in YAML form; nothing is applied by default |
+| 2026-11-13 | Synthetic probe is standard-library only | Accepted | It runs from any CronJob or uptime checker without installing dependencies |
 | 2026-11-13 | Global per-tenant quotas are Redis-backed with local fallback | Accepted | Shared budget across pods; fails open if Redis is down, matching rate limiting |
 | 2026-11-13 | Quotas are enforced at chat admission and recorded after the turn | Accepted | Rejecting before the turn avoids spending; recording after captures real usage |
 | 2026-11-13 | EKS API endpoint is private by default | Accepted | The API server is the highest-value target; a VPN or bastion costs less than a public endpoint |
