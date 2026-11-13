@@ -23,8 +23,9 @@ Last updated: 2026-11-13
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
 | Stores | Postgres/SQLite conversation + entity store |
-| Deployment | Docker Compose (two-replica smoke) + Helm chart (`deploy/helm/blackbox`) |
+| Deployment | Docker Compose (two-replica smoke) + Helm chart (`deploy/helm/blackbox`) + AWS Terraform reference (`deploy/terraform`) |
 | Observability | Prometheus `/metrics` + recording/alert rules; OTel/Grafana/Loki/Tempo pending |
+| Secrets | External Secrets example consuming Terraform-managed Secrets Manager entries; no static keys in pods |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
 ## 2. Current status (2026-11-12)
@@ -88,14 +89,25 @@ Last updated: 2026-11-13
   (`deploy/observability/prometheus-rules.yaml`).
 - **CI:** coverage gate (80%, currently 80.6%), chart lint/render with kubeconform, Docker
   image build, Trivy scan and SPDX SBOM.
+- **Terraform reference** (`deploy/terraform`): a self-contained AWS root module — VPC with
+  flow logs, EKS (private endpoint by default, CMK-encrypted Secrets, managed node groups,
+  taints for workers), Aurora PostgreSQL 16 with an RDS-managed master password, ElastiCache
+  Redis with TLS + `noeviction`, a versioned KMS-encrypted S3 trace archive, KMS keys and
+  Secrets Manager. IRSA roles are split: the app can write traces but not read secrets, the
+  External Secrets controller can read secrets but has no S3 access. Validated with
+  `terraform fmt`/`validate` and a Trivy config scan (no HIGH/CRITICAL); not applied, because
+  there is no AWS account in this environment.
+- **External Secrets example** (`deploy/external-secrets`): assembles the chart's
+  `existingSecret` from the Terraform secrets plus the RDS-managed credential, including the
+  `REDIS_PASSWORD` key KEDA's scaler needs.
 - **Bug fixed:** `python -m blackbox.worker` imported the empty routes package, not the
   operations module, so a fresh worker registered no job handlers. It now imports
   `blackbox.api.routes.operations`; a subprocess test proves every job kind is registered.
 - 465 tests green, `ruff`/`mypy` clean.
 
-**Next:** finish Phase 4 — Terraform reference (EKS/Aurora/ElastiCache/S3/KMS), OpenTelemetry
-traces, Grafana dashboards + Loki/Tempo, GitOps/canary delivery, load and failure-injection
-suites, and the pen-test/secret-rotation checklist.
+**Next:** finish Phase 4 — OpenTelemetry traces, Grafana dashboards + Loki/Tempo, GitOps/canary
+delivery, load and failure-injection suites, and the pen-test/secret-rotation checklist.
+OpenSearch/Qdrant remain unwritten in Terraform until the Phase 2 benchmark decides the shape.
 **Not started:** Phase 5 multi-region/DR.
 
 ### Resume point (next session)
@@ -105,8 +117,8 @@ clean (100 source files), coverage 80.6% (gate 80%); Docker CLI present but the 
 not running during this session, so CI images were validated by the workflow definition, not
 a local build. Helm 3.16 was used to lint/render the chart.
 Phase 1 (control plane), the audit remediation, Phase 2 (retrieval migration and tenant
-isolation), Phase 3 (async runtime and jobs) and the **deployment/observability slice of
-Phase 4 are complete**.
+isolation), Phase 3 (async runtime and jobs) and the **deployment, observability and
+infrastructure slices of Phase 4 are complete**.
 
 **Phase 4 delivered:**
 1. ✅ Metrics — `blackbox/observability/metrics.py`, `/metrics` route, HTTP/SSE/retrieval/LLM/
@@ -119,21 +131,26 @@ Phase 4 are complete**.
 5. ✅ CI — coverage gate, chart lint/render + kubeconform, image build, Trivy, SPDX SBOM.
 6. ✅ Worker registration fix — `blackbox/worker.py` now imports the operations module;
    `tests/test_worker_entrypoint.py` guards it in a fresh interpreter.
+7. ✅ Terraform reference — `deploy/terraform` (VPC/flow logs, EKS, Aurora, ElastiCache, S3
+   traces, KMS, Secrets Manager, IRSA for app + External Secrets); `terraform validate` clean,
+   Trivy config clean at HIGH/CRITICAL; CI job added. Not applied (no AWS account).
+8. ✅ External Secrets example — `deploy/external-secrets` builds the chart's
+   `existingSecret` from Terraform's secrets and documents the rotation/restart step.
+9. ✅ CI Terraform job — `terraform fmt -check`, `init -backend=false`, `validate`, Trivy config.
 
 **Next: finish Phase 4, in this order.**
-1. Terraform reference: EKS, Aurora Postgres, ElastiCache Redis, S3 (trace archive), KMS,
-   Secrets Manager/External Secrets, then OpenSearch/Qdrant once the backend benchmark is
-   decided. No local cluster is available, so the module must be `terraform validate`-clean
-   and documented rather than applied.
-2. OpenTelemetry traces across HTTP → graph node → retrieval store → LLM → DB; Grafana
+1. OpenTelemetry traces across HTTP → graph node → retrieval store → LLM → DB; Grafana
    dashboards over the metric names in `deploy/observability/README.md`; Loki/Tempo.
-3. GitOps delivery with a canary/blue-green strategy (the migration Job already exists).
-4. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
-5. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
+2. GitOps delivery with a canary/blue-green strategy (the migration Job already exists).
+3. Load tests at target concurrency and failure injection (pod/AZ/store/provider).
+4. Pen-test checklist and secret-rotation runbook; global per-tenant quotas.
+5. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
 
 **Carried over (infra-bound):**
 - Qdrant+OpenSearch vs OpenSearch-only benchmark — `scripts/benchmark_backends.py` needs
   live clusters; record the decision in §9.
+- Terraform has not been applied to a real account; the first `terraform plan` still needs a
+  review (Aurora engine availability per region, account quotas, existing EKS add-ons).
 - Global per-tenant LLM/token quotas — Phase 4.
 - Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are
   built; first chat pays cold start).
@@ -147,6 +164,8 @@ Phase 4 are complete**.
 .\.venv\Scripts\python.exe -m mypy blackbox
 helm lint deploy/helm/blackbox -f deploy/helm/blackbox/values-prod.example.yaml
 helm template blackbox deploy/helm/blackbox --namespace blackbox | less
+cd deploy\terraform; terraform fmt -check -recursive; terraform init -backend=false; terraform validate
+trivy config --severity HIGH,CRITICAL deploy\terraform
 ```
 
 **Commands (Docker / live cluster):**
@@ -190,7 +209,7 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Async graph + workers | 3 | ✅ | async graph/providers/stores; SSE cancellation; shared Redis queue + handler registry + worker process; graceful drain |
 | Staged ingest + alias swap | 3 | ✅ | validate documents/chunks/tenant coverage before `swap_alias`; abort keeps the old version |
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
-| Kubernetes/Helm/Terraform | 4 | ◐ | Helm chart complete (API, worker, migration Job, HPA, KEDA, PDB, NetPol, Ingress, ServiceMonitor); Terraform reference open |
+| Kubernetes/Helm/Terraform | 4 | ◐ | Helm chart complete (API, worker, migration Job, HPA, KEDA, PDB, NetPol, Ingress, ServiceMonitor); Terraform AWS reference complete and validate/scan-clean; OpenSearch/Qdrant pending the benchmark |
 | Observability stack | 4 | ◐ | Prometheus `/metrics` + recording/SLO alert rules done; OpenTelemetry, Grafana dashboards, Loki/Tempo open |
 | CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM done; GitOps/canary open |
 | Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
@@ -306,7 +325,10 @@ queue.
 ## 6. Phase 4 — Kubernetes and operations
 
 - [x] Helm chart: API, workers, HPA/KEDA, PDB, NetworkPolicies
-- [ ] Terraform: EKS, Aurora, ElastiCache, SQS/MSK, OpenSearch, Qdrant, S3, KMS, WAF
+- [x] Terraform: VPC/EKS, Aurora, ElastiCache, S3 trace archive, KMS, Secrets Manager, IRSA
+- [ ] Terraform: OpenSearch/Qdrant (blocked on the Phase 2 backend benchmark), WAF, Route 53
+- [x] External Secrets example for the chart's `existingSecret` + rotation notes
+- [ ] SQS/MSK (not needed: the queue is Redis; revisit only if the job queue outgrows it)
 - [x] Ingress SSE config: buffering off, idle timeout, body cap, TLS
 - [x] Startup/readiness/liveness probes — startup `/health`, readiness `/health/ready`, liveness `/health`
 - [ ] Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are built)
@@ -315,6 +337,7 @@ queue.
 - [ ] OpenTelemetry traces/logs; Grafana dashboards; Loki/Tempo
 - [x] GitHub Actions: lint, tests, migration check
 - [x] CI: coverage (80% gate), image scan/SBOM (Trivy + Syft), image build, chart validation (mypy is done)
+- [x] CI: `terraform fmt -check`, `init -backend=false`, `validate` and Trivy config scan
 - [x] Migration Job (Helm pre-install/pre-upgrade `alembic upgrade head`)
 - [ ] GitOps + canary/blue-green delivery
 - [ ] Load tests at target concurrency; failure injection
@@ -381,6 +404,12 @@ queue.
 | 2026-11-13 | Chart ships NetworkPolicy disabled by default | Accepted | The allowlist is cluster-specific; the prod example enables it with an explicit ingress/monitoring/store policy |
 | 2026-11-13 | Container runs as uid/gid 10001 | Accepted | Matches PodSecurity restricted; the chart sets the same identity so no volume chown surprise |
 | 2026-11-13 | CI coverage gate is 80% | Accepted | Current coverage is 80.6%; high enough to catch an untested module, low enough not to reward assertion-free tests |
+| 2026-11-13 | Terraform reference is a flat root module, no registry modules | Accepted | The plan is reviewable in this repo, `validate` works offline, and a registry module's defaults would hide the security decisions |
+| 2026-11-13 | EKS API endpoint is private by default | Accepted | The API server is the highest-value target; a VPN or bastion costs less than a public endpoint |
+| 2026-11-13 | Aurora uses the RDS-managed master password | Accepted | No credential in state or tfvars; pointing it at a CMK needs an extra grant for the RDS service role, documented as a follow-up |
+| 2026-11-13 | Two IRSA roles: app (S3 traces) and External Secrets (read secrets) | Accepted | A compromised pod should not be able to read the database password just because it can archive traces |
+| 2026-11-13 | Redis `maxmemory-policy = noeviction` | Accepted | The instance shares the job queue and idempotency keys with caches; eviction would silently drop work |
+| 2026-11-13 | Terraform is validated, not applied | Accepted | There is no AWS account in this environment; the first plan needs a human review for regional engine versions and quotas |
 
 ## 10. Open questions
 
@@ -443,6 +472,8 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-13 | Phase 4: unprivileged image; `alembic.ini`/migrations shipped for the migration Job | ✅ | `18c0266` |
 | 2026-11-13 | Phase 4: recording rules + multi-window error-budget and SLO alerts | ✅ | `18c0266` |
 | 2026-11-13 | Phase 4: CI coverage gate, chart lint/render + kubeconform, image build, Trivy scan, SPDX SBOM | ✅ | `18c0266` |
+| 2026-11-13 | Phase 4: Terraform AWS reference (VPC/EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA) + External Secrets example | ✅ | local |
+| 2026-11-13 | Phase 4: Terraform CI job (`fmt -check`, `init -backend=false`, `validate`, Trivy config) | ✅ | local |
 | 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | `18c0266` |
 
 ## 12. Update protocol

@@ -100,7 +100,8 @@ curl -fsS localhost:8000/metrics | head
 ## Known limits of this chart
 
 - No bundled Postgres/Redis/OpenSearch/Qdrant. Managed stores are the target; the
-  Terraform reference is a Phase 4 deliverable.
+  [`deploy/terraform`](../terraform) AWS reference creates Aurora, ElastiCache and the S3
+  trace archive, and [`deploy/external-secrets`](../external-secrets) wires the secrets in.
 - The migration hook assumes the `alembic` CLI and `alembic/` directory are in the
   image (the repository Dockerfile ships them).
 - NetworkPolicy defaults are disabled because the allowlist is cluster-specific.

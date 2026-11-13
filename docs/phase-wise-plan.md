@@ -13,11 +13,12 @@ The original assignment is complete. Further work is tracked separately:
 - [`development-tracker.md`](development-tracker.md) — living checklist, status dashboard,
   decisions and change log. Update it with every production PR.
 Current production state: **Phase 4 (Kubernetes and operations) in progress**. Phase 3
-(async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package,
-unprivileged image, Prometheus metrics with SLO/error-budget alert rules, and the CI
-coverage/image/SBOM gates; Terraform, OpenTelemetry, Grafana/Loki/Tempo, GitOps, load/chaos
-and the runbooks remain. Phase 2 open items are the live-cluster backend benchmark and global
-quotas (Phase 4).
+(async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package, the AWS
+Terraform reference (EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA), unprivileged image,
+Prometheus metrics with SLO/error-budget alert rules, External Secrets wiring, and the CI
+coverage/image/SBOM plus Terraform validate/scan gates; OpenTelemetry, Grafana/Loki/Tempo,
+GitOps, load/chaos and the runbooks remain. Phase 2 open items are the live-cluster backend
+benchmark and global quotas (Phase 4).
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.

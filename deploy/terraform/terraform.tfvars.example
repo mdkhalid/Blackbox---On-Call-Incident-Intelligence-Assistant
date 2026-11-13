@@ -1,0 +1,55 @@
+# Copy to terraform.tfvars and edit. Everything here is environment-specific;
+# secrets are not (they are generated or read from Secrets Manager).
+
+aws_region  = "eu-west-1"
+environment = "prod"
+
+# The VPC and cluster. Keep 3 AZs: the chart's topology spread and Aurora's
+# failover both assume at least three.
+vpc_cidr                 = "10.60.0.0/16"
+availability_zone_count  = 3
+single_nat_gateway       = false
+enable_interface_vpc_endpoints = false
+
+# No public Kubernetes endpoint by default. Add your office/VPN egress ranges if
+# CI must reach the API directly.
+cluster_endpoint_public_access       = false
+cluster_endpoint_public_access_cidrs = []
+
+cluster_admin_principal_arns = [
+  # "arn:aws:iam::111122223333:role/PlatformAdmin",
+]
+
+kubernetes_version = "1.35"
+
+system_instance_types = ["m6i.large"]
+system_node_min       = 3
+system_node_desired   = 3
+system_node_max       = 9
+
+batch_instance_types = ["m6i.xlarge"]
+batch_node_min       = 1
+batch_node_desired   = 1
+batch_node_max       = 12
+
+# Data plane. r6g/r7g are Graviton: cheaper per unit of work and fine for
+# PostgreSQL and Redis.
+aurora_engine_version       = "16.4"
+aurora_instance_class       = "db.r6g.large"
+aurora_instance_count       = 2
+database_backup_retention_days = 14
+database_deletion_protection   = true
+
+redis_engine_version    = "7.1"
+redis_node_type         = "cache.r7g.large"
+redis_replica_count     = 1
+
+# Traces: 30 days hot-ish, 90 days Glacier IR, deleted after seven years.
+trace_ia_transition_days      = 30
+trace_glacier_transition_days = 90
+trace_object_expiration_days  = 2555
+
+namespace            = "blackbox"
+service_account_name = "blackbox"
+
+enable_external_secrets = true

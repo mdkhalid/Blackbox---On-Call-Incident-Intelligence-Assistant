@@ -1,13 +1,13 @@
 # Scaling & Production Readiness — Blackbox
 
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
-jobs); Phase 4 (Kubernetes and operations) in progress — Helm, image hardening, Prometheus
-metrics/SLO alerts and CI image/security gates landed; Terraform, OpenTelemetry, Grafana/
-Loki/Tempo, GitOps, load/chaos and the runbooks remain.** This document
-is the production contract for the codebase: target architecture, capacity model, tenancy,
-retrieval migration, runtime, operations and the phased path from the current single-node demo
-to an org-wide, multi-region service. It is deliberately explicit about what is **implemented
-now** versus **planned**.
+jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference,
+image hardening, Prometheus metrics/SLO alerts, External Secrets and CI image/security gates
+landed; OpenTelemetry, Grafana/Loki/Tempo, GitOps, load/chaos and the runbooks remain.**
+This document is the production contract for the codebase: target architecture, capacity
+model, tenancy, retrieval migration, runtime, operations and the phased path from the current
+single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
+is **implemented now** versus **planned**.
 
 Target deployment: Kubernetes (AWS EKS reference), org-wide scale (thousands of concurrent
 conversations, 10M+ chunks, multi-region, strict tenant isolation).
@@ -307,9 +307,17 @@ with tenant affinity.
 > chart in [`deploy/helm/blackbox`](../deploy/helm/blackbox): API and worker Deployments,
 > HPA and KEDA, PodDisruptionBudgets, topology spread, SSE-correct Ingress annotations,
 > NetworkPolicy templates, a ServiceMonitor, and an `alembic upgrade head` Job that runs as a
-> pre-install/pre-upgrade hook. The image runs as uid/gid 10001. The Terraform reference is
-> **not** written yet; the chart is provider-agnostic and expects managed Postgres/Redis and
-> external Qdrant/OpenSearch.
+> pre-install/pre-upgrade hook. The image runs as uid/gid 10001.
+>
+> The AWS half is written as a self-contained Terraform root module in
+> [`deploy/terraform`](../deploy/terraform): VPC with flow logs, EKS (private endpoint by
+> default, CMK-encrypted Secrets, tainted batch node group, managed add-ons), Aurora
+> PostgreSQL 16 with an RDS-managed master password, ElastiCache Redis with TLS and
+> `noeviction`, a versioned KMS-encrypted S3 trace archive, and split IRSA roles for the app
+> and External Secrets. It is `terraform validate`- and Trivy config-clean, but has **not been
+> applied** (no AWS account here), and it deliberately excludes OpenSearch/Qdrant until the
+> Phase 2 benchmark decides the shape. [`deploy/external-secrets`](../deploy/external-secrets)
+> assembles the chart's `existingSecret` from those secrets.
 >
 > Runtime warm-up is still open: readiness calls `/health/ready` (which checks the
 > conversation store) but does not build the retriever or LLM, so the first chat after a pod
@@ -406,7 +414,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Prometheus/SLO alerts + CI image/scan/SBOM done; Terraform, OTel, Grafana/Loki/Tempo, GitOps, load/chaos, runbooks open |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + External Secrets + CI image/scan/SBOM done; OpenTelemetry, Grafana/Loki/Tempo, GitOps, load/chaos, runbooks open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)

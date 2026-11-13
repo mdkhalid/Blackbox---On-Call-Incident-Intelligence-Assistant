@@ -34,6 +34,8 @@ The original assignment is complete. Work beyond it is tracked in two living doc
 - [`deploy/helm/blackbox`](deploy/helm/blackbox) and
   [`deploy/observability`](deploy/observability) — the Helm deployment package and the
   Prometheus metric/alert contract.
+- [`deploy/terraform`](deploy/terraform) and [`deploy/external-secrets`](deploy/external-secrets)
+  — the AWS reference infrastructure and the External Secrets wiring for the chart.
 
 Open defects and scaling gaps found by the code audit (all reproduced against the running
 code) are collected in
@@ -61,11 +63,20 @@ Phase 4 progress so far:
   (`blackbox_http_*`, `blackbox_sse_active_streams`, retrieval stages, LLM calls/tokens/errors,
   job queue depth), with recording and multi-window burn-rate alert rules in
   [`deploy/observability`](deploy/observability).
-- **CI:** coverage gate, chart lint/render with kubeconform, image build, Trivy scan and
-  SPDX SBOM.
-Still open in Phase 4: Terraform (EKS/Aurora/ElastiCache/S3), OpenTelemetry traces, Grafana
-dashboards and Loki/Tempo, GitOps/canary delivery, load and failure-injection suites, and the
-pen-test/secret-rotation checklist.
+- **AWS reference infrastructure:** [`deploy/terraform`](deploy/terraform) — VPC with flow
+  logs, EKS (private endpoint by default, CMK-encrypted Secrets, tainted batch node group),
+  Aurora PostgreSQL 16 with an RDS-managed password, ElastiCache Redis with TLS and
+  `noeviction`, a versioned KMS-encrypted S3 trace archive, and split IRSA roles for the app
+  and External Secrets. `terraform validate`- and Trivy config-clean; not applied (no AWS
+  account available here).
+- **Secrets:** [`deploy/external-secrets`](deploy/external-secrets) assembles the chart's
+  `existingSecret` from Secrets Manager, including the RDS-managed credential and the KEDA
+  password key.
+- **CI:** coverage gate, chart lint/render with kubeconform, Terraform fmt/validate + Trivy
+  config, image build, Trivy scan and SPDX SBOM.
+Still open in Phase 4: OpenTelemetry traces, Grafana dashboards and Loki/Tempo, GitOps/canary
+delivery, load and failure-injection suites, and the pen-test/secret-rotation checklist.
+OpenSearch/Qdrant are added to Terraform once the backend benchmark decides their shape.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
