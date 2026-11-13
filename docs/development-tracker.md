@@ -472,8 +472,8 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-13 | Phase 4: unprivileged image; `alembic.ini`/migrations shipped for the migration Job | ✅ | `18c0266` |
 | 2026-11-13 | Phase 4: recording rules + multi-window error-budget and SLO alerts | ✅ | `18c0266` |
 | 2026-11-13 | Phase 4: CI coverage gate, chart lint/render + kubeconform, image build, Trivy scan, SPDX SBOM | ✅ | `18c0266` |
-| 2026-11-13 | Phase 4: Terraform AWS reference (VPC/EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA) + External Secrets example | ✅ | local |
-| 2026-11-13 | Phase 4: Terraform CI job (`fmt -check`, `init -backend=false`, `validate`, Trivy config) | ✅ | local |
+| 2026-11-13 | Phase 4: Terraform AWS reference (VPC/EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA) + External Secrets example | ✅ | `b5b8658` |
+| 2026-11-13 | Phase 4: Terraform CI job (`fmt -check`, `init -backend=false`, `validate`, Trivy config) | ✅ | `b5b8658` |
 | 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | `18c0266` |
 
 ## 12. Update protocol
