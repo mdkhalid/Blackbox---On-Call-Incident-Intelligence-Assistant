@@ -356,6 +356,15 @@ class Settings(BaseSettings):
     otel_ignore_paths: str = Field(
         default="/health,/health/ready,/metrics", alias="OTEL_IGNORE_PATHS"
     )
+    # Global per-tenant LLM/token quotas. Disabled by default; enable in prod with a
+    # shared Redis so every replica sees the same budget.
+    tenant_quota_enabled: bool = Field(default=False, alias="TENANT_QUOTA_ENABLED")
+    tenant_quota_tokens_per_day: int = Field(
+        default=1000000, alias="TENANT_QUOTA_TOKENS_PER_DAY"
+    )
+    tenant_quota_llm_calls_per_day: int = Field(
+        default=1000, alias="TENANT_QUOTA_LLM_CALLS_PER_DAY"
+    )
 
     @field_validator("llm_timeout_s")
     @classmethod
@@ -421,6 +430,13 @@ class Settings(BaseSettings):
     def otel_timeout_positive(cls, v):
         if v <= 0:
             raise ValueError("OTEL_EXPORTER_TIMEOUT_S must be > 0")
+        return v
+
+    @field_validator("tenant_quota_tokens_per_day", "tenant_quota_llm_calls_per_day")
+    @classmethod
+    def quota_positive(cls, v):
+        if v < 1:
+            raise ValueError("tenant quota limits must be >= 1")
         return v
 
     @model_validator(mode="after")

@@ -123,6 +123,16 @@ async def chat(
                     headers={"Retry-After": "1"},
                 )
 
+    if services.settings.tenant_quota_enabled:
+        quota = await services.ensure_tenant_quota()
+        allowed, reason, retry_after = await quota.check(tenant_id)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"tenant quota exceeded: {reason}",
+                headers={"Retry-After": str(retry_after or 1)},
+            )
+
     if not services.try_acquire_tenant(tenant_id):
         await _release_idempotency_lock()
         raise HTTPException(
@@ -254,6 +264,16 @@ async def chat(
                 db_span.set_attribute(
                     "db.status", str(result.get("status") or "error")
                 )
+
+                if services.settings.tenant_quota_enabled:
+                    quota = await services.ensure_tenant_quota()
+                    await quota.record(
+                        tenant_id,
+                        tokens=int(
+                            (result.get("usage") or {}).get("total_tokens") or 0
+                        ),
+                        llm_calls=int(result.get("llm_calls") or 0),
+                    )
 
                 final_payload = {
                     "conversation_id": conversation_id,

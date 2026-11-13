@@ -39,6 +39,7 @@ class AppServices:
     cache_backend: Any | None = None
     lock_engine: Any | None = None
     rate_limiter: Any | None = None
+    tenant_quota: Any | None = None
     trace_archive: Any | None = None
 
     conversation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
@@ -266,6 +267,27 @@ class AppServices:
                 self.settings, self.config, fallback
             )
             return self.rate_limiter
+
+    async def ensure_tenant_quota(self):
+        """Redis-backed quota limiter when reachable, local fallback otherwise."""
+        if self.tenant_quota is not None:
+            return self.tenant_quota
+        async with self._rate_limiter_lock:
+            if self.tenant_quota is not None:
+                return self.tenant_quota
+            from blackbox.api.quotas import (
+                LocalTenantQuotaLimiter,
+                build_tenant_quota_limiter,
+            )
+
+            fallback = LocalTenantQuotaLimiter(
+                token_limit=self.settings.tenant_quota_tokens_per_day,
+                call_limit=self.settings.tenant_quota_llm_calls_per_day,
+            )
+            self.tenant_quota = await build_tenant_quota_limiter(
+                self.settings, self.config, fallback
+            )
+            return self.tenant_quota
 
     def try_acquire_tenant(self, tenant_id: str) -> bool:
         """Per-process admission control for concurrent turns of one tenant."""

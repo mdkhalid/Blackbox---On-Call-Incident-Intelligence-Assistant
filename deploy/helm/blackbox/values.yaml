@@ -75,6 +75,11 @@ config:
   LLM_MAX_RETRIES: "2"
   LLM_MAX_CONCURRENCY: "8"
   MAX_WORKER_THREADS: "32"
+  # Global per-tenant LLM/token quotas (disabled by default). Enable with a shared
+  # Redis so every replica sees the same budget.
+  TENANT_QUOTA_ENABLED: "false"
+  TENANT_QUOTA_TOKENS_PER_DAY: "1000000"
+  TENANT_QUOTA_LLM_CALLS_PER_DAY: "1000"
   # Distributed tracing is opt-in. The image ships the `otel` extra; set
   # OTEL_ENABLED=true and point the endpoint at an OTLP/HTTP collector
   # (deploy/observability has a collector, Tempo and Grafana example).

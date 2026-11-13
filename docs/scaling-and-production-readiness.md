@@ -3,8 +3,9 @@
 Status: **Phases 0–3 complete (control plane, retrieval/tenant isolation, async runtime and
 jobs); Phase 4 (Kubernetes and operations) in progress — Helm, the Terraform AWS reference,
 image hardening, Prometheus metrics/SLO alerts, optional OpenTelemetry tracing, Grafana/
-Loki/Tempo configs, GitOps/canary reference, load/chaos assets, External Secrets and CI
-image/security gates landed; quotas and the runbooks remain.**
+Loki/Tempo configs, GitOps/canary reference, load/chaos assets, global per-tenant quotas,
+pen-test checklist, secret-rotation runbook, External Secrets and CI image/security gates
+landed; the Terraform backend shapes remain.**
 This document is the production contract for the codebase: target architecture, capacity
 model, tenancy, retrieval migration, runtime, operations and the phased path from the current
 single-node demo to an org-wide, multi-region service. It is deliberately explicit about what
@@ -434,7 +435,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 1 | Auth/tenant scoping, Alembic, Redis limits/idempotency, dedicated lock pool, LLM timeout/retry/circuit breaker, body limits, readiness, multi-pod smoke | ✅ Done (control plane) |
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
-| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + load/chaos assets + External Secrets + CI image/scan/SBOM done; quotas, runbooks open |
+| 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ◐ Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + load/chaos assets + global per-tenant quotas + pen-test/rotation runbooks + External Secrets + CI image/scan/SBOM done; Terraform backend shapes open |
 | 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
 
 ### Audit remediation (complete, 2026-11-11)
@@ -511,7 +512,8 @@ the retrieval stores are replaced there. Tenant offboarding and global quotas ar
 - [x] Recording rules and SLO/error-budget alerts (`deploy/observability`)
 - [x] OpenTelemetry traces to an OTLP collector (optional `otel` extra; no-op when disabled)
 - [x] Grafana overview dashboard + Prometheus/Loki/Tempo provisioning
-- [ ] Synthetic probes, on-call runbooks and error tracking
+- [x] Secret rotation runbook and pen-test checklist (`docs/`)
+- [ ] Synthetic probes and on-call runbooks
 - [ ] Multi-region failover and RTO/RPO drill
 - [x] Image scan/SBOM (CI: Trivy + SPDX)
 - [ ] Dependency and secret scanning in CI
