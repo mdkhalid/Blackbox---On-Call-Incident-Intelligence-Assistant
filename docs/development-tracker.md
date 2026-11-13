@@ -552,6 +552,7 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-13 | Phase 4: load test harness and Chaos Mesh failure-injection experiments | ✅ | `00b44b7` |
 | 2026-11-13 | Phase 4: global per-tenant LLM/token quotas (Redis-backed, fail open) + pen-test checklist + secret-rotation runbook | ✅ | `741ac75` |
 | 2026-11-13 | Phase 4: synthetic probe and on-call runbook | ✅ | `24fd5aa` |
+| 2026-11-13 | Phase 4: runtime warm-up, optional Sentry, Terraform backend shapes (OpenSearch/WAF/Route 53) and synthetic probe CronJob | ✅ | `11684bf` |
 | 2026-11-13 | Phase 4: optional OpenTelemetry tracing — no-op facade, `otel` extra, spans for HTTP/chat/graph/retrieval/LLM/DB, trace id in logs | ✅ | `43683cc` |
 | 2026-11-13 | Phase 4: chart OTEL env + prod collector endpoint/NetworkPolicy egress; image installs the `otel` extra | ✅ | `43683cc` |
 | 2026-11-13 | Phase 4: Grafana overview dashboard + Prometheus/Loki/Tempo datasource provisioning | ✅ | `6a9af95` |
