@@ -367,14 +367,17 @@ class OpenSearchSparseStore:
         success, _failed = helpers.bulk(self.client, actions, chunk_size=500, refresh=True)
         return int(success)
 
-    def delete_by_doc(self, doc_id: str) -> None:
-        """Remove every chunk belonging to a document."""
+    def delete_by_doc(self, doc_id: str, *, tenant_id: str | None = None) -> None:
+        """Remove every chunk belonging to a document (within one tenant when given)."""
         target = self.write_target
         if not self.client.indices.exists(index=target):
             return
+        must: list[dict] = [{"term": {"doc_id": doc_id}}]
+        if tenant_id is not None:
+            must.append({"term": {"tenant_id": tenant_id}})
         self.client.delete_by_query(
             index=target,
-            body={"query": {"term": {"doc_id": doc_id}}},
+            body={"query": {"bool": {"must": must}}},
             refresh=True,
         )
 

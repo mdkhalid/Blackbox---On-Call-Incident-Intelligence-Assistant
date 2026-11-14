@@ -31,12 +31,16 @@ class TenantQuotaLimiter(Protocol):
 
 
 def _seconds_until_utc_midnight() -> int:
+    """Seconds until the next UTC midnight.
+
+    Computed from timestamps rather than date arithmetic: `date.replace(day=day + 1)`
+    raises `ValueError` on the last day of a month, and the old code executed that
+    branch before discarding its result, so quota accounting failed every month-end.
+    """
     now = datetime.now(UTC)
-    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if tomorrow <= now:
-        tomorrow = tomorrow.replace(day=tomorrow.day + 1)
-    # datetime has no +days helper that rolls months; use timestamp math instead.
-    midnight_ts = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()) + 86400
+    midnight_ts = int(
+        now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    ) + 86400
     return max(1, midnight_ts - int(now.timestamp()))
 
 

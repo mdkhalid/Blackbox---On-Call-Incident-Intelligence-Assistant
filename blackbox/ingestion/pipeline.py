@@ -84,26 +84,29 @@ class IngestionPipeline:
         doc.metadata["doc_type"] = doc_type
         doc.metadata["tenant_id"] = self.tenant_id
         h = content_hash(doc.raw)
-        existing = self.es.get_ingested(doc.doc_id)
+        # The ingest ledger and doc-entity table are keyed by document id; scope that
+        # id by tenant so two tenants ingesting the same corpus do not share a row.
+        ledger_id = f"{self.tenant_id}:{doc.doc_id}"
+        existing = self.es.get_ingested(ledger_id)
         if (
             not force
             and existing is not None
             and existing.content_hash == h
-            and self.vs.has_doc(doc.doc_id)
+            and self.vs.has_doc(doc.doc_id, tenant_id=self.tenant_id)
         ):
             return {"doc_id": doc.doc_id, "status": "skipped", "chunks": 0}
 
         # delete old
         if existing is not None:
-            self.vs.delete_by_doc(doc.doc_id)
+            self.vs.delete_by_doc(doc.doc_id, tenant_id=self.tenant_id)
             if self.sparse is not None:
-                self.sparse.delete_by_doc(doc.doc_id)
+                self.sparse.delete_by_doc(doc.doc_id, tenant_id=self.tenant_id)
             if self.shadow is not None:
                 try:
-                    self.shadow.delete_by_doc(doc.doc_id)
+                    self.shadow.delete_by_doc(doc.doc_id, tenant_id=self.tenant_id)
                 except Exception:  # noqa: BLE001, S110
                     pass
-            self.es.delete_doc_entities(doc.doc_id)
+            self.es.delete_doc_entities(ledger_id)
 
         # extract entities
         known_services = doc.metadata.get("services")
@@ -120,9 +123,9 @@ class IngestionPipeline:
             self.es.upsert_dependency(src, dst)
         # doc entities
         for svc in (known_services or ents.services):
-            self.es.add_doc_entity(doc.doc_id, "service", svc)
+            self.es.add_doc_entity(ledger_id, "service", svc)
         for ec in ents.error_codes:
-            self.es.add_doc_entity(doc.doc_id, "error_code", ec)
+            self.es.add_doc_entity(ledger_id, "error_code", ec)
 
         # chunk
         chunks = list(chunker(doc))
@@ -141,7 +144,7 @@ class IngestionPipeline:
                 except Exception:  # noqa: BLE001, S110
                     pass
             total += n
-        self.es.record_ingested(doc.doc_id, h, [c.chunk_id for c in chunks])
+        self.es.record_ingested(ledger_id, h, [c.chunk_id for c in chunks])
         return {"doc_id": doc.doc_id, "status": "ingested", "chunks": total}
 
     def ingest_directory(

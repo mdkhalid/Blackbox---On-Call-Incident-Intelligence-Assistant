@@ -90,16 +90,27 @@ class QdrantVectorStore:
         self._client.upsert(collection_name=self.collection_name, points=points)
         return len(ids)
 
-    def delete_by_doc(self, doc_id: str) -> None:
+    @staticmethod
+    def _doc_must(qm, doc_id: str, tenant_id: str | None) -> list:
+        must = [
+            qm.FieldCondition(key="metadata.doc_id", match=qm.MatchValue(value=doc_id))
+        ]
+        if tenant_id is not None:
+            must.append(
+                qm.FieldCondition(
+                    key="metadata.tenant_id", match=qm.MatchValue(value=tenant_id)
+                )
+            )
+        return must
+
+    def delete_by_doc(self, doc_id: str, *, tenant_id: str | None = None) -> None:
         from qdrant_client.http import models as qm
 
         try:
             self._client.delete(
                 collection_name=self.collection_name,
                 points_selector=qm.FilterSelector(
-                    filter=qm.Filter(
-                        must=[qm.FieldCondition(key="metadata.doc_id", match=qm.MatchValue(value=doc_id))]
-                    )
+                    filter=qm.Filter(must=self._doc_must(qm, doc_id, tenant_id))
                 ),
             )
         except Exception:  # noqa: BLE001, S110
@@ -112,14 +123,14 @@ class QdrantVectorStore:
         except Exception:  # noqa: BLE001
             return 0
 
-    def has_doc(self, doc_id: str) -> bool:
+    def has_doc(self, doc_id: str, *, tenant_id: str | None = None) -> bool:
         from qdrant_client.http import models as qm
 
         try:
             res, _ = self._client.scroll(
                 collection_name=self.collection_name,
                 scroll_filter=qm.Filter(
-                    must=[qm.FieldCondition(key="metadata.doc_id", match=qm.MatchValue(value=doc_id))]
+                    must=self._doc_must(qm, doc_id, tenant_id)
                 ),
                 limit=1,
                 with_payload=False,
@@ -227,7 +238,10 @@ class QdrantVectorStore:
         points, _ = self._client.scroll(
             collection_name=self.collection_name, limit=10_000, with_payload=True, with_vectors=False
         )
-        ids = [p.id for p in points]
+        # The dense leg must expose the same chunk ids the sparse leg indexes, not the
+        # uuid5 point ids: fusion merges on `chunk_id`, and mismatch silently doubles
+        # every hit under the Qdrant backend.
+        ids = [(p.payload or {}).get("chunk_id", p.id) for p in points]
         docs = [(p.payload or {}).get("text", "") for p in points]
         metas = [(p.payload or {}).get("metadata", {}) for p in points]
         return {"ids": ids, "documents": docs, "metadatas": metas}

@@ -67,9 +67,20 @@ class ConversationMemory:
             logger, node="summarize", response=response,
             duration_ms=(time.perf_counter() - started) * 1000,
         )
-        self.summary.text = truncate_to_tokens(
+        candidate = truncate_to_tokens(
             (response.text or "").strip(), self.config.summary_max_tokens
         )
+        if not candidate.strip():
+            # A failed or refused generation must not erase the accumulated summary.
+            # Keeping it (and the turns it covers) is strictly safer than dropping
+            # both, and the next turn retries the compression.
+            logger.warning(
+                "summary_compaction_empty",
+                fold_count=fold_count,
+                preserved_turns=len(self.working.turns),
+            )
+            return False
+        self.summary.text = candidate
         self.summary.turns_since_compression = 0
         self.summary.compression_count += 1
         self.working.drop(fold_count)

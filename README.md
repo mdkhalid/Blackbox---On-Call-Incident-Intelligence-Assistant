@@ -111,8 +111,11 @@ Tenant write ownership is explicit: `tenant_regions` in Postgres maps each tenan
 home region, and `REGION_WRITE_PINNING=true` makes an access that reaches the wrong
 region return `421` with `X-Blackbox-Home-Region` instead of writing another region's
 database. `DATABASE_READ_URL` can point reads at an intra-region replica; writes always
-use `DATABASE_URL`. Postgres RLS receives `app.tenant_id` per transaction, so it is a
-live backstop rather than a latent policy.
+use `DATABASE_URL`. Postgres RLS receives `app.tenant_id` per transaction (the
+repository binds it) and migration `0006` forces RLS so the table owner cannot bypass
+it. The 2026-11-14 audit found the earlier wiring claim was false and the tenant was
+never bound; that is fixed and covered by a regression test. See
+[`docs/production-audit-2026-11-14.md`](docs/production-audit-2026-11-14.md).
 
 Per-region retrieval is configuration: Qdrant replication/shard counts, the OpenSearch
 replica count, and `OPENSEARCH_ALIAS` for the versioned/alias cutover. A region whose

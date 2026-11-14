@@ -416,10 +416,13 @@ with tenant affinity.
 > claim is advisory. `REGION_WRITE_PINNING` rejects a conversation access that reaches a
 > non-home region with `421` and `X-Blackbox-Home-Region`, and the read path can use an
 > intra-region replica (`DATABASE_READ_URL`) while writes always use the writer. The
-> Postgres RLS policies from migration 0002 now receive `app.tenant_id` per transaction
-> (`set_config(..., true)` in `blackbox/db.py`), so the backstop is live rather than
-> latent. Engines set `pool_pre_ping` and bounded pool sizes, so an endpoint flip on
-> failover heals instead of surfacing stale-connection errors.
+> Postgres RLS policies receive `app.tenant_id` per transaction: the repository binds
+> the tenant around every call (`set_current_tenant` in `blackbox/db.py`), and migration
+> `0006_rls_force` adds `FORCE ROW LEVEL SECURITY` so the table owner cannot bypass the
+> policies. **Correction (2026-11-14 audit):** the earlier state note described this as
+> wired when only the hook existed and nothing bound the GUC; that was wrong and is now
+> fixed and regression-tested. Engines set `pool_pre_ping` and bounded pool sizes, so an
+> endpoint flip on failover heals instead of surfacing stale-connection errors.
 >
 > Per-region retrieval: Qdrant replication/shard counts and the OpenSearch replica count
 > are configuration, and `OPENSEARCH_ALIAS` makes the existing versioned/alias cutover

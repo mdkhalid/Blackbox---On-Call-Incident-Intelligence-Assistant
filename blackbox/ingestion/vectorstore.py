@@ -37,9 +37,15 @@ class ChromaVectorStore:
         )
         return len(ids)
 
-    def delete_by_doc(self, doc_id: str) -> None:
+    @staticmethod
+    def _doc_where(doc_id: str, tenant_id: str | None) -> dict:
+        if tenant_id is None:
+            return {"doc_id": doc_id}
+        return {"$and": [{"doc_id": doc_id}, {"tenant_id": tenant_id}]}
+
+    def delete_by_doc(self, doc_id: str, *, tenant_id: str | None = None) -> None:
         try:
-            self.collection.delete(where={"doc_id": doc_id})
+            self.collection.delete(where=self._doc_where(doc_id, tenant_id))
         except Exception:  # noqa: BLE001, S110
             pass
 
@@ -54,11 +60,13 @@ class ChromaVectorStore:
             return 0
         return len(result.get("ids") or [])
 
-    def has_doc(self, doc_id: str) -> bool:
+    def has_doc(self, doc_id: str, *, tenant_id: str | None = None) -> bool:
         """Whether any chunk for this document is actually present in the collection."""
         try:
             result = self.collection.get(
-                where={"doc_id": doc_id}, limit=1, include=["metadatas"]
+                where=self._doc_where(doc_id, tenant_id),
+                limit=1,
+                include=["metadatas"],
             )
         except Exception:  # noqa: BLE001 - an empty/missing collection means "not present"
             return False

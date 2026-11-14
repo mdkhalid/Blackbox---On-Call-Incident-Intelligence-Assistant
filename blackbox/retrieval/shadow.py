@@ -12,7 +12,9 @@ import asyncio
 import time
 from typing import Any
 
+from blackbox.config.settings import get_settings
 from blackbox.logging_setup import get_logger
+from blackbox.pii import summarize_query
 
 logger = get_logger(__name__)
 
@@ -86,7 +88,7 @@ class ShadowingRetriever:
             shadow_result = shadow.retrieve_detailed(query, **kwargs)
             elapsed = round((time.perf_counter() - started) * 1000, 2)
         except Exception as exc:  # noqa: BLE001 - shadow must never break the request
-            logger.warning("retrieval_shadow_failed", query=query[:120], error=str(exc))
+            logger.warning("retrieval_shadow_failed", query=summarize_query(query, get_settings().query_log_mode), error=str(exc))
             return
 
         primary_ids = {getattr(c, "chunk_id", None) for c in getattr(primary_result, "chunks", [])}
@@ -94,10 +96,10 @@ class ShadowingRetriever:
         if primary_ids != shadow_ids:
             logger.warning(
                 "retrieval_shadow_diff",
-                query=query[:120],
+                query=summarize_query(query, get_settings().query_log_mode),
                 primary_only=sorted(x for x in primary_ids - shadow_ids if x),
                 shadow_only=sorted(x for x in shadow_ids - primary_ids if x),
                 elapsed_ms=elapsed,
             )
         else:
-            logger.info("retrieval_shadow_match", query=query[:120], count=len(primary_ids), elapsed_ms=elapsed)
+            logger.info("retrieval_shadow_match", query=summarize_query(query, get_settings().query_log_mode), count=len(primary_ids), elapsed_ms=elapsed)

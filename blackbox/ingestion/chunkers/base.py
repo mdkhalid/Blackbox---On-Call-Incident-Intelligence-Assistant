@@ -144,6 +144,8 @@ def chunk_sections(
         limit = (section_max or {}).get(section, max_tokens)
         parts = split_text(text, limit)
         for i, part in enumerate(parts):
-            cid = make_chunk_id(doc.doc_id, section, i)
+            cid = make_chunk_id(
+                doc.doc_id, section, i, tenant_id=doc.metadata.get("tenant_id")
+            )
             md = make_metadata(doc, section, {"part": i, "tokens": count_tokens(part)})
             yield Chunk(chunk_id=cid, text=part, metadata=md)

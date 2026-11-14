@@ -36,7 +36,9 @@ def test_no_compression_below_trigger():
 def test_compression_keeps_only_recent_turns_verbatim():
     memory = _memory()
     for i in range(3):
-        memory.add_turn(f"user {i}", f"assistant {i}")
+        # The fake summarizer keeps incident-relevant sentences; a generic "assistant
+        # 0" produces an empty summary, which the compressor now treats as a failure.
+        memory.add_turn(f"user {i}", f"checked {i}; deploy ruled out for {i}")
 
     memory.maybe_compress(FakeLLMProvider())
     assert len(memory.working.turns) == memory.config.working_turns
@@ -72,6 +74,6 @@ def test_summary_respects_the_token_cap():
 def test_turns_since_compression_resets():
     memory = _memory()
     for i in range(3):
-        memory.add_turn(f"user {i}", f"assistant {i}")
+        memory.add_turn(f"user {i}", f"checked {i}; deploy ruled out for {i}")
     memory.maybe_compress(FakeLLMProvider())
     assert memory.summary.turns_since_compression == 0

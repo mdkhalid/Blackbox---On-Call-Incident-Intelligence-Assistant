@@ -253,12 +253,18 @@ async def offboard_tenant(
     """Offboard a tenant: remove its conversations, turns and index payloads."""
     if not tenant_id or tenant_id == "default":
         raise HTTPException(status_code=400, detail="invalid tenant_id")
+    # A tenant admin may only offboard their own tenant. Deleting another tenant's
+    # data requires an explicit platform-scoped role.
+    if tenant_id != principal.tenant_id and not principal.has_role("platform_admin"):
+        raise HTTPException(status_code=403, detail="not permitted for this tenant")
     services = get_services(request)
     try:
         await asyncio.to_thread(services.ensure_storage)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    removed = await asyncio.to_thread(services.conversations.delete_tenant, tenant_id)
+    removed = await asyncio.to_thread(
+        services.conversations.delete_tenant, tenant_id=tenant_id
+    )
     logger.info(
         "audit_admin_action",
         action="tenant_offboard",
@@ -294,33 +300,44 @@ async def run_retention(
     if background:
         job = services.submit_job(
             "retention",
-            {"days": days, "archive": archive},
+            {"days": days, "archive": archive, "tenant_id": principal.tenant_id},
             tenant_id=principal.tenant_id,
             subject=principal.subject,
         )
         response.status_code = 202
         return _job_response(job, "/api/admin/retention")
 
-    body = await asyncio.to_thread(_retention_body, services, days, archive)
+    body = await asyncio.to_thread(
+        _retention_body, services, days, archive, principal.tenant_id
+    )
     logger.info("audit_admin_action", action="retention", **body)
     return body
 
 
-def _retention_body(services, days: int, archive: bool) -> dict[str, Any]:
+def _retention_body(
+    services, days: int, archive: bool, tenant_id: str | None = None
+) -> dict[str, Any]:
+    # Retention is tenant-scoped: an admin's request must not prune the cluster.
     if archive:
         from blackbox.api.retention import archive_and_prune
 
         return archive_and_prune(
-            services.conversations, services.get_trace_archive(), days
+            services.conversations,
+            services.get_trace_archive(),
+            days,
+            tenant_id=tenant_id,
         )
-    removed = services.conversations.delete_older_than(days)
-    return {"days": days, "conversations_removed": removed}
+    removed = services.conversations.delete_older_than(days, tenant_id=tenant_id)
+    return {"days": days, "tenant_id": tenant_id, "conversations_removed": removed}
 
 
 def _run_retention(services, params: dict[str, Any]) -> dict[str, Any]:
     services.ensure_storage()
     body = _retention_body(
-        services, int(params.get("days", 90)), bool(params.get("archive", False))
+        services,
+        int(params.get("days", 90)),
+        bool(params.get("archive", False)),
+        params.get("tenant_id"),
     )
     logger.info("audit_admin_action", action="retention", **body)
     return body

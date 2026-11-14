@@ -36,11 +36,15 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     if settings is None:
         settings = get_settings()
 
+    # Build the container exactly once. Previously the lifespan built a second one and
+    # swapped `app.state.services`, leaving RateLimitMiddleware bound to an orphan that
+    # owned its own connection pool.
+    shared_services = services or build_services(settings)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = settings
-        app.state.settings = settings
-        app.state.services = services or build_services(settings)
+        app.state.services = shared_services
         app.state.warmup_attempted = False
         app.state.warmup_error = None
         setup_logging(settings)
@@ -92,14 +96,14 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     # Available before lifespan runs too (TestClient without a context manager, ASGI
     # servers that import the app without triggering startup).
     app.state.settings = settings
-    app.state.services = services or build_services(settings)
+    app.state.services = shared_services
     app.add_middleware(
         RateLimitMiddleware,
-        services=app.state.services,
+        services=shared_services,
     )
     app.add_middleware(
         BodyLimitMiddleware,
-        max_bytes=app.state.services.config.guardrails.max_request_bytes,
+        max_bytes=shared_services.config.guardrails.max_request_bytes,
     )
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)

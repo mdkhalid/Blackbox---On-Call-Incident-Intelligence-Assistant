@@ -239,7 +239,7 @@ class SparseRetriever:
             self.invalidate()
         return count
 
-    def delete_by_doc(self, doc_id: str) -> None:
+    def delete_by_doc(self, doc_id: str, *, tenant_id: str | None = None) -> None:
         """Accept a delete; the corpus itself comes from the dense store."""
         self.invalidate()
 

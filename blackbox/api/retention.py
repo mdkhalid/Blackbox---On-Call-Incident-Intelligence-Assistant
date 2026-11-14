@@ -52,12 +52,13 @@ def archive_and_prune(
             detail="TRACE_ARCHIVE_BACKEND=none; pruning without preserving turns",
         )
 
-    removed = repository.delete_turn_ids([turn.id for turn in turns])
+    removed = repository.delete_turn_ids(
+        [turn.id for turn in turns], tenant_id=tenant_id
+    )
     # Drop conversations whose last activity is older than the cutoff. Their turns
     # are gone either way; leaving the empty rows would leak tenant ids forever.
-    conversations_removed = 0
-    if tenant_id is None:
-        conversations_removed = repository.delete_older_than(days)
+    # The same tenant scope as the read, so a tenant admin cannot prune the cluster.
+    conversations_removed = repository.delete_older_than(days, tenant_id=tenant_id)
 
     body = {
         "days": days,

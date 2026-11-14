@@ -6,14 +6,22 @@ scoped by tenant, and cross-tenant access fails closed.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import wraps
 from typing import Any, Protocol
 
 from sqlalchemy import JSON, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from blackbox.db import build_engine, install_rls_hook, recreate, schema_is_current
+from blackbox.db import (
+    build_engine,
+    install_rls_hook,
+    recreate,
+    schema_is_current,
+    set_current_tenant,
+)
 from blackbox.memory import ConversationMemory
 
 DEFAULT_TENANT = "default"
@@ -21,6 +29,29 @@ DEFAULT_TENANT = "default"
 
 class ConversationTenantMismatch(LookupError):
     """The conversation id exists but belongs to another tenant."""
+
+
+def _binds_tenant(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Bind the repository call's tenant for the Postgres RLS hook.
+
+    The RLS policies compare `tenant_id` to the `app.tenant_id` session setting. The
+    hook that sets it reads a context variable, so every operation that has a tenant
+    must bind it for the duration of the call. A method without a tenant (a
+    cluster-wide maintenance query) runs with no binding and is therefore invisible
+    under RLS - which is the fail-closed behaviour we want.
+    """
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        tenant = kwargs.get("tenant_id")
+        if tenant is None and args:
+            first = args[0]
+            if isinstance(first, str) and getattr(self, "_tenant_first_arg", False):
+                tenant = first
+        with set_current_tenant(tenant):
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class Base(DeclarativeBase):
@@ -157,10 +188,14 @@ class ConversationRepository(Protocol):
     def turns_older_than(
         self, days: int, *, tenant_id: str | None = None
     ) -> list[TurnRecord]: ...
-    def delete_turn_ids(self, ids: list[int]) -> int: ...
+    def delete_turn_ids(
+        self, ids: list[int], *, tenant_id: str | None = None
+    ) -> int: ...
     def delete_tenant(self, tenant_id: str) -> int: ...
 
-    def delete_older_than(self, days: int) -> int: ...
+    def delete_older_than(
+        self, days: int, *, tenant_id: str | None = None
+    ) -> int: ...
     def turns_for_tenant(
         self, tenant_id: str, *, days: int | None = None, limit: int = 10000
     ) -> list[TurnRecord]: ...
@@ -305,16 +340,15 @@ class SqlAlchemyConversationRepository:
             rows = query.order_by(TurnRow.id).all()
             return [_turn(row) for row in rows]
 
-    def delete_turn_ids(self, ids: list[int]) -> int:
-        """Delete exactly the turns that were archived."""
+    def delete_turn_ids(self, ids: list[int], *, tenant_id: str | None = None) -> int:
+        """Delete exactly the turns that were archived, optionally for one tenant."""
         if not ids:
             return 0
         with self._session() as session:
-            removed = (
-                session.query(TurnRow)
-                .filter(TurnRow.id.in_(ids))
-                .delete(synchronize_session=False)
-            )
+            query = session.query(TurnRow).filter(TurnRow.id.in_(ids))
+            if tenant_id is not None:
+                query = query.filter(TurnRow.tenant_id == tenant_id)
+            removed = query.delete(synchronize_session=False)
             session.commit()
             return int(removed or 0)
 
@@ -337,18 +371,29 @@ class SqlAlchemyConversationRepository:
             session.commit()
             return int(convs or 0)
 
-    def delete_older_than(self, days: int) -> int:
-        """Delete conversations and turns older than ``days``. Returns conversations removed."""
+    def delete_older_than(
+        self, days: int, *, tenant_id: str | None = None
+    ) -> int:
+        """Delete conversations and turns older than ``days``.
+
+        Scoped to one tenant when `tenant_id` is given; a cluster-wide prune is only
+        reachable from a platform-scoped caller.
+        """
         if days < 0:
             raise ValueError("days must be >= 0")
         from datetime import UTC, datetime, timedelta
 
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         with self._session() as session:
-            session.query(TurnRow).filter(TurnRow.created_at < cutoff).delete()
-            convs = session.query(ConversationRow).filter(
+            turns = session.query(TurnRow).filter(TurnRow.created_at < cutoff)
+            convs_q = session.query(ConversationRow).filter(
                 ConversationRow.updated_at < cutoff
-            ).delete()
+            )
+            if tenant_id is not None:
+                turns = turns.filter(TurnRow.tenant_id == tenant_id)
+                convs_q = convs_q.filter(ConversationRow.tenant_id == tenant_id)
+            turns.delete(synchronize_session=False)
+            convs = convs_q.delete(synchronize_session=False)
             session.commit()
             return int(convs or 0)
 
@@ -603,7 +648,8 @@ class SqlAlchemyConversationRepository:
         turns = data.get("turns") or []
         written_convs = 0
         written_turns = 0
-        with self._session() as session:
+        # Bind explicitly: the exported payload carries the tenant, not the kwargs.
+        with set_current_tenant(tenant_id), self._session() as session:
             existing = {
                 row.id
                 for row in session.query(ConversationRow)
@@ -670,6 +716,35 @@ class SqlAlchemyConversationRepository:
                 row.status = status
                 row.updated_at = now
             session.commit()
+
+
+# Every repository operation that has a tenant binds it for the RLS hook. Applied at
+# class level so a new method cannot silently forget the binding.
+for _method_name in (
+    "get",
+    "get_or_create",
+    "save_state",
+    "append_turn",
+    "record_turn",
+    "get_turns",
+    "get_turns_page",
+    "count_turns",
+    "turns_older_than",
+    "delete_turn_ids",
+    "delete_tenant",
+    "delete_older_than",
+    "turns_for_tenant",
+    "last_turn",
+    "home_region",
+    "tenant_region_status",
+    "set_home_region",
+    "export_tenant",
+):
+    setattr(
+        SqlAlchemyConversationRepository,
+        _method_name,
+        _binds_tenant(getattr(SqlAlchemyConversationRepository, _method_name)),
+    )
 
 
 def _now() -> str:

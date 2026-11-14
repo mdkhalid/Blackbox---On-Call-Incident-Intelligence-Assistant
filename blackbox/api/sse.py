@@ -56,11 +56,17 @@ def chunk_trails(chunks: list[dict]) -> list[dict]:
     return [{key: chunk.get(key) for key in _CHUNK_FIELDS} for chunk in chunks]
 
 
+# Anything derived from model output before the ground check must not leave the
+# process. `answer` is the obvious one; `claims` and `verdicts` carry the same drafted
+# text in structured form, and finding 1 was re-opened through those fields once.
+_UNGROUNDED_FIELDS = ("trace", "answer", "claims", "verdicts")
+
+
 def public_update(values: dict) -> dict:
-    """Node update safe to put on the wire: no chunk text, no duplicated trace."""
+    """Node update safe to put on the wire: no ungrounded model text, no trace."""
     out: dict[str, Any] = {}
     for key, value in values.items():
-        if key in ("trace", "answer"):
+        if key in _UNGROUNDED_FIELDS:
             continue
         if key == "chunks" and isinstance(value, list):
             out[key] = chunk_trails(value)

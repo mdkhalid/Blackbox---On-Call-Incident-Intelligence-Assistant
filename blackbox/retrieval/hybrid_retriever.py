@@ -30,9 +30,10 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict, Field, PrivateAttr
 
-from blackbox.config.settings import RetrievalConfig
+from blackbox.config.settings import RetrievalConfig, get_settings
 from blackbox.ingestion.vectorstore import ChromaVectorStore
 from blackbox.logging_setup import get_logger
+from blackbox.pii import summarize_query
 from blackbox.retrieval.dense import DenseRetriever
 from blackbox.retrieval.filters import MetadataFilter, parse_filter
 from blackbox.retrieval.fusion import FusionConfig, fuse
@@ -206,7 +207,7 @@ class HybridRetriever(BaseRetriever):
                 results = [RetrievedChunk.from_cache_dict(item) for item in cached]
                 elapsed = round((time.perf_counter() - started) * 1000, 2)
                 logger.info(
-                    "retrieval_cache_hit", query=query[:120], returned=len(results)
+                    "retrieval_cache_hit", query=summarize_query(query, get_settings().query_log_mode), returned=len(results)
                 )
                 return RetrievalResult(
                     chunks=results,
@@ -277,7 +278,7 @@ class HybridRetriever(BaseRetriever):
                 results = [RetrievedChunk.from_cache_dict(item) for item in cached]
                 elapsed = round((time.perf_counter() - started) * 1000, 2)
                 logger.info(
-                    "retrieval_cache_hit", query=query[:120], returned=len(results)
+                    "retrieval_cache_hit", query=summarize_query(query, get_settings().query_log_mode), returned=len(results)
                 )
                 return RetrievalResult(
                     chunks=results,

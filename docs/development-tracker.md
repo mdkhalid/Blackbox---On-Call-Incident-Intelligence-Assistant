@@ -12,6 +12,7 @@ next.
 Last updated: 2026-11-14
 
 - **Remaining work:** §12 — pick-up list with blocker and "done when" per item.
+- **Latest audit:** [`production-audit-2026-11-14.md`](production-audit-2026-11-14.md).
 
 ---
 
@@ -20,7 +21,7 @@ Last updated: 2026-11-14
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 587 collected (575 passing, 12 skipped: live-cluster OpenSearch + opt-in Postgres/Redis), `ruff` clean, `mypy` clean, coverage 82.7% (gate 80%) |
+| Tests | 594 collected (582 passing, 12 skipped: live-cluster OpenSearch + opt-in Postgres/Redis), `ruff` clean, `mypy` clean, coverage 82.6% (gate 80%) |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
@@ -162,9 +163,10 @@ and opt-in store integration tests. **The full pick-up list is §12.**
 
 ### Resume point (next session)
 
-State: **587 tests collected (575 passing, 12 skipped: live-cluster OpenSearch and the
+State: **594 tests collected (582 passing, 12 skipped: live-cluster OpenSearch and the
 opt-in Postgres/Redis integration suites)**; `ruff` clean, `mypy` clean (109 source
-files), coverage 82.7% (gate 80%).
+files), coverage 82.6% (gate 80%). The 2026-11-14 audit's criticals are fixed; §12.4
+lists what remains.
 Phase 5 is implemented as a reference: application-level multi-region behaviour and
 drills run offline; the Terraform multi-region layer validates but was not applied
 (no AWS account), and Helm was not available locally this session (CI lints/renders it).
@@ -549,6 +551,13 @@ queue.
 | 2026-11-14 | The dollar budget rejects at admission (`budget_usd`) | Accepted | Rejecting before the turn avoids spending; recording after captures real usage |
 | 2026-11-14 | Query logs are hashed by default; `redact`/`raw` are explicit | Accepted | A hash keeps queries correlatable without storing content; raw text in logs is a compliance risk |
 | 2026-11-14 | Security headers are a pure-ASGI middleware; no CSP from the app | Accepted | `BaseHTTPMiddleware` interferes with SSE; the single-file viewer uses inline script, so the ingress owns any CSP |
+| 2026-11-14 | RLS tenant is bound in the repository, and `FORCE ROW LEVEL SECURITY` is set | Accepted | The GUC must be set where the tenant is known; documenting it as "wired" without a caller was wrong, and the owner bypass made the policies inert |
+| 2026-11-14 | No model-derived field (`answer`, `claims`, `verdicts`) is emitted before the ground check | Accepted | Finding 1 was fixed for `answer` only and re-opened through `claims`; the wire projection is now a deny-list of all pre-check output |
+| 2026-11-14 | Ingestion identity includes the tenant (chunk id, ledger, delete filters) | Accepted | Two tenants ingesting the same document id otherwise overwrite and delete each other |
+| 2026-11-14 | Admin offboarding and retention are tenant-scoped | Accepted | Cross-tenant deletion required only an admin token; `platform_admin` is the explicit scope for cluster-wide operations |
+| 2026-11-14 | One `AppServices` per process, built once | Accepted | Two containers meant two DB pools and middleware bound to an orphan |
+| 2026-11-14 | An empty compaction response is a failure, not a new summary | Accepted | Overwriting the summary and dropping the turns loses exactly the facts compression exists to preserve |
+| 2026-11-14 | Query text is logged only through the PII policy | Accepted | The setting existed but was unused while retrieval logged raw query prefixes at INFO |
 
 ## 10. Open questions
 
@@ -634,6 +643,9 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-14 | CI: `pip-audit` dependency audit and `gitleaks` secret scan; provider contract tests; opt-in Postgres/Redis integration tests | ✅ | local |
 | 2026-11-14 | Docs: production quick start, PII/query-logging policy, tracker reconciliation | ✅ | local |
 | 2026-11-14 | Docs: §12 remaining-work pick-up list (blockers, next step, done-when) | ✅ | local |
+| 2026-11-14 | Audit: full production/design review; 5 criticals + highs recorded in `production-audit-2026-11-14.md` | ✅ | local |
+| 2026-11-14 | Fix: tenant bound in repository + `FORCE RLS` (0006); SSE deny-list for `claims`/`verdicts`; tenant-scoped admin/retention; tenant-scoped ingestion; single `AppServices` | ✅ | local |
+| 2026-11-14 | Fix: month-end quota crash, retrieval deadline on the graph path, Qdrant chunk-id parity, empty-compaction guard, PII query logging | ✅ | local |
 
 ## 12. Remaining work (pick-up list)
 
@@ -700,7 +712,28 @@ re-deriving context.
 - **Decode-level token streaming**: tokens are emitted after the ground check, not
   during decode. Transport streaming is preserved; changing this is a product decision.
 
-### 12.4 Optional assignment bonus features
+### 12.4 Audit 2026-11-14 — remaining items
+
+See [`production-audit-2026-11-14.md`](production-audit-2026-11-14.md). The five
+criticals and the month-end/quota, retrieval-timeout, Qdrant-fusion, memory-compaction
+and PII-logging highs are fixed. These remain:
+
+- [ ] Ground check verifies only declared `claims`; answer prose absent from `claims`
+      ships unverified. Rewrite to verify sentence-by-sentence with a citation.
+- [ ] Readiness checks one dependency; add per-dependency state (`ok/degraded/down`),
+      a real `SELECT 1`, and a warm-up retry with a `blackbox_runtime_ready` gauge.
+- [ ] Lock/slot/idempotency release is not cancellation-safe (releases live in the
+      response generator's `finally`). Shield the cleanup and add a cancellation test.
+- [ ] Job worker runs `asyncio.run` per job, reusing loop-bound SDK/Redis clients;
+      move to one long-lived loop per worker thread.
+- [ ] Precision@k divides by `len(top)` after dedupe; fix the formula and regenerate
+      `docs/retrieval-results.md`.
+- [ ] Shadow retrieval is awaited, not background; dispatch it and test the latency
+      isolation.
+- [ ] Design consolidation: a real `Retriever` protocol, `JobStore.dequeue(kind)`,
+      a single Redis client factory, delete the dead settings.
+
+### 12.5 Optional assignment bonus features
 
 - [ ] Temporal weighting ("this is the third time this quarter").
 - [ ] Service aliases (`checkout-svc` ≈ `checkout-service` ≈ `CheckoutAPI`).
@@ -709,7 +742,7 @@ re-deriving context.
       the answer.
 - [ ] True provider token streaming with a shared JSON/answer streaming protocol.
 
-### 12.5 Resume commands
+### 12.6 Resume commands
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q --cov=blackbox --cov-fail-under=80

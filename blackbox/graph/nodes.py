@@ -30,6 +30,7 @@ from blackbox.memory.tokens import count_tokens
 from blackbox.observability.callbacks import log_llm_call
 from blackbox.observability.metrics import record_llm_error, record_retrieval
 from blackbox.observability.tracing import span
+from blackbox.pii import summarize_query
 from blackbox.retrieval.models import RetrievalResult
 
 logger = get_logger(__name__)
@@ -63,9 +64,18 @@ async def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
                 "retrieval.tenant_id": state.get("tenant_id"),
             },
         ) as retrieval_span:
-            result = await _aretrieve(
-                deps.retriever, query, top_k=deps.config.retrieval.top_k, filter=filters,
-                tenant_id=state.get("tenant_id"),
+            # Enforce the configured deadline on the path the graph actually uses.
+            # `aretrieve_detailed` has no internal wrapper, so a hung store would
+            # otherwise pin a worker thread, the turn lock and the tenant slot.
+            result = await asyncio.wait_for(
+                _aretrieve(
+                    deps.retriever,
+                    query,
+                    top_k=deps.config.retrieval.top_k,
+                    filter=filters,
+                    tenant_id=state.get("tenant_id"),
+                ),
+                timeout=deps.config.retrieval.retrieval_timeout_ms / 1000,
             )
             retrieval_span.set_attribute("retrieval.chunks", len(result.chunks))
             retrieval_span.set_attribute(
@@ -80,7 +90,11 @@ async def retrieve_node(state: GraphState, deps: GraphDeps) -> dict:
         record_retrieval(result.timings)
     except Exception as exc:  # noqa: BLE001 - a store failure must become an honest answer
         error = f"retrieval_failed:{type(exc).__name__}"
-        logger.warning("retrieve_node_failed", query=query[:120], error=error)
+        logger.warning(
+            "retrieve_node_failed",
+            query=summarize_query(query, deps.settings.query_log_mode),
+            error=error,
+        )
 
     timings["last_retrieve_ms"] = _elapsed(started)
 
