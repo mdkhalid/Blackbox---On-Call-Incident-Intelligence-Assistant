@@ -11,6 +11,8 @@ next.
 
 Last updated: 2026-11-14
 
+- **Remaining work:** §12 — pick-up list with blocker and "done when" per item.
+
 ---
 
 ## 1. Baseline
@@ -155,7 +157,7 @@ Last updated: 2026-11-14
 drills against live regional endpoints, and run the load/chaos suites for measured
 capacity. Everything code-doable is complete: global concurrency, dollar budgets, PII and
 query-log policy, security headers, dependency/secret scanning, provider contract tests
-and opt-in store integration tests.
+and opt-in store integration tests. **The full pick-up list is §12.**
 **Not started:** nothing new; the assignment and production phases 0–5 are implemented.
 
 ### Resume point (next session)
@@ -631,8 +633,93 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-14 | Hardening: global per-tenant concurrency (Redis slots + local fallback), dollar budget, PII/query-log policy, security headers | ✅ | local |
 | 2026-11-14 | CI: `pip-audit` dependency audit and `gitleaks` secret scan; provider contract tests; opt-in Postgres/Redis integration tests | ✅ | local |
 | 2026-11-14 | Docs: production quick start, PII/query-logging policy, tracker reconciliation | ✅ | local |
+| 2026-11-14 | Docs: §12 remaining-work pick-up list (blockers, next step, done-when) | ✅ | local |
 
-## 12. Update protocol
+## 12. Remaining work (pick-up list)
+
+Last completed commit: `65f09b3`. Everything code-doable through Phase 5 is in the
+repository; the items below need infrastructure, credentials, or a decision. Each one
+states the blocker and the "done when" so the next session can start without
+re-deriving context.
+
+### 12.1 Infrastructure-bound validation
+
+- [ ] **Apply the Terraform stack to a real AWS account**
+  - blocker: no AWS account/Credentials in this environment.
+  - next: `terraform init` with the S3 backend, then `plan` (review Aurora engine
+    availability per region, account quotas, existing EKS add-ons), then `apply` to a
+    staging account. For the DR pair, apply the primary region with
+    `terraform.tfvars.multiregion.example`, then instantiate the module in the secondary
+    region with `enable_multi_region=false` and the `aurora_global_cluster_id` /
+    `redis_global_replication_group_id` outputs.
+  - done when: the stack applies cleanly, the Helm release is healthy against it, and
+    the outputs feed `deploy/external-secrets` without manual edits.
+
+- [ ] **Live-cluster backend benchmark: OpenSearch-only vs Qdrant+OpenSearch**
+  - blocker: needs live Qdrant and OpenSearch clusters.
+  - next: `python scripts/benchmark_backends.py` against both shapes, compare retrieval
+    MRR/recall and p95, record the decision in §9 and in
+    `docs/scaling-and-production-readiness.md` §3.
+  - done when: the decision-log row is `Accepted`, not `Provisional`.
+
+- [ ] **Run the load suite against staging**
+  - blocker: needs a deployed staging target.
+  - next: `python scripts/load_test.py` at the target concurrency; compare TTFT/turn
+    p95, error rate and throughput with the provisional SLOs.
+  - done when: measured capacity replaces the provisional table in
+    `docs/scaling-and-production-readiness.md` §2.
+
+- [ ] **Run the chaos suite against staging**
+  - blocker: needs a cluster with Chaos Mesh.
+  - next: apply each manifest in `deploy/chaos/`, run `scripts/chaos_verify.py` during
+    and after, record the verdict.
+  - done when: AZ/store/provider/region experiments each pass their stated criteria.
+
+- [ ] **Run the DR drills against live regional endpoints**
+  - blocker: needs the two-region stack.
+  - next: `simulate_failover` with real URLs and a `promote` callable (or the managed
+    failover call); `measure_restore` from a real snapshot. Append to
+    `docs/dr-drill-results.md`.
+  - done when: measured RTO/RPO meet the SLO targets (§2 of the scaling doc).
+
+### 12.2 Decisions to make and record
+
+- [ ] Regions and data-residency constraints (which regions, which tenant tiers).
+- [ ] RPO/RTO targets and tenant tiers (free/enterprise dedicated indexes).
+- [ ] Embedding dimension/model and quantization policy (sizes Qdrant).
+- [ ] Trace analytics: ClickHouse vs S3+Athena for queryable traces. The archive of
+      record is already file/S3 gzipped JSONL.
+- [ ] Queue: keep Redis, or move to SQS at a defined message-rate threshold.
+- [ ] Tenant migration between regions: maintenance-window policy and who approves it.
+
+### 12.3 Deliberate non-goals (recorded so they are not re-opened by accident)
+
+- **SQS/MSK**: the job queue is Redis; revisit only if the queue outgrows it.
+- **In-app CSP**: the trace viewer is one HTML file with inline script; the ingress
+  owns the policy (see `docs/pii-and-query-logging.md`).
+- **Decode-level token streaming**: tokens are emitted after the ground check, not
+  during decode. Transport streaming is preserved; changing this is a product decision.
+
+### 12.4 Optional assignment bonus features
+
+- [ ] Temporal weighting ("this is the third time this quarter").
+- [ ] Service aliases (`checkout-svc` ≈ `checkout-service` ≈ `CheckoutAPI`).
+- [ ] Related-incidents sidebar computed from entity overlap.
+- [ ] Helpful/not-helpful feedback capture stored against the retrieval that produced
+      the answer.
+- [ ] True provider token streaming with a shared JSON/answer streaming protocol.
+
+### 12.5 Resume commands
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q --cov=blackbox --cov-fail-under=80
+.\.venv\Scripts\python.exe -m ruff check blackbox tests scripts alembic
+.\.venv\Scripts\python.exe -m mypy blackbox
+.\.venv\Scripts\python.exe -m alembic upgrade head
+cd deploy\terraform; terraform fmt -check -recursive; terraform init -backend=false; terraform validate
+```
+
+## 13. Update protocol
 
 1. Move items between `⬜`, `◐`, `✅` and add a one-line note with the commit/PR.
 2. Add a row to the change log; never rewrite past rows.
