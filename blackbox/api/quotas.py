@@ -26,7 +26,7 @@ class TenantQuotaLimiter(Protocol):
     async def check(self, tenant_id: str) -> tuple[bool, str, int]: ...
 
     async def record(
-        self, tenant_id: str, *, tokens: int, llm_calls: int
+        self, tenant_id: str, *, tokens: int, llm_calls: int, cost_usd: float = 0.0
     ) -> None: ...
 
 
@@ -45,11 +45,15 @@ def _day_key() -> str:
 
 
 class LocalTenantQuotaLimiter:
-    def __init__(self, *, token_limit: int, call_limit: int) -> None:
+    def __init__(
+        self, *, token_limit: int, call_limit: int, cost_limit_usd: float = 0.0
+    ) -> None:
         self.token_limit = max(1, token_limit)
         self.call_limit = max(1, call_limit)
-        self._usage: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"tokens": 0, "calls": 0}
+        # 0 disables the dollar budget.
+        self.cost_limit_usd = max(0.0, float(cost_limit_usd))
+        self._usage: dict[str, dict[str, float]] = defaultdict(
+            lambda: {"tokens": 0, "calls": 0, "cost": 0.0}
         )
         self._day: str = _day_key()
         self._lock = asyncio.Lock()
@@ -68,47 +72,69 @@ class LocalTenantQuotaLimiter:
                 return False, "tokens", _seconds_until_utc_midnight()
             if usage["calls"] >= self.call_limit:
                 return False, "llm_calls", _seconds_until_utc_midnight()
+            if self.cost_limit_usd > 0 and usage["cost"] >= self.cost_limit_usd:
+                return False, "budget_usd", _seconds_until_utc_midnight()
             return True, "", 0
 
-    async def record(self, tenant_id: str, *, tokens: int, llm_calls: int) -> None:
+    async def record(
+        self, tenant_id: str, *, tokens: int, llm_calls: int, cost_usd: float = 0.0
+    ) -> None:
         async with self._lock:
             self._rollover()
             usage = self._usage[tenant_id]
             usage["tokens"] += max(0, tokens)
             usage["calls"] += max(0, llm_calls)
+            usage["cost"] += max(0.0, float(cost_usd))
 
 
 class RedisTenantQuotaLimiter:
-    def __init__(self, client, *, token_limit: int, call_limit: int, prefix: str = "bb:quota:") -> None:
+    def __init__(
+        self,
+        client,
+        *,
+        token_limit: int,
+        call_limit: int,
+        cost_limit_usd: float = 0.0,
+        prefix: str = "bb:quota:",
+    ) -> None:
         self.client = client
         self.token_limit = max(1, token_limit)
         self.call_limit = max(1, call_limit)
+        self.cost_limit_usd = max(0.0, float(cost_limit_usd))
         self.prefix = prefix
 
-    def _keys(self, tenant_id: str) -> tuple[str, str]:
+    def _keys(self, tenant_id: str) -> tuple[str, str, str]:
         day = _day_key()
         return (
             f"{self.prefix}tokens:{tenant_id}:{day}",
             f"{self.prefix}calls:{tenant_id}:{day}",
+            f"{self.prefix}cost:{tenant_id}:{day}",
         )
 
     async def check(self, tenant_id: str) -> tuple[bool, str, int]:
-        token_key, call_key = self._keys(tenant_id)
+        token_key, call_key, cost_key = self._keys(tenant_id)
         try:
-            token_raw, call_raw = await self.client.mget(token_key, call_key)
+            token_raw, call_raw, cost_raw = await self.client.mget(
+                token_key, call_key, cost_key
+            )
             tokens = int(token_raw) if token_raw is not None else 0
             calls = int(call_raw) if call_raw is not None else 0
+            cost = float(cost_raw) if cost_raw is not None else 0.0
             if tokens >= self.token_limit:
                 return False, "tokens", _seconds_until_utc_midnight()
             if calls >= self.call_limit:
                 return False, "llm_calls", _seconds_until_utc_midnight()
+            if self.cost_limit_usd > 0 and cost >= self.cost_limit_usd:
+                return False, "budget_usd", _seconds_until_utc_midnight()
             return True, "", 0
         except Exception as exc:  # noqa: BLE001 - quotas fail open
             logger.warning("tenant_quota_backend_failed", error=str(exc))
             return True, "", 0
 
-    async def record(self, tenant_id: str, *, tokens: int, llm_calls: int) -> None:
-        token_key, call_key = self._keys(tenant_id)
+    async def record(
+        self, tenant_id: str, *, tokens: int, llm_calls: int, cost_usd: float = 0.0
+    ) -> None:
+        token_key, call_key, cost_key = self._keys(tenant_id)
         ttl = _seconds_until_utc_midnight()
         try:
             pipe = self.client.pipeline()
@@ -116,6 +142,8 @@ class RedisTenantQuotaLimiter:
                 pipe.incrby(token_key, tokens)
             if llm_calls > 0:
                 pipe.incrby(call_key, llm_calls)
+            if cost_usd > 0:
+                pipe.incrbyfloat(cost_key, float(cost_usd))
             await pipe.execute()
             # Set the expiry on first write. EXPIRE ... NX avoids clobbering a
             # shorter TTL on a later increment.
@@ -123,6 +151,8 @@ class RedisTenantQuotaLimiter:
                 await self.client.expire(token_key, ttl, nx=True)
             if llm_calls > 0:
                 await self.client.expire(call_key, ttl, nx=True)
+            if cost_usd > 0:
+                await self.client.expire(cost_key, ttl, nx=True)
         except Exception as exc:  # noqa: BLE001 - quotas fail open
             logger.warning("tenant_quota_record_failed", error=str(exc))
 
@@ -148,6 +178,7 @@ async def build_tenant_quota_limiter(settings, config, fallback: TenantQuotaLimi
             client,
             token_limit=settings.tenant_quota_tokens_per_day,
             call_limit=settings.tenant_quota_llm_calls_per_day,
+            cost_limit_usd=settings.tenant_budget_usd_per_day,
         )
     except Exception as exc:  # noqa: BLE001 - local fallback
         logger.warning("tenant_quota_redis_unavailable", error=str(exc), fallback="local")

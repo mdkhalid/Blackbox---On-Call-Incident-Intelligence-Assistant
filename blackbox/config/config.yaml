@@ -81,4 +81,14 @@ ingestion:
   batch_size_tokens: 100000
   max_concurrent_jobs: 2
 
-pricing: {}
+# Per-million-token prices, used to report the cost of a conversation from the
+# per-node token usage recorded in each turn's trace. A model with no entry is
+# reported as unpriced rather than silently costed at zero.
+cost:
+  enabled: true
+  currency: USD
+  models:
+    # The offline provider is free; keeping it priced makes the report complete.
+    fake: {input_per_1m: 0.0, output_per_1m: 0.0}
+    gpt-4o-mini: {input_per_1m: 0.15, output_per_1m: 0.60}
+    gpt-4o: {input_per_1m: 2.50, output_per_1m: 10.00}

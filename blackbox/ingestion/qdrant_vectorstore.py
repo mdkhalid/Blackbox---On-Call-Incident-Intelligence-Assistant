@@ -19,6 +19,8 @@ class QdrantVectorStore:
         embedding_provider: Any = None,
         api_key: str | None = None,
         prefer_grpc: bool = False,
+        replication_factor: int = 1,
+        shard_number: int = 1,
     ):
         try:
             from qdrant_client import QdrantClient
@@ -36,6 +38,10 @@ class QdrantVectorStore:
             self._client = QdrantClient(url=url, api_key=api_key, prefer_grpc=prefer_grpc)
         self._collection_ready = False
         self._vector_size: int | None = None
+        # Topology is per region: replicas survive a node loss inside the region, not
+        # the loss of the region.
+        self.replication_factor = max(1, replication_factor)
+        self.shard_number = max(1, shard_number)
 
     def _ensure_collection(self, vector_size: int) -> None:
         if self._collection_ready and self._vector_size == vector_size:
@@ -48,6 +54,8 @@ class QdrantVectorStore:
             self._client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=qm.VectorParams(size=vector_size, distance=qm.Distance.COSINE),
+                shard_number=self.shard_number,
+                replication_factor=self.replication_factor,
             )
         self._vector_size = vector_size
         self._collection_ready = True

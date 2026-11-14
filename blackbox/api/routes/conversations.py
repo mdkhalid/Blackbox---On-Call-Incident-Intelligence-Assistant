@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from blackbox.api.auth import Principal, require_roles
 from blackbox.api.deps import get_services
+from blackbox.api.regions import WrongRegion
 from blackbox.api.services import PersistenceUnavailable
 from blackbox.api.trace_archive import turn_to_dict
+from blackbox.observability.cost import conversation_cost
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -133,6 +135,22 @@ def get_memory(
     }
 
 
+@router.get("/{conversation_id}/cost")
+def get_cost(
+    conversation_id: str,
+    request: Request,
+    principal: Principal = _READ_AUTH,
+):
+    """Per-node LLM cost for the conversation, derived from its stored traces."""
+    services = _with_storage(request)
+    _record_or_404(services, conversation_id, principal.tenant_id)
+    turns = services.conversations.get_turns(
+        conversation_id, tenant_id=principal.tenant_id
+    )
+    report = conversation_cost([turn.trace for turn in turns], services.config.cost)
+    return {"conversation_id": conversation_id, **report}
+
+
 @router.get("/{conversation_id}/budget")
 def get_budget(
     conversation_id: str,
@@ -142,6 +160,20 @@ def get_budget(
     services = _with_storage(request)
     record = _record_or_404(services, conversation_id, principal.tenant_id)
     return record.last_budget or {}
+
+
+def _guard_region(services, tenant_id: str) -> None:
+    """Reject a home-region read that reached the wrong region (HTTP 421)."""
+    if not services.settings.region_write_pinning:
+        return
+    try:
+        services.tenant_region_resolver().assert_write_region(tenant_id)
+    except WrongRegion as exc:
+        raise HTTPException(
+            status_code=421,
+            detail=f"tenant {tenant_id} is homed in region {exc.home_region}",
+            headers={"X-Blackbox-Home-Region": exc.home_region},
+        ) from exc
 
 
 def _with_storage(request: Request):
@@ -154,6 +186,7 @@ def _with_storage(request: Request):
 
 
 def _record_or_404(services, conversation_id: str, tenant_id: str):
+    _guard_region(services, tenant_id)
     record = services.conversations.get(conversation_id, tenant_id=tenant_id)
     if record is None:
         raise HTTPException(status_code=404, detail="conversation not found")

@@ -411,6 +411,31 @@ with tenant affinity.
   verification queries.
 - Backups and restore drills; RPO/RTO measured, not assumed.
 
+> **State (2026-11-14, Phase 5).** The application half is implemented.
+> `tenant_regions` is the authoritative tenant→home-region mapping; the JWT `region`
+> claim is advisory. `REGION_WRITE_PINNING` rejects a conversation access that reaches a
+> non-home region with `421` and `X-Blackbox-Home-Region`, and the read path can use an
+> intra-region replica (`DATABASE_READ_URL`) while writes always use the writer. The
+> Postgres RLS policies from migration 0002 now receive `app.tenant_id` per transaction
+> (`set_config(..., true)` in `blackbox/db.py`), so the backstop is live rather than
+> latent. Engines set `pool_pre_ping` and bounded pool sizes, so an endpoint flip on
+> failover heals instead of surfacing stale-connection errors.
+>
+> Per-region retrieval: Qdrant replication/shard counts and the OpenSearch replica count
+> are configuration, and `OPENSEARCH_ALIAS` makes the existing versioned/alias cutover
+> reachable from config. `blackbox/ingestion/rebuild.py` rebuilds a region's indexes from
+> canonical documents and validates them before serving.
+>
+> Redis stays non-authoritative; a regional loss is a miss for caches and limits, and
+> `JobQueue.redrive()` re-queues jobs whose record survived but whose pending entry did
+> not. `docs/failover-runbook.md` and `docs/tenant-move-runbook.md` document the
+> procedure; `scripts/dr_drill.py` and `scripts/restore_drill.py` measure RTO/RPO into
+> `docs/dr-drill-results.md`. The Terraform root module gains a gated multi-region layer
+> (Aurora global, Redis global group, KMS/secret replicas, S3 replication, Route 53
+> failover), and GitOps deploys one Application per region via an ApplicationSet.
+> Still open: applying the Terraform layer to a real account and running the drills
+> against live regional endpoints.
+
 ---
 
 ## 13. Cost model
@@ -439,7 +464,7 @@ tokens/conversation and storage per 1M chunks before Phase 2.
 | 2 | Qdrant/OpenSearch adapters, concurrent legs, mandatory tenant filters + RLS, versioned indexes, shadow/dual-read cutover | ✅ Done (live-cluster benchmark pending) |
 | 3 | Async graph/providers, queue workers, trace store split | ✅ Done |
 | 4 | Helm/Terraform, HPA/KEDA, OTel/Prometheus/Grafana, CI/CD, canary, security hardening | ✅ Done (reference implementation; infra-bound validation pending) | Helm + Terraform AWS reference + Prometheus/SLO alerts + OpenTelemetry traces + Grafana/Loki/Tempo configs + GitOps/canary reference + load/chaos assets + global per-tenant quotas + pen-test/rotation runbooks + External Secrets + CI image/scan/SBOM done; Terraform backend shapes open |
-| 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ⬜ Planned |
+| 5 | Multi-region, tenant-pinned writes, DR drills, cost controls, chaos/load suite | ✅ Done (reference; live-region drills pending) — tenant-pinned writes + 421 guard, RLS GUC, read replica, `tenant_regions`, per-region retrieval config + rebuild path, regional Redis redrive, per-node cost reports + tenant cost API, failover/restore/tenant-move drills with measured RTO/RPO, chaos AZ/store/provider/region experiments + `chaos_verify.py`, gated Terraform multi-region layer, GitOps ApplicationSet + region overlays |
 
 ### Audit remediation (complete, 2026-11-11)
 

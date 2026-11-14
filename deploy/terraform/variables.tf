@@ -355,3 +355,62 @@ variable "domain_name" {
   type        = string
   default     = ""
 }
+
+# ---- multi-region (Phase 5) ----------------------------------------------------
+#
+# This root module creates the PRIMARY region's stack plus the global/cross-region
+# layer. The secondary region is a second instantiation of the same module with
+# `enable_multi_region=false` and `aurora_global_cluster_id` / the global ids from
+# this run's outputs. Nothing here is applied automatically.
+
+variable "enable_multi_region" {
+  description = "Create the global layer (Aurora global cluster, Redis global group, KMS/secret replicas, S3 replication, DNS failover)."
+  type        = bool
+  default     = false
+}
+
+variable "secondary_region" {
+  description = "Region of the DR pair. Must differ from aws_region."
+  type        = string
+  default     = "us-east-1"
+
+  validation {
+    condition     = var.secondary_region != var.aws_region
+    error_message = "secondary_region must differ from aws_region."
+  }
+}
+
+variable "aurora_global_cluster_id" {
+  description = "Global cluster identifier override. Empty derives one from project/environment."
+  type        = string
+  default     = ""
+}
+
+variable "enable_s3_replication" {
+  description = "Replicate the trace archive to a bucket in the secondary region."
+  type        = bool
+  default     = false
+}
+
+variable "route53_failover_ttl" {
+  description = "TTL for the DNS failover records."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.route53_failover_ttl >= 0
+    error_message = "route53_failover_ttl must be >= 0."
+  }
+}
+
+variable "primary_ingress_dns" {
+  description = "Hostname of the primary region's ingress, used as the PRIMARY DNS target."
+  type        = string
+  default     = ""
+}
+
+variable "secondary_ingress_dns" {
+  description = "Hostname of the secondary region's ingress, used as the SECONDARY DNS target."
+  type        = string
+  default     = ""
+}

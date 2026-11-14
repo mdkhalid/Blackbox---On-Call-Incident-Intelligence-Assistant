@@ -42,6 +42,22 @@ __all__ = [
 ]
 
 
+def _region_scoped(name: str, settings: Settings) -> str:
+    """Append the region id when per-region indexes are configured.
+
+    Two regions cannot share one physical index name and stay a failover pair: a
+    rebuild in the secondary would otherwise overwrite the primary. The suffix makes
+    each region's index distinct and independently rebuildable.
+    """
+    try:
+        region_cfg = get_config().region
+    except Exception:  # noqa: BLE001 - config is optional for this helper
+        return name
+    if getattr(region_cfg, "region_suffix", False):
+        return f"{name}_{settings.region}"
+    return name
+
+
 def build_vectorstore(
     settings: Settings | None = None,
     retrieval_config: RetrievalConfig | None = None,
@@ -58,7 +74,7 @@ def build_vectorstore(
     settings = settings or get_settings()
     rc = retrieval_config if retrieval_config is not None else get_config().retrieval
     backend = getattr(rc, "dense_backend", "chroma")
-    name = collection_name or rc.collection_name
+    name = _region_scoped(collection_name or rc.collection_name, settings)
     if backend == "qdrant":
         from blackbox.ingestion.qdrant_vectorstore import QdrantVectorStore
 
@@ -67,6 +83,8 @@ def build_vectorstore(
             collection_name=name,
             embedding_provider=embedding_provider,
             api_key=settings.qdrant_api_key,
+            replication_factor=settings.qdrant_replication_factor,
+            shard_number=settings.qdrant_shard_number,
         )
     from blackbox.ingestion.vectorstore import ChromaVectorStore
 
@@ -91,12 +109,16 @@ def build_sparse_store(
     if rc.sparse_backend == "opensearch":
         from blackbox.retrieval.opensearch import OpenSearchSparseStore
 
+        base = settings.opensearch_alias or settings.opensearch_index
         return OpenSearchSparseStore(
             hosts=settings.opensearch_hosts,
-            index=settings.opensearch_index,
+            index=_region_scoped(settings.opensearch_index, settings),
             username=settings.opensearch_username,
             password=settings.opensearch_password,
             verify_certs=settings.opensearch_verify_certs,
+            alias=_region_scoped(base, settings) if settings.opensearch_alias else None,
+            shard_count=settings.opensearch_shard_count,
+            replica_count=settings.opensearch_replica_count,
         )
     return None
 

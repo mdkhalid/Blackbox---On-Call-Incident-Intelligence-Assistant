@@ -77,6 +77,39 @@ def test_build_returns_fallback_without_redis():
     asyncio.run(scenario())
 
 
+def test_cost_budget_blocks_and_records():
+    import asyncio
+
+    from blackbox.api.quotas import LocalTenantQuotaLimiter
+
+    async def scenario():
+        limiter = LocalTenantQuotaLimiter(
+            token_limit=1_000_000, call_limit=1000, cost_limit_usd=1.0
+        )
+        assert (await limiter.check("t"))[0] is True
+        await limiter.record("t", tokens=10, llm_calls=1, cost_usd=1.5)
+        allowed, reason, _ = await limiter.check("t")
+        assert allowed is False
+        assert reason == "budget_usd"
+
+    asyncio.run(scenario())
+
+
+def test_zero_cost_budget_is_unlimited():
+    import asyncio
+
+    from blackbox.api.quotas import LocalTenantQuotaLimiter
+
+    async def scenario():
+        limiter = LocalTenantQuotaLimiter(
+            token_limit=1_000_000, call_limit=1000, cost_limit_usd=0.0
+        )
+        await limiter.record("t", tokens=1, llm_calls=1, cost_usd=10_000.0)
+        assert (await limiter.check("t"))[0] is True
+
+    asyncio.run(scenario())
+
+
 def test_quota_settings_are_validated():
     with pytest.raises(ValidationError):
         Settings(tenant_quota_tokens_per_day=0)

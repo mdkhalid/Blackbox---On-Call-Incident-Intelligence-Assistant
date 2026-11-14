@@ -1,0 +1,28 @@
+# Two-region reference configuration.
+#
+#   terraform init -backend=false
+#   terraform validate -var-file=terraform.tfvars.multiregion.example
+#
+# Apply the primary region with this file, then instantiate the same module in the
+# secondary region with `enable_multi_region=false` and the global ids from this
+# run's outputs (aurora_global_cluster_id, redis_global_replication_group_id).
+# Nothing here is applied automatically.
+
+project_name  = "blackbox"
+environment   = "prod"
+aws_region    = "eu-west-1"
+domain_name   = "example.com"
+
+enable_multi_region = true
+secondary_region    = "us-east-1"
+enable_s3_replication = true
+
+# Regional ingress hostnames for the DNS failover records.
+primary_ingress_dns   = "ingress.eu-west-1.example.com"
+secondary_ingress_dns = "ingress.us-east-1.example.com"
+
+enable_route53 = true
+route53_failover_ttl = 60
+
+vpc_cidr              = "10.60.0.0/16"
+availability_zone_count = 3

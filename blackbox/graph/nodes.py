@@ -163,6 +163,7 @@ async def grade_node(state: GraphState, deps: GraphDeps) -> dict:
                 "sufficient": decision.sufficient,
                 "reason": decision.reason,
                 "duration_ms": _elapsed(started),
+                **_trace_usage(response, deps.settings.grading_model),
             }
         ],
     }
@@ -219,6 +220,7 @@ async def rewrite_node(state: GraphState, deps: GraphDeps) -> dict:
                 "from": query,
                 "rewritten": rewritten,
                 "duration_ms": _elapsed(started),
+                **_trace_usage(response, deps.settings.rewrite_model),
             }
         ],
     }
@@ -323,6 +325,7 @@ async def generate_node(state: GraphState, deps: GraphDeps) -> dict:
                 "claims": len(claims),
                 "answer_chars": len(answer),
                 "duration_ms": _elapsed(started),
+                **_trace_usage(response, deps.settings.generation_model),
             }
         ],
     }
@@ -444,6 +447,22 @@ def _over_budget(state: GraphState, deps: GraphDeps) -> bool:
 
 def _cap_payload(node: str) -> dict:
     return {"error": "llm_call_cap"}
+
+
+def _trace_usage(response: LLMResponse, fallback_model: str) -> dict:
+    """Record which model served a node and what it cost in tokens.
+
+    The aggregate `usage` keeps the turn total; this per-node record is what makes a
+    cost breakdown by node (grade vs rewrite vs generate) possible from the stored
+    trace, without a second accounting path.
+    """
+    return {
+        "model": response.model or fallback_model,
+        "usage": {
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+        },
+    }
 
 
 def _merge_usage(state: GraphState, response: LLMResponse) -> dict:

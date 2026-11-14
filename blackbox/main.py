@@ -14,6 +14,7 @@ from blackbox.api.middleware import (
     LoggingMiddleware,
     RateLimitMiddleware,
     RequestIdMiddleware,
+    SecurityHeadersMiddleware,
     TracingMiddleware,
 )
 from blackbox.api.routes.chat import router as chat_router
@@ -102,6 +103,8 @@ def create_app(settings: Settings | None = None, *, services: AppServices | None
     )
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RequestIdMiddleware)
+    # Pure-ASGI, so it adds headers without touching the SSE stream.
+    app.add_middleware(SecurityHeadersMiddleware)
     # Added last, so it is the outermost layer: the request span covers middleware,
     # routing and the full streamed response body.
     app.add_middleware(

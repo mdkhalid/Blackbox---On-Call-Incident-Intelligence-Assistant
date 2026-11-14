@@ -315,6 +315,15 @@ JOB_QUEUE_DEPTH = _gauge(
     "Pending background jobs by kind.",
     ("kind",),
 )
+JOB_QUEUE_LOSS_RISK = _gauge(
+    "blackbox_job_queue_loss_risk",
+    "Queued jobs that this region's Redis loss would strand.",
+    ("kind",),
+)
+CACHE_FALLBACK_ACTIVE = _gauge(
+    "blackbox_cache_fallback_active",
+    "1 when a Redis-backed feature is running on its local fallback.",
+)
 
 _STAGE_NAMES = {
     "dense_ms": "dense",
@@ -371,6 +380,11 @@ def record_llm_error(node: str) -> None:
 
 def record_job_queue_depth(kind: str, depth: int) -> None:
     JOB_QUEUE_DEPTH.set(float(max(0, depth)), kind=kind)
+    JOB_QUEUE_LOSS_RISK.set(float(max(0, depth)), kind=kind)
+
+
+def record_cache_fallback(active: bool) -> None:
+    CACHE_FALLBACK_ACTIVE.set(1.0 if active else 0.0)
 
 
 def render_metrics() -> str:

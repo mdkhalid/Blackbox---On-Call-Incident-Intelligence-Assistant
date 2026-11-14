@@ -10,6 +10,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/app/data/chroma
       - CONFIG_PATH=blackbox/config/config.yaml
+      - REGION=local
+      - DEFAULT_HOME_REGION=local
     ports:
       - "8000:8000"
     volumes:
@@ -36,6 +38,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/app/data/chroma
       - CONFIG_PATH=blackbox/config/config.yaml
+      - REGION=local
+      - DEFAULT_HOME_REGION=local
     volumes:
       - ./data:/app/data
     depends_on:

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -233,8 +232,55 @@ class IngestionConfig(BaseModel):
     max_concurrent_jobs: int = 2
 
 
+class ModelPrice(BaseModel):
+    input_per_1m: float = 0.0
+    output_per_1m: float = 0.0
+
+    @field_validator("input_per_1m", "output_per_1m")
+    @classmethod
+    def non_negative_price(cls, v):
+        if v < 0:
+            raise ValueError("model prices must be >= 0")
+        return v
+
+
+class CostConfig(BaseModel):
+    enabled: bool = True
+    currency: str = "USD"
+    # Prices are per million tokens. A model with no entry is reported as unpriced
+    # rather than silently treated as free.
+    models: dict[str, ModelPrice] = Field(default_factory=dict)
+
+    @field_validator("currency")
+    @classmethod
+    def currency_non_empty(cls, v):
+        if not v.strip():
+            raise ValueError("currency must not be empty")
+        return v.strip().upper()
+
+
+class RegionConfig(BaseModel):
+    # Bumped by an operator when a region takes ownership of a tenant after a
+    # failover, so a later failback starts from a known generation.
+    failover_generation: int = 0
+    # How long a tenant's home-region lookup is cached in-process. The DB stays
+    # authoritative; the cache only avoids a query per request.
+    resolver_cache_ttl_s: int = 60
+    # Optional suffix so each region's retrieval index has a distinct name.
+    region_suffix: bool = False
+
+    @field_validator("failover_generation", "resolver_cache_ttl_s")
+    @classmethod
+    def non_negative(cls, v):
+        if v < 0:
+            raise ValueError("must be >= 0")
+        return v
+
+
 class AppConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    region: RegionConfig = Field(default_factory=RegionConfig)
+    cost: CostConfig = Field(default_factory=CostConfig)
     graph: GraphConfig = Field(default_factory=GraphConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
@@ -242,7 +288,6 @@ class AppConfig(BaseModel):
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
-    pricing: dict[str, Any] = Field(default_factory=dict)
 
 
 def load_app_config(settings: Settings) -> AppConfig:
@@ -278,10 +323,34 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
+    # Optional read replica. Reads fall back to the writer when unset, and writes
+    # always use DATABASE_URL.
+    database_read_url: str | None = Field(default=None, alias="DATABASE_READ_URL")
+    database_pool_size: int = Field(default=5, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=10, alias="DATABASE_MAX_OVERFLOW")
+    # An endpoint flip on failover leaves stale pooled connections; pre-ping replaces
+    # them instead of surfacing the error to the request.
+    database_pool_pre_ping: bool = Field(default=True, alias="DATABASE_POOL_PRE_PING")
+    database_pool_recycle_s: int = Field(default=1800, alias="DATABASE_POOL_RECYCLE_S")
+
+    # Region identity. `region` is where this instance runs; `default_home_region`
+    # is the fallback for a tenant with no explicit mapping in `tenant_regions`.
+    region: str = Field(default="local", alias="REGION")
+    default_home_region: str = Field(default="local", alias="DEFAULT_HOME_REGION")
+    # Enforce tenant-pinned writes: a request in a non-home region is rejected with
+    # 421 rather than silently writing the wrong region's database.
+    region_write_pinning: bool = Field(default=False, alias="REGION_WRITE_PINNING")
+    # Set the `app.tenant_id` session GUC so the Postgres RLS policies can enforce
+    # tenant isolation as a backstop. Postgres only; a no-op elsewhere.
+    rls_enabled: bool = Field(default=False, alias="RLS_ENABLED")
+
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
     chroma_persist_dir: str = Field(default="./data/chroma", alias="CHROMA_PERSIST_DIR")
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
     qdrant_api_key: str | None = Field(default=None, alias="QDRANT_API_KEY")
+    # A per-region cluster keeps the whole shard; replicas survive a node loss.
+    qdrant_replication_factor: int = Field(default=1, alias="QDRANT_REPLICATION_FACTOR")
+    qdrant_shard_number: int = Field(default=1, alias="QDRANT_SHARD_NUMBER")
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_provider_override: str | None = Field(
         default=None, alias="EMBEDDING_PROVIDER"
@@ -324,6 +393,13 @@ class Settings(BaseSettings):
     opensearch_username: str = Field(default="", alias="OPENSEARCH_USERNAME")
     opensearch_password: str = Field(default="", alias="OPENSEARCH_PASSWORD")
     opensearch_verify_certs: bool = Field(default=True, alias="OPENSEARCH_VERIFY_CERTS")
+    # Replicas are per-region; a cross-region copy is a separate cluster, not a
+    # replica. Zero is correct for a single-node development cluster.
+    opensearch_replica_count: int = Field(default=0, alias="OPENSEARCH_REPLICA_COUNT")
+    opensearch_shard_count: int = Field(default=1, alias="OPENSEARCH_SHARD_COUNT")
+    # When set, reads go through this alias and writes build a versioned index behind
+    # it, which is what makes a staged rebuild atomic.
+    opensearch_alias: str | None = Field(default=None, alias="OPENSEARCH_ALIAS")
 
     # Cold storage for pruned conversation turns. `none` disables archiving;
     # `file` writes gzipped JSONL batches under TRACE_ARCHIVE_DIR; `s3` writes the
@@ -371,6 +447,25 @@ class Settings(BaseSettings):
     tenant_quota_llm_calls_per_day: int = Field(
         default=1000, alias="TENANT_QUOTA_LLM_CALLS_PER_DAY"
     )
+    # Daily dollar budget per tenant. 0 disables it; prices come from `cost.models`.
+    tenant_budget_usd_per_day: float = Field(
+        default=0.0, alias="TENANT_BUDGET_USD_PER_DAY"
+    )
+
+    # Global per-tenant concurrency: a Redis counter shared by every replica. When
+    # false (or Redis is unreachable) each pod enforces the limit locally.
+    tenant_concurrency_global: bool = Field(
+        default=True, alias="TENANT_CONCURRENCY_GLOBAL"
+    )
+    # Lease for a concurrency slot; a dead pod's slots expire after this.
+    tenant_concurrency_lease_s: int = Field(
+        default=300, alias="TENANT_CONCURRENCY_LEASE_S"
+    )
+
+    # Logging policy. PII redaction applies to log fields; query logging is off unless
+    # explicitly chosen, and then hashed or redacted by default.
+    pii_redaction_enabled: bool = Field(default=True, alias="PII_REDACTION_ENABLED")
+    query_log_mode: str = Field(default="hash", alias="QUERY_LOG_MODE")
 
     @field_validator("llm_timeout_s")
     @classmethod
@@ -386,7 +481,12 @@ class Settings(BaseSettings):
             raise ValueError("LLM_MAX_RETRIES must be >= 0")
         return v
 
-    @field_validator("llm_max_concurrency", "llm_circuit_threshold")
+    @field_validator(
+        "llm_max_concurrency",
+        "llm_circuit_threshold",
+        "tenant_quota_tokens_per_day",
+        "tenant_quota_llm_calls_per_day",
+    )
     @classmethod
     def positive_int(cls, v):
         if v < 1:
@@ -398,6 +498,55 @@ class Settings(BaseSettings):
     def positive_threads(cls, v):
         if v < 1:
             raise ValueError("MAX_WORKER_THREADS must be >= 1")
+        return v
+
+    @field_validator("region", "default_home_region")
+    @classmethod
+    def region_non_empty(cls, v):
+        if not v.strip():
+            raise ValueError("region identifiers must not be empty")
+        return v.strip()
+
+    @field_validator("database_pool_size", "database_max_overflow", "database_pool_recycle_s")
+    @classmethod
+    def non_negative_pool(cls, v):
+        if v < 0:
+            raise ValueError("database pool values must be >= 0")
+        return v
+
+    @field_validator("qdrant_replication_factor", "qdrant_shard_number")
+    @classmethod
+    def positive_qdrant_topology(cls, v):
+        if v < 1:
+            raise ValueError("qdrant topology values must be >= 1")
+        return v
+
+    @field_validator("opensearch_replica_count", "opensearch_shard_count")
+    @classmethod
+    def non_negative_opensearch_topology(cls, v):
+        if v < 0:
+            raise ValueError("opensearch topology values must be >= 0")
+        return v
+
+    @field_validator("tenant_budget_usd_per_day")
+    @classmethod
+    def non_negative_budget(cls, v):
+        if v < 0:
+            raise ValueError("TENANT_BUDGET_USD_PER_DAY must be >= 0")
+        return v
+
+    @field_validator("tenant_concurrency_lease_s")
+    @classmethod
+    def positive_lease(cls, v):
+        if v < 1:
+            raise ValueError("TENANT_CONCURRENCY_LEASE_S must be >= 1")
+        return v
+
+    @field_validator("query_log_mode")
+    @classmethod
+    def query_log_mode_known(cls, v):
+        if v not in ("hash", "redact", "raw"):
+            raise ValueError("QUERY_LOG_MODE must be hash|redact|raw")
         return v
 
     @field_validator("llm_circuit_reset_s")
@@ -479,6 +628,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUTH_JWT_SECRET or AUTH_JWKS_URL is required when AUTH_ENABLED=true"
             )
+        if (
+            self.rls_enabled
+            and self.env == "prod"
+            and not (self.database_url or "").startswith("postgres")
+        ):
+            raise ValueError("RLS_ENABLED requires a Postgres DATABASE_URL")
         return self
 
 

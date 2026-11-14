@@ -1,0 +1,13 @@
+# Region overlay: EU (primary for the reference tenant set).
+#
+# REGION identifies this release. Tenant -> home-region ownership lives in the
+# `tenant_regions` table, not in this file; the overlay only declares where this
+# instance runs and whether it enforces the pin.
+config:
+  REGION: eu-west-1
+  DEFAULT_HOME_REGION: eu-west-1
+  REGION_WRITE_PINNING: "true"
+  RLS_ENABLED: "true"
+  # Intra-region read replica. Writes always use DATABASE_URL.
+  DATABASE_READ_URL: ""
+  DATABASE_POOL_PRE_PING: "true"

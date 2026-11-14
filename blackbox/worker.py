@@ -43,6 +43,12 @@ def main() -> None:  # pragma: no cover - process entry point
 
     queues = [services.job_queue(kind) for kind in JOB_KINDS]
     for queue in queues:
+        # A regional Redis loss can leave job records without their pending entries.
+        # Re-queue that work before this consumer starts, so it is not stranded.
+        try:
+            queue.redrive()
+        except Exception as exc:  # noqa: BLE001 - recovery is best effort
+            logger.warning("job_redrive_failed", kind=queue.kind, error=str(exc))
         queue.start()
 
     stop = threading.Event()

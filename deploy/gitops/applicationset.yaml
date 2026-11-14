@@ -1,0 +1,57 @@
+# One Application per region. The chart is the platform layer; a region differs only
+# in its cluster, its region id, and its store endpoints.
+#
+# The list generator is deliberate: adding a region is a reviewable two-line change,
+# not a new Application written by hand. Cluster credentials come from Argo CD's
+# cluster registry (`argocd cluster add`), referenced by server URL.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: blackbox-regions
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - region: eu-west-1
+            cluster: https://kubernetes.default.svc
+            values: values-eu-west-1.yaml
+            homeRegion: eu-west-1
+          - region: us-east-1
+            cluster: https://us-east-1.example.internal
+            values: values-us-east-1.yaml
+            homeRegion: eu-west-1
+  template:
+    metadata:
+      name: "blackbox-{{.region}}"
+      labels:
+        app.kubernetes.io/part-of: blackbox
+        blackbox.io/region: "{{.region}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example/blackbox.git
+        targetRevision: main
+        path: deploy/helm/blackbox
+        helm:
+          valueFiles:
+            - ../../gitops/argocd-values.yaml
+            - ../../gitops/regions/{{.values}}
+      destination:
+        server: "{{.cluster}}"
+        namespace: blackbox
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

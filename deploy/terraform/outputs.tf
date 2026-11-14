@@ -136,3 +136,44 @@ output "route53_zone_id" {
   description = "Route 53 hosted zone id when enable_route53 is true."
   value       = var.enable_route53 && var.domain_name != "" ? aws_route53_zone.main[0].zone_id : null
 }
+
+# ---- multi-region / DR ---------------------------------------------------------
+
+output "multi_region_enabled" {
+  description = "Whether the global/DR layer was created."
+  value       = var.enable_multi_region
+}
+
+output "secondary_region" {
+  description = "Region of the DR pair."
+  value       = var.secondary_region
+}
+
+output "kms_data_replica_key_arn" {
+  description = "Replica CMK in the secondary region."
+  value       = var.enable_multi_region ? aws_kms_replica_key.data[0].arn : null
+}
+
+output "aurora_global_cluster_id" {
+  description = "Aurora Global Database id. Pass to the secondary region's module instance."
+  value       = var.enable_multi_region ? aws_rds_global_cluster.main[0].id : null
+}
+
+output "redis_global_replication_group_id" {
+  description = "ElastiCache global replication group id for the secondary region."
+  value = (
+    var.enable_multi_region
+    ? aws_elasticache_global_replication_group.main[0].global_replication_group_id
+    : null
+  )
+}
+
+output "trace_archive_bucket_secondary" {
+  description = "Replica trace bucket when S3 replication is enabled."
+  value       = var.enable_multi_region && var.enable_s3_replication ? aws_s3_bucket.traces_secondary[0].bucket : null
+}
+
+output "dns_failover_fqdn" {
+  description = "Failover record name when DNS failover is configured."
+  value       = local.dns_failover ? "app.${var.domain_name}" : null
+}

@@ -36,3 +36,15 @@ provider "aws" {
     tags = local.tags
   }
 }
+
+# The DR pair's region. Used only by the multi-region resources (KMS/secret
+# replicas, the replicated trace bucket); the secondary application stack is a
+# second instantiation of this module, not a resource here.
+provider "aws" {
+  alias  = "secondary"
+  region = var.secondary_region
+
+  default_tags {
+    tags = local.tags
+  }
+}

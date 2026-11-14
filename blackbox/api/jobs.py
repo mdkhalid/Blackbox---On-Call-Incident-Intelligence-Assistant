@@ -114,6 +114,8 @@ class JobStore(Protocol):
 
     def pending_count(self, kind: str) -> int: ...
 
+    def redrive(self, kind: str) -> int: ...
+
     def close(self) -> None: ...
 
 
@@ -162,6 +164,10 @@ class InProcessJobStore:
     def pending_count(self, kind: str) -> int:
         with self._lock:
             return max(0, self._pending_by_kind.get(kind, 0))
+
+    def redrive(self, kind: str) -> int:
+        """Nothing to re-drive: this store's state only exists while the pod runs."""
+        return 0
 
     def close(self) -> None:
         return None
@@ -227,6 +233,36 @@ class RedisJobStore:
         """
         raw = self.client.llen(_PENDING_KEY.format(kind=kind))
         return int(raw or 0)
+
+    def redrive(self, kind: str) -> int:
+        """Re-queue jobs whose record survived but whose pending entry did not.
+
+        A regional Redis losing its non-persisted pending lists leaves every job
+        record in the index and nothing in the queue. Redis is non-authoritative by
+        design, but a job that has a record and is still `queued` is work a user asked
+        for; this puts it back rather than leaving it stranded.
+        """
+        index = self.client.hgetall(_JOB_INDEX) or {}
+        pending_key = _PENDING_KEY.format(kind=kind)
+        raw_pending = self.client.lrange(pending_key, 0, -1) or []
+        pending = {
+            item.decode() if isinstance(item, bytes) else str(item)
+            for item in raw_pending
+        }
+        requeued = 0
+        for raw_id, raw_kind in index.items():
+            job_id = raw_id.decode() if isinstance(raw_id, bytes) else str(raw_id)
+            job_kind = raw_kind.decode() if isinstance(raw_kind, bytes) else str(raw_kind)
+            if job_kind != kind or job_id in pending:
+                continue
+            job = self.load(job_id)
+            if job is None or job.status != QUEUED:
+                continue
+            self.client.rpush(pending_key, job_id)
+            requeued += 1
+        if requeued:
+            logger.warning("job_queue_redriven", kind=kind, count=requeued)
+        return requeued
 
     def close(self) -> None:
         return None
@@ -306,6 +342,10 @@ class JobQueue:
 
     def pending_count(self) -> int:
         return self.store.pending_count(self.kind)
+
+    def redrive(self) -> int:
+        """Re-queue stranded jobs after a regional Redis loss."""
+        return self.store.redrive(self.kind)
 
     def snapshot(self, job: Job) -> dict[str, Any]:
         """A consistent copy of a job's state.

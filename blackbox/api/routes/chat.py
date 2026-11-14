@@ -12,6 +12,7 @@ from blackbox.api.auth import Principal, require_roles
 from blackbox.api.deps import get_services
 from blackbox.api.guardrails import detect_injection
 from blackbox.api.locks import ConversationBusy
+from blackbox.api.regions import WrongRegion
 from blackbox.api.schemas import ChatRequest
 from blackbox.api.services import PersistenceUnavailable
 from blackbox.api.sse import (
@@ -28,8 +29,10 @@ from blackbox.graph.prompts import CHAT_SYSTEM_PROMPT
 from blackbox.logging_setup import get_logger
 from blackbox.memory import build_context
 from blackbox.memory.updates import update_entity_memory
+from blackbox.observability.cost import turn_cost
 from blackbox.observability.metrics import SSE_ACTIVE
 from blackbox.observability.tracing import span
+from blackbox.pii import summarize_query
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["chat"])
@@ -71,6 +74,14 @@ async def chat(
     if not _CONVERSATION_ID.fullmatch(conversation_id):
         raise HTTPException(status_code=400, detail="invalid conversation_id")
 
+    # Query logging is policy-controlled: hashed by default, redacted or raw on
+    # explicit opt-in. The raw user text never reaches a log line otherwise.
+    logger.debug(
+        "chat_query",
+        conversation_id=conversation_id,
+        query=summarize_query(message, services.settings.query_log_mode),
+    )
+
     injection_flags = detect_injection(message)
     if injection_flags:
         logger.warning(
@@ -91,6 +102,20 @@ async def chat(
     except Exception as exc:
         logger.exception("runtime_unavailable")
         raise HTTPException(status_code=503, detail="runtime unavailable") from exc
+
+    # Tenant-pinned writes: a conversation belongs to one home region. If this
+    # instance does not own the tenant, tell the edge where to retry rather than
+    # writing another region's database.
+    if services.settings.region_write_pinning:
+        resolver = services.tenant_region_resolver()
+        try:
+            await run_in_threadpool(resolver.assert_write_region, tenant_id)
+        except WrongRegion as exc:
+            raise HTTPException(
+                status_code=421,
+                detail=f"tenant {tenant_id} is homed in region {exc.home_region}",
+                headers={"X-Blackbox-Home-Region": exc.home_region},
+            ) from exc
 
     cache = services.cache_backend
     idempotency_cache_key: str | None = None
@@ -133,7 +158,17 @@ async def chat(
                 headers={"Retry-After": str(retry_after or 1)},
             )
 
+    # Two layers: a per-pod counter rejects instantly without a Redis round trip, and
+    # the shared slot counter enforces the same limit across every replica.
     if not services.try_acquire_tenant(tenant_id):
+        await _release_idempotency_lock()
+        raise HTTPException(
+            status_code=429,
+            detail="tenant concurrency limit reached",
+            headers={"Retry-After": "1"},
+        )
+    if not await services.acquire_tenant_slot(tenant_id):
+        services.release_tenant(tenant_id)
         await _release_idempotency_lock()
         raise HTTPException(
             status_code=429,
@@ -145,6 +180,7 @@ async def chat(
         turn_lock = await services.acquire_turn_lock(conversation_id, tenant_id)
     except ConversationBusy as exc:
         services.release_tenant(tenant_id)
+        await services.release_tenant_slot(tenant_id)
         await _release_idempotency_lock()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -157,11 +193,13 @@ async def chat(
     except ConversationTenantMismatch as exc:
         await turn_lock.release()
         services.release_tenant(tenant_id)
+        await services.release_tenant_slot(tenant_id)
         await _release_idempotency_lock()
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except Exception:
         await turn_lock.release()
         services.release_tenant(tenant_id)
+        await services.release_tenant_slot(tenant_id)
         await _release_idempotency_lock()
         raise
 
@@ -267,12 +305,16 @@ async def chat(
 
                 if services.settings.tenant_quota_enabled:
                     quota = await services.ensure_tenant_quota()
+                    cost = turn_cost(
+                        result.get("trace") or [], services.config.cost
+                    )["total_usd"]
                     await quota.record(
                         tenant_id,
                         tokens=int(
                             (result.get("usage") or {}).get("total_tokens") or 0
                         ),
                         llm_calls=int(result.get("llm_calls") or 0),
+                        cost_usd=float(cost),
                     )
 
                 final_payload = {
@@ -333,6 +375,7 @@ async def chat(
             finally:
                 await turn_lock.release()
                 services.release_tenant(tenant_id)
+                await services.release_tenant_slot(tenant_id)
                 await _release_idempotency_lock()
                 SSE_ACTIVE.dec()
 

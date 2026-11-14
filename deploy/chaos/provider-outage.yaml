@@ -1,0 +1,22 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: blackbox-provider-outage
+  namespace: blackbox
+spec:
+  # Cut the LLM provider off entirely. The resilient provider's breaker should open,
+  # turns should return an honest failure, and the circuit should close when the
+  # partition is removed.
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: api
+  direction: to
+  externalTargets:
+    - api.openai.com
+    - api.anthropic.com
+  duration: 5m

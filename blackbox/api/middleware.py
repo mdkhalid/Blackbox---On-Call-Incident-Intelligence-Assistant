@@ -5,6 +5,7 @@ import time
 import uuid
 
 import structlog
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -26,6 +27,41 @@ _EXEMPT_PATHS = {
     "/redoc",
     "/favicon.ico",
 }
+
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+class SecurityHeadersMiddleware:
+    """Pure-ASGI security headers.
+
+    A `BaseHTTPMiddleware` would wrap the SSE response and is known to interfere with
+    streaming; mutating `http.response.start` keeps the stream untouched. No CSP is
+    set: the trace viewer is a single file with inline script, and a policy that
+    silently broke it would be worse than an explicit absence.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in _SECURITY_HEADERS.items():
+                    headers.setdefault(name, value)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):

@@ -40,7 +40,9 @@ class AppServices:
     lock_engine: Any | None = None
     rate_limiter: Any | None = None
     tenant_quota: Any | None = None
+    concurrency_limiter: Any | None = None
     trace_archive: Any | None = None
+    region_resolver: Any | None = None
 
     conversation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     job_queues: dict[str, Any] = field(default_factory=dict)
@@ -81,6 +83,7 @@ class AppServices:
                 self.conversations = SqlAlchemyConversationRepository(
                     fallback_url, memory_config=self.config.memory
                 )
+                self.region_resolver = None
                 self.conversations.init()
                 self._recreate_if_stale(self.conversations)
                 self.storage_ready = True
@@ -283,11 +286,55 @@ class AppServices:
             fallback = LocalTenantQuotaLimiter(
                 token_limit=self.settings.tenant_quota_tokens_per_day,
                 call_limit=self.settings.tenant_quota_llm_calls_per_day,
+                cost_limit_usd=self.settings.tenant_budget_usd_per_day,
             )
             self.tenant_quota = await build_tenant_quota_limiter(
                 self.settings, self.config, fallback
             )
             return self.tenant_quota
+
+    def tenant_region_resolver(self):
+        """Resolve a tenant's home region, cached for a short TTL."""
+        if self.region_resolver is None:
+            from blackbox.api.regions import TenantRegionResolver
+
+            self.region_resolver = TenantRegionResolver(
+                self.conversations,
+                current_region=self.settings.region,
+                default_region=self.settings.default_home_region,
+                cache_ttl_s=self.config.region.resolver_cache_ttl_s,
+            )
+        return self.region_resolver
+
+    async def ensure_concurrency_limiter(self):
+        """Global per-tenant slot counter, Redis-backed when reachable."""
+        if self.concurrency_limiter is not None:
+            return self.concurrency_limiter
+        async with self._rate_limiter_lock:
+            if self.concurrency_limiter is not None:
+                return self.concurrency_limiter
+            from blackbox.api.admission import (
+                LocalTenantConcurrencyLimiter,
+                build_tenant_concurrency_limiter,
+            )
+
+            fallback = LocalTenantConcurrencyLimiter()
+            self.concurrency_limiter = await build_tenant_concurrency_limiter(
+                self.settings, self.config, fallback
+            )
+            return self.concurrency_limiter
+
+    async def acquire_tenant_slot(self, tenant_id: str) -> bool:
+        limiter = await self.ensure_concurrency_limiter()
+        return await limiter.try_acquire(
+            tenant_id,
+            limit=self.config.guardrails.max_concurrent_turns_per_tenant,
+            lease_s=self.settings.tenant_concurrency_lease_s,
+        )
+
+    async def release_tenant_slot(self, tenant_id: str) -> None:
+        limiter = await self.ensure_concurrency_limiter()
+        await limiter.release(tenant_id)
 
     def try_acquire_tenant(self, tenant_id: str) -> bool:
         """Per-process admission control for concurrent turns of one tenant."""
@@ -384,9 +431,27 @@ def build_services(settings: Settings) -> AppServices:
     return AppServices(
         settings=settings,
         config=config,
-        conversations=SqlAlchemyConversationRepository(db_url, memory_config=config.memory),
+        conversations=SqlAlchemyConversationRepository(
+            db_url,
+            memory_config=config.memory,
+            read_url=settings.database_read_url,
+            engine_kwargs=_engine_kwargs(settings),
+            rls_enabled=settings.rls_enabled,
+            region=settings.region,
+            home_region=settings.default_home_region,
+        ),
         storage_backend=_backend_name(settings),
     )
+
+
+def _engine_kwargs(settings: Settings) -> dict[str, Any]:
+    """Pool policy passed to every Postgres engine."""
+    return {
+        "pool_pre_ping": settings.database_pool_pre_ping,
+        "pool_size": settings.database_pool_size,
+        "max_overflow": settings.database_max_overflow,
+        "pool_recycle": settings.database_pool_recycle_s,
+    }
 
 
 def _sqlite_url(filename: str) -> str:

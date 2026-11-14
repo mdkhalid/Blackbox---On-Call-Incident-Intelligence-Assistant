@@ -84,6 +84,10 @@ resource "aws_kms_key" "data" {
   deletion_window_in_days = 30
   enable_key_rotation     = true
   policy                  = data.aws_iam_policy_document.data_key.json
+  # A replica key in the DR region requires the primary to be multi-region. This is
+  # set at creation time only: enabling multi-region on an existing key replaces it,
+  # so plan the change in a maintenance window.
+  multi_region = var.enable_multi_region
 
   tags = local.tags
 }
@@ -184,6 +188,17 @@ resource "aws_secretsmanager_secret" "app" {
   kms_key_id              = aws_kms_key.data.arn
   recovery_window_in_days = var.secret_recovery_window_days
 
+  # Cross-region replica in the DR region, encrypted with the replica CMK. Dynamic
+  # so the single-region plan is unchanged.
+  dynamic "replica" {
+    for_each = var.enable_multi_region ? [1] : []
+
+    content {
+      region     = var.secondary_region
+      kms_key_id = aws_kms_replica_key.data[0].arn
+    }
+  }
+
   tags = local.tags
 }
 
@@ -197,6 +212,15 @@ resource "aws_secretsmanager_secret" "redis" {
   description             = "Blackbox Redis connection URL including the auth token"
   kms_key_id              = aws_kms_key.data.arn
   recovery_window_in_days = var.secret_recovery_window_days
+
+  dynamic "replica" {
+    for_each = var.enable_multi_region ? [1] : []
+
+    content {
+      region     = var.secondary_region
+      kms_key_id = aws_kms_replica_key.data[0].arn
+    }
+  }
 
   tags = local.tags
 }

@@ -27,6 +27,29 @@ def test_chaos_manifests_cover_pod_and_network_failures():
     assert "NetworkChaos" in kinds
 
 
+def test_chaos_covers_zone_store_provider_and_region_failure():
+    names = {path.name for path in ROOT.glob("*.yaml")}
+    assert {
+        "az-failure.yaml",
+        "store-failure.yaml",
+        "provider-outage.yaml",
+        "region-partition.yaml",
+    } <= names
+
+
+def test_partition_experiments_declare_a_target():
+    for name in ("az-failure.yaml", "region-partition.yaml"):
+        document = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))
+        assert document["spec"]["action"] == "partition"
+        assert document["spec"]["target"]["selector"]["namespaces"] == ["blackbox"]
+
+
+def test_region_partition_scopes_by_region_label():
+    document = yaml.safe_load((ROOT / "region-partition.yaml").read_text(encoding="utf-8"))
+    labels = document["spec"]["selector"]["labelSelectors"]
+    assert labels["topology.kubernetes.io/region"] == "eu-west-1"
+
+
 def test_chaos_readme_documents_success_criteria():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "BlackboxApiDown" in readme

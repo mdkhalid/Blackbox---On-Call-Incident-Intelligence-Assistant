@@ -1,0 +1,26 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: blackbox-az-failure
+  namespace: blackbox
+spec:
+  # Partition every API pod in one zone from the rest of the cluster. The remaining
+  # zones must keep serving; requests routed to the isolated zone time out at the
+  # ingress and are retried elsewhere.
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      topology.kubernetes.io/zone: eu-west-1a
+  direction: both
+  target:
+    mode: all
+    selector:
+      namespaces:
+        - blackbox
+      labelSelectors:
+        app.kubernetes.io/name: blackbox
+  duration: 10m

@@ -105,6 +105,42 @@ emitted only after the ground check, retrieval timings are per-request, the budg
 reports the request that was actually sent, the graph runs asynchronously without holding a
 worker thread, and ingest/eval run as background jobs.
 
+## Multi-region and DR
+
+Tenant write ownership is explicit: `tenant_regions` in Postgres maps each tenant to a
+home region, and `REGION_WRITE_PINNING=true` makes an access that reaches the wrong
+region return `421` with `X-Blackbox-Home-Region` instead of writing another region's
+database. `DATABASE_READ_URL` can point reads at an intra-region replica; writes always
+use `DATABASE_URL`. Postgres RLS receives `app.tenant_id` per transaction, so it is a
+live backstop rather than a latent policy.
+
+Per-region retrieval is configuration: Qdrant replication/shard counts, the OpenSearch
+replica count, and `OPENSEARCH_ALIAS` for the versioned/alias cutover. A region whose
+index has drifted is rebuilt from documents:
+
+```bash
+python scripts/rebuild_region_indexes.py --source seed/corpus --validate
+```
+
+Drills measure RTO/RPO rather than assuming them:
+
+```bash
+docker compose -f docker-compose.dr.yml up -d   # two regions, streaming replica
+python scripts/dr_drill.py --write              # writes docs/dr-drill-results.md
+python scripts/restore_drill.py --write
+python scripts/chaos_verify.py --base-url http://localhost:8000
+```
+
+Procedures are in [`docs/failover-runbook.md`](docs/failover-runbook.md) and
+[`docs/tenant-move-runbook.md`](docs/tenant-move-runbook.md). The Terraform root module
+gains a gated multi-region layer (`enable_multi_region`) — Aurora global cluster,
+ElastiCache global replication group, KMS and Secrets Manager replicas, S3
+cross-region replication and Route 53 failover — and GitOps deploys one Application per
+region from [`deploy/gitops/applicationset.yaml`](deploy/gitops/applicationset.yaml).
+Cost per conversation and per tenant is reported by
+`GET /api/conversations/{id}/cost` and `GET /api/admin/cost` (see
+[`docs/cost-model.md`](docs/cost-model.md)).
+
 ## Architecture
 
 ![Blackbox architecture](docs/architecture.png)
@@ -181,6 +217,43 @@ cp .env.example .env
 docker compose up --build
 curl http://localhost:8000/health
 ```
+
+## Production quick start
+
+Production requires auth and a provider key; settings validation refuses to start
+otherwise.
+
+```bash
+# 1. Postgres and Redis (managed in production)
+export DATABASE_URL=postgresql://user:pass@host:5432/blackbox
+export REDIS_URL=rediss://:token@host:6379/0
+
+# 2. Auth (HS256 for a small deployment, JWKS for an OIDC provider)
+export ENV=prod
+export AUTH_ENABLED=true
+export AUTH_JWT_SECRET="$(openssl rand -hex 32)"   # or AUTH_JWKS_URL + issuer/audience
+
+# 3. Provider key and models
+export OPENAI_API_KEY=...
+export GENERATION_MODEL=gpt-4o
+export GRADING_MODEL=gpt-4o-mini
+export REWRITE_MODEL=gpt-4o-mini
+
+# 4. External retrieval stores (Chroma/BM25 are dev-only)
+export QDRANT_URL=https://qdrant.internal:6333
+export OPENSEARCH_HOSTS=https://search.internal:9200
+# config.yaml: retrieval.dense_backend=qdrant, retrieval.sparse_backend=opensearch
+
+# 5. Migrate and run
+alembic upgrade head
+uvicorn blackbox.main:app --host 0.0.0.0 --port 8000
+```
+
+Kubernetes deployments use the Helm chart (`deploy/helm/blackbox`), which runs the
+migration as a pre-install/pre-upgrade hook and reads secrets from `existingSecret`.
+Per-region releases add `config.REGION` and `config.REGION_WRITE_PINNING` (see
+`deploy/gitops/regions/`). Logging follows `docs/pii-and-query-logging.md`: query text
+is hashed by default.
 
 ## Retrieval
 

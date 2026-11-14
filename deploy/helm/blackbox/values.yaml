@@ -61,6 +61,21 @@ config:
   TRUSTED_PROXY_CIDRS: ""
   # Must be an explicit allowlist in prod; "*" is rejected by settings validation.
   CORS_ORIGINS: ""
+  # Region identity. Each regional release sets REGION to its own id; the tenant
+  # -> home-region mapping lives in the database (`tenant_regions`).
+  REGION: local
+  DEFAULT_HOME_REGION: local
+  # Enforce tenant-pinned writes: a request that reaches a non-home region gets
+  # HTTP 421 with X-Blackbox-Home-Region so the edge can retry.
+  REGION_WRITE_PINNING: "false"
+  # Feed `app.tenant_id` to the Postgres RLS policies.
+  RLS_ENABLED: "false"
+  # Optional read replica for the intra-region read path. Writes always use DATABASE_URL.
+  DATABASE_READ_URL: ""
+  DATABASE_POOL_SIZE: "5"
+  DATABASE_MAX_OVERFLOW: "10"
+  DATABASE_POOL_PRE_PING: "true"
+  DATABASE_POOL_RECYCLE_S: "1800"
   # Optional external retrieval backends. Leave empty to use the in-pod dev adapters.
   QDRANT_URL: ""
   OPENSEARCH_HOSTS: ""
@@ -80,6 +95,14 @@ config:
   TENANT_QUOTA_ENABLED: "false"
   TENANT_QUOTA_TOKENS_PER_DAY: "1000000"
   TENANT_QUOTA_LLM_CALLS_PER_DAY: "1000"
+  # Daily dollar budget per tenant (0 = unlimited); prices come from cost.models.
+  TENANT_BUDGET_USD_PER_DAY: "0"
+  # Global per-tenant concurrency across replicas (Redis counter; local fallback).
+  TENANT_CONCURRENCY_GLOBAL: "true"
+  TENANT_CONCURRENCY_LEASE_S: "300"
+  # Logging policy: mask PII in log fields; hash queries by default.
+  PII_REDACTION_ENABLED: "true"
+  QUERY_LOG_MODE: hash
   # Distributed tracing is opt-in. The image ships the `otel` extra; set
   # OTEL_ENABLED=true and point the endpoint at an OTLP/HTTP collector
   # (deploy/observability has a collector, Tempo and Grafana example).

@@ -20,6 +20,7 @@ from blackbox.eval.groundedness_eval import evaluate_dataset
 from blackbox.eval.retrieval_eval import fusion_sweep, load_dataset, run_all
 from blackbox.ingestion.pipeline import IngestionPipeline
 from blackbox.logging_setup import get_logger
+from blackbox.observability.cost import conversation_cost
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["operations"])
@@ -182,6 +183,31 @@ def eval_status(
     principal: Principal = _READ_AUTH,
 ):
     return _job_status(job_id, request, principal, kind="eval")
+
+
+@router.get("/api/admin/cost")
+def tenant_cost(
+    request: Request,
+    principal: Principal = _ADMIN_AUTH,
+    days: int = 30,
+):
+    """The tenant's LLM cost over the window, broken down by graph node.
+
+    Derived from the per-node token usage in each stored turn, so it always agrees
+    with the per-conversation report.
+    """
+    if days < 0:
+        raise HTTPException(status_code=400, detail="days must be >= 0")
+    services = get_services(request)
+    try:
+        services.ensure_storage()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    turns = services.conversations.turns_for_tenant(
+        principal.tenant_id, days=days or None
+    )
+    report = conversation_cost([turn.trace for turn in turns], services.config.cost)
+    return {"tenant_id": principal.tenant_id, "days": days, **report}
 
 
 @router.get("/api/jobs/{job_id}")

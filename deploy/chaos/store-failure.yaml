@@ -1,0 +1,17 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: blackbox-store-failure
+  namespace: blackbox
+spec:
+  # Fail a retrieval store pod. Chat must degrade to an honest failure answer rather
+  # than a 500, and retrieval must recover when the pod returns.
+  action: pod-failure
+  mode: one
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      app.kubernetes.io/component: retrieval-store
+  duration: 5m

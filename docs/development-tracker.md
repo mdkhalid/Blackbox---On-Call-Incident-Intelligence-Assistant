@@ -9,7 +9,7 @@ next.
 - **Open bugs & scaling gaps (audit):** [`code-audit-findings.md`](code-audit-findings.md)
 - **Status legend:** ✅ done · ◐ in progress · ⬜ not started · ⚠ blocked
 
-Last updated: 2026-11-13
+Last updated: 2026-11-14
 
 ---
 
@@ -18,7 +18,7 @@ Last updated: 2026-11-13
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 465 passing, `ruff` clean, `mypy` clean, coverage 80.6% (gate 80%) |
+| Tests | 587 collected (575 passing, 12 skipped: live-cluster OpenSearch + opt-in Postgres/Redis), `ruff` clean, `mypy` clean, coverage 82.7% (gate 80%) |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
@@ -130,17 +130,42 @@ Last updated: 2026-11-13
 - 490 tests collected (481 passing, 9 skipped: live-cluster OpenSearch tests),
   `ruff`/`mypy` clean; coverage 81.2%.
 
-**Next:** finish Phase 4 — GitOps/canary delivery, load and failure-injection suites, global
-per-tenant quotas, and the pen-test/secret-rotation checklists. OpenSearch/Qdrant remain
-unwritten in Terraform until the Phase 2 benchmark decides the shape.
-**Not started:** Phase 5 multi-region/DR.
+**Phase 5 — complete as a reference (2026-11-14).**
+- Multi-region application behaviour: `tenant_regions` + `TenantRegionResolver`, 421
+  write pinning with `X-Blackbox-Home-Region`, `DATABASE_READ_URL` read replica,
+  `pool_pre_ping`/pool sizing, and the RLS `app.tenant_id` GUC wired per transaction.
+- Per-region retrieval: Qdrant replication/shard config, OpenSearch replica count +
+  `OPENSEARCH_ALIAS`, region-scoped index names, and a rebuild-from-documents path.
+- Regional Redis: `JobQueue.redrive()` on worker startup plus queue-loss-risk and
+  cache-fallback metrics.
+- Cost: per-node trace usage, `blackbox/observability/cost.py`, `/api/conversations/:id/cost`
+  and `/api/admin/cost`, token/call/dollar quotas, `docs/cost-model.md`.
+- Concurrency and hardening: global per-tenant slots (`blackbox/api/admission.py`),
+  PII redaction + query-log policy (`blackbox/pii.py`), security headers, `pip-audit` and
+  `gitleaks` in CI, provider contract tests and opt-in store integration tests.
+- DR: failover/restore/tenant-move drills with measured RTO/RPO (`docs/dr-drill-results.md`),
+  `docker-compose.dr.yml`, `docs/failover-runbook.md`, `docs/tenant-move-runbook.md`.
+- Chaos: AZ/store/provider/region experiments and a machine-checkable `chaos_verify.py`.
+- Infra: gated Terraform multi-region layer (Aurora/Redis global, KMS/secret replicas,
+  S3 CRR, Route 53 failover) and a GitOps ApplicationSet with per-region overlays;
+  `terraform fmt`/`validate` clean (the multi-region code paths are validated even when
+  the flag is false), not applied.
+
+**Next (infra-bound):** apply the multi-region Terraform layer to a real account, run the
+drills against live regional endpoints, and run the load/chaos suites for measured
+capacity. Everything code-doable is complete: global concurrency, dollar budgets, PII and
+query-log policy, security headers, dependency/secret scanning, provider contract tests
+and opt-in store integration tests.
+**Not started:** nothing new; the assignment and production phases 0–5 are implemented.
 
 ### Resume point (next session)
 
-State: **490 tests collected (481 passing, 9 skipped: live-cluster OpenSearch)**,
-`ruff` clean, `mypy` clean (101 source files), coverage 81.2% (gate 80%); Docker CLI
-present but the daemon was not running during this session, so CI images were validated by
-the workflow definition, not a local build. Helm 3.16 was used to lint/render the chart.
+State: **587 tests collected (575 passing, 12 skipped: live-cluster OpenSearch and the
+opt-in Postgres/Redis integration suites)**; `ruff` clean, `mypy` clean (109 source
+files), coverage 82.7% (gate 80%).
+Phase 5 is implemented as a reference: application-level multi-region behaviour and
+drills run offline; the Terraform multi-region layer validates but was not applied
+(no AWS account), and Helm was not available locally this session (CI lints/renders it).
 Phase 1 (control plane), the audit remediation, Phase 2 (retrieval migration and tenant
 isolation), Phase 3 (async runtime and jobs) and the **deployment, observability and
 infrastructure slices of Phase 4 are complete**.
@@ -247,9 +272,11 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
 | Kubernetes/Helm/Terraform | 4 | ✅ | Helm chart complete; Terraform AWS reference complete and validate/scan-clean (OpenSearch/WAF/Route 53 optional); infra-bound validation pending |
 | Observability stack | 4 | ✅ | Prometheus `/metrics` + recording/SLO alerts + optional OTel traces + Grafana dashboard/provisioning + collector/Tempo/Loki references + synthetic probe done; error tracking optional |
-| CI/CD + security scanning | 4 | ◐ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM, GitOps/canary reference done; dependency/secret scanning open |
-| Multi-region + DR | 5 | ⬜ | tenant-pinned writes, failover drills |
-| Load/chaos suites | 5 | ◐ | load harness + Chaos Mesh experiments added; target-SLO run pending |
+| CI/CD + security scanning | 4 | ✅ | coverage gate, chart lint/render, image build, Trivy scan, SPDX SBOM, GitOps/canary reference, `pip-audit` + `gitleaks` |
+| Multi-region + DR | 5 | ✅ | tenant-pinned writes (421), RLS GUC, read replica, per-region retrieval + rebuild, Redis redrive, tenant move, measured drills, gated Terraform global layer + GitOps ApplicationSet; live-region drills pending |
+| Cost model + budgets | 5 | ✅ | per-node trace usage, `/api/conversations/:id/cost`, `/api/admin/cost`, token/call/dollar quotas, `docs/cost-model.md` |
+| Global concurrency + hardening | 4/5 | ✅ | Redis slot counter + local fallback; PII/query-log policy; security headers; pip-audit + gitleaks in CI; provider contract + opt-in store integration tests |
+| Load/chaos suites | 5 | ◐ | AZ/store/provider/region chaos manifests + `chaos_verify.py`; target-SLO run pending |
 
 ---
 
@@ -299,7 +326,9 @@ isolation is a Phase 2 gate because the retrieval stores are replaced there.
 - [x] Fake-provider tests for retry recovery and circuit-open failure
 - [x] Async `acomplete` provider interface — audit finding 5
 - [x] Async graph/providers with no threadpool hops — audit finding 5
-- [ ] Explicit token/cost quotas per tenant — **Phase 4**
+- [x] Explicit token/call quotas per tenant — `blackbox/api/quotas.py` (Phase 4)
+- [x] Explicit dollar budget per tenant — `TENANT_BUDGET_USD_PER_DAY`, recorded from
+      `turn_cost` and checked at chat admission (`budget_usd` reason)
 
 ---
 
@@ -339,7 +368,7 @@ within SLO at target load.
 - [x] Partition plan for turns/traces — partition_month column + index + migration 0004 (range partitioning ready)
 - [x] Retention/deletion APIs beyond tenant offboarding — delete_older_than + admin endpoint
 - [x] Tenant offboarding (conversations + turns) via `DELETE /api/admin/tenants/{tenant_id}` and `ConversationRepository.delete_tenant`; entity/index payloads are store-wide today
-- [ ] Global per-tenant LLM/token quotas — deferred to Phase 4 (per-pod admission control in place)
+- [x] Global per-tenant LLM/token quotas — `blackbox/api/quotas.py` (Redis-backed, local fallback)
 
 ## 5. Phase 3 — Async runtime and jobs
 
@@ -362,19 +391,19 @@ queue.
 
 - [x] Helm chart: API, workers, HPA/KEDA, PDB, NetworkPolicies
 - [x] Terraform: VPC/EKS, Aurora, ElastiCache, S3 trace archive, KMS, Secrets Manager, IRSA
-- [ ] Terraform: OpenSearch/Qdrant (blocked on the Phase 2 backend benchmark), WAF, Route 53
+- [x] Terraform: OpenSearch/WAF/Route 53 shapes behind flags (backend choice still awaits the benchmark)
 - [x] External Secrets example for the chart's `existingSecret` + rotation notes
 - [ ] SQS/MSK (not needed: the queue is Redis; revisit only if the job queue outgrows it)
 - [x] Ingress SSE config: buffering off, idle timeout, body cap, TLS
 - [x] Startup/readiness/liveness probes — startup `/health`, readiness `/health/ready`, liveness `/health`
-- [ ] Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are built)
+- [x] Runtime warm-up at pod start — lifespan calls `ensure_runtime()`; readiness reports `runtime`
 - [x] Prometheus metrics + `/metrics` (HTTP, SSE, retrieval, LLM, queue)
 - [x] Prometheus recording rules and SLO/burn alerts (`deploy/observability`)
 - [x] OpenTelemetry traces across HTTP → graph node → retrieval → LLM → DB (optional
       `otel` extra; no-op when disabled)
 - [x] Grafana overview dashboard + Prometheus/Loki/Tempo provisioning
 - [x] OTel Collector, Tempo, Loki and Promtail configs (`deploy/observability`)
-- [ ] Synthetic probes, error tracking and on-call runbooks
+- [x] Synthetic probes, optional error tracking and on-call runbooks
 - [x] GitHub Actions: lint, tests, migration check
 - [x] CI: coverage (80% gate), image scan/SBOM (Trivy + Syft), image build, chart validation (mypy is done)
 - [x] CI: `terraform fmt -check`, `init -backend=false`, `validate` and Trivy config scan
@@ -399,22 +428,39 @@ queue.
       failed.
 - [x] **Error tracking**: optional Sentry init from `SENTRY_DSN` (fail-open; extra `sentry`).
 - [x] **Per-region synthetic probes**: `deploy/probes/synthetic-probe-cronjob.yaml`.
-- [ ] **Global per-tenant concurrency**: still per-pod; needs a Redis-backed counter (carried).
-- [ ] **Dependency and secret scanning in CI**: add `pip-audit` and a secret scanner.
+- [x] **Global per-tenant concurrency**: `blackbox/api/admission.py` — Redis slot counter
+      with a lease TTL and a local fallback, enforced alongside the per-pod fast check.
+- [x] **Dependency and secret scanning in CI**: `pip-audit` in the test job and a
+      `gitleaks` job in `.github/workflows/ci.yml`.
 - [ ] **Terraform apply**: first `terraform plan`/apply against a real AWS account.
 - [ ] **Live-cluster backend benchmark**: run `scripts/benchmark_backends.py` and record
       the OpenSearch-only vs Qdrant+OpenSearch decision in §9.
 - [ ] **Run the load/chaos suites** against a staging cluster and record measured capacity
       vs the provisional SLOs.
 
-- [ ] Tenant home-region routing (DNS/GSLB)
-- [ ] Regional Postgres with cross-region DR; failover runbook
-- [ ] Qdrant/OpenSearch per-region replication and rebuild path
-- [ ] Redis regional, non-authoritative
-- [ ] Tenant move procedure
-- [ ] RTO/RPO drills with measured results
-- [ ] Cost model per tenant/conversation; budgets and quotas
-- [ ] Chaos suite: pod/AZ/store/provider failures
+## 7. Phase 5 — Multi-region, DR, cost and chaos
+
+- [x] Tenant home-region routing — `tenant_regions` is authoritative, `TenantRegionResolver`
+  caches it, `REGION_WRITE_PINNING` returns 421 + `X-Blackbox-Home-Region` for a non-home
+  conversation access (`blackbox/api/regions.py`, `tests/test_tenant_region_pinning.py`)
+- [x] Regional Postgres with cross-region DR; failover runbook — read replica via
+  `DATABASE_READ_URL`, `pool_pre_ping`/pool sizing, RLS `app.tenant_id` GUC,
+  `docs/failover-runbook.md`, gated Terraform Aurora global + DNS failover
+- [x] Qdrant/OpenSearch per-region replication and rebuild path — Qdrant replication/shard
+  config, OpenSearch replica count + `OPENSEARCH_ALIAS`, region-scoped index names,
+  `blackbox/ingestion/rebuild.py` + `scripts/rebuild_region_indexes.py`
+- [x] Redis regional, non-authoritative — `JobQueue.redrive()` re-queues stranded jobs on
+  worker startup, `blackbox_job_queue_loss_risk` and `blackbox_cache_fallback_active` metrics
+- [x] Tenant move procedure — `export_tenant`/`import_tenant`, `move_tenant`,
+  `scripts/move_tenant.py`, `docs/tenant-move-runbook.md`; idempotent and verified
+- [x] RTO/RPO drills with measured results — `scripts/dr_drill.py`, `scripts/restore_drill.py`,
+  generated `docs/dr-drill-results.md`, `docker-compose.dr.yml`
+- [x] Cost model per tenant/conversation; budgets and quotas — per-node trace usage,
+  `blackbox/observability/cost.py`, `/api/conversations/{id}/cost`, `/api/admin/cost`,
+  daily token/call quotas plus a dollar budget (`TENANT_BUDGET_USD_PER_DAY`),
+  `docs/cost-model.md`
+- [x] Chaos suite: pod/AZ/store/provider failures — `deploy/chaos/{az,store,provider,region}*.yaml`
+  and `scripts/chaos_verify.py`
 
 ---
 
@@ -422,13 +468,16 @@ queue.
 
 - [x] Fix remaining mypy errors; CI type-check gate — audit finding 9
 - [x] Coverage threshold and coverage report in CI — 80% gate, currently 80.6%
-- [ ] Provider contract tests (OpenAI/Anthropic against mock servers)
-- [ ] Postgres/Redis integration tests (testcontainers)
+- [x] Provider contract tests (request shape + response mapping with injected stub clients)
+- [x] Postgres/Redis integration tests — opt-in via `POSTGRES_TEST_URL`/`REDIS_TEST_URL`
+      (`tests/test_integration_stores.py`); skipped in the default offline suite
 - [x] Docker image build in CI (local two-replica smoke passes)
-- [ ] Load test script (k6/Locust) committed
-- [ ] PII redaction and query-log policy
-- [ ] Security headers and dependency scanning
-- [ ] Update README quick start for production mode (auth + external stores)
+- [x] Load test script committed — `scripts/load_test.py` (standard library, SSE-aware)
+- [x] PII redaction and query-log policy — `blackbox/pii.py`, `PII_REDACTION_ENABLED`,
+      `QUERY_LOG_MODE` (hash default), `docs/pii-and-query-logging.md`
+- [x] Security headers and dependency scanning — pure-ASGI `SecurityHeadersMiddleware`,
+      `pip-audit` + `gitleaks` in CI
+- [x] README quick start for production mode (auth, external stores, migrations)
 
 ---
 
@@ -484,6 +533,20 @@ queue.
 | 2026-11-13 | Two IRSA roles: app (S3 traces) and External Secrets (read secrets) | Accepted | A compromised pod should not be able to read the database password just because it can archive traces |
 | 2026-11-13 | Redis `maxmemory-policy = noeviction` | Accepted | The instance shares the job queue and idempotency keys with caches; eviction would silently drop work |
 | 2026-11-13 | Terraform is validated, not applied | Accepted | There is no AWS account in this environment; the first plan needs a human review for regional engine versions and quotas |
+| 2026-11-14 | Tenant→region mapping lives in `tenant_regions`, not the JWT | Accepted | The DB is the authority on failover; a token claim would let a stale client pin the wrong region |
+| 2026-11-14 | A non-home conversation access returns 421 + `X-Blackbox-Home-Region`, not an in-app proxy | Accepted | The edge owns routing; the app never writes another region's database |
+| 2026-11-14 | RLS is enforced via `set_config('app.tenant_id', …, true)` on transaction begin | Accepted | The 0002 policies read a GUC nothing set; enabling RLS without this would hide every row |
+| 2026-11-14 | `pool_pre_ping` and bounded pool sizes are on by default | Accepted | A failover endpoint flip must heal, not surface a stale-connection error |
+| 2026-11-14 | Cost is derived on read from per-node trace usage; there is no cost column | Accepted | Repricing and adding models need no migration, and historical turns are repriced correctly |
+| 2026-11-14 | An unpriced model is reported, never counted as free | Accepted | A report that silently omits a model is worse than one that says it cannot price it |
+| 2026-11-14 | Regional Redis loss loses queued work; `redrive()` recovers records that survived | Accepted | Pending lists are not durable; the DB/record index is the recoverable source |
+| 2026-11-14 | DR drills run against a local SQLite/Compose harness; Terraform extends the reference | Accepted | No AWS account here; the harness proves the measurement and procedure, and the same code measures live endpoints |
+| 2026-11-14 | Retrieval index names are region-scoped when `region_suffix` is on | Accepted | Two regions sharing a physical index would let a secondary rebuild overwrite the primary |
+| 2026-11-14 | Admission is two-layer: a per-pod counter plus a Redis slot counter | Accepted | The local check rejects instantly; the shared counter makes the limit global, and Redis failure degrades to the old behaviour |
+| 2026-11-14 | A concurrency slot has a lease TTL | Accepted | A pod killed mid-turn must not pin a tenant out of the service; the TTL is the recovery path |
+| 2026-11-14 | The dollar budget rejects at admission (`budget_usd`) | Accepted | Rejecting before the turn avoids spending; recording after captures real usage |
+| 2026-11-14 | Query logs are hashed by default; `redact`/`raw` are explicit | Accepted | A hash keeps queries correlatable without storing content; raw text in logs is a compliance risk |
+| 2026-11-14 | Security headers are a pure-ASGI middleware; no CSP from the app | Accepted | `BaseHTTPMiddleware` interferes with SSE; the single-file viewer uses inline script, so the ingress owns any CSP |
 
 ## 10. Open questions
 
@@ -558,6 +621,16 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-13 | Phase 4: Grafana overview dashboard + Prometheus/Loki/Tempo datasource provisioning | ✅ | `6a9af95` |
 | 2026-11-13 | Phase 4: OTel Collector/Tempo/Loki configs + Promtail values (`trace_id` extraction); dashboard queries tested against the registry | ✅ | `6a9af95` |
 | 2026-11-13 | Fix: worker process registers job handlers (imported the empty routes package) | ✅ | `18c0266` |
+| 2026-11-14 | Phase 5: region config, `tenant_regions` (migration 0005), tenant-pinned writes (421), RLS GUC, read replica + pool policy | ✅ | local |
+| 2026-11-14 | Phase 5: per-region retrieval topology/alias config, region-scoped names, rebuild-from-documents path + script | ✅ | local |
+| 2026-11-14 | Phase 5: regional Redis `redrive()`, cache-fallback and queue-loss-risk metrics | ✅ | local |
+| 2026-11-14 | Phase 5: per-node trace usage, cost derivation, conversation + tenant cost endpoints, `docs/cost-model.md` | ✅ | local |
+| 2026-11-14 | Phase 5: failover/restore/tenant-move drills, `docker-compose.dr.yml`, runbooks, generated `docs/dr-drill-results.md` | ✅ | local |
+| 2026-11-14 | Phase 5: AZ/store/provider/region chaos experiments + `scripts/chaos_verify.py` | ✅ | local |
+| 2026-11-14 | Phase 5: gated Terraform multi-region layer (Aurora/Redis global, KMS/secret replicas, S3 CRR, Route 53 failover), GitOps ApplicationSet + region overlays | ✅ | local |
+| 2026-11-14 | Hardening: global per-tenant concurrency (Redis slots + local fallback), dollar budget, PII/query-log policy, security headers | ✅ | local |
+| 2026-11-14 | CI: `pip-audit` dependency audit and `gitleaks` secret scan; provider contract tests; opt-in Postgres/Redis integration tests | ✅ | local |
+| 2026-11-14 | Docs: production quick start, PII/query-logging policy, tracker reconciliation | ✅ | local |
 
 ## 12. Update protocol
 

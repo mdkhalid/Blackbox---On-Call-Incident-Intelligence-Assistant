@@ -183,8 +183,14 @@ def build_cache(settings, config) -> CacheBackend | None:
             )
             client.ping()
             logger.info("cache_backend", backend="redis")
+            from blackbox.observability.metrics import record_cache_fallback
+
+            record_cache_fallback(False)
             return RedisCache(client, default_ttl_s=default_ttl)
         except Exception as exc:  # noqa: BLE001 - fall back, never fail startup
             logger.warning("redis_unavailable", error=str(exc), fallback="memory")
 
+    from blackbox.observability.metrics import record_cache_fallback
+
+    record_cache_fallback(True)
     return TTLCache(default_ttl_s=default_ttl)

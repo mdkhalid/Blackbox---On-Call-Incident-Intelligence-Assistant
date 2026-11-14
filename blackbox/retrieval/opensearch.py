@@ -44,40 +44,52 @@ FILTER_FIELDS = (
     "tenant_id",
 )
 
-INDEX_MAPPING: dict[str, Any] = {
-    "settings": {
-        "index": {"number_of_shards": 1, "number_of_replicas": 0},
-        # The BM25 parameters of the in-process adapter, so the two score the same
-        # corpus the same way. `rank_bm25` defaults to k1=1.5, b=0.75; Lucene's
-        # default is k1=1.2, which would order the results differently.
-        "similarity": {"blackbox_bm25": {"type": "BM25", "k1": 1.5, "b": 0.75}},
-    },
-    "mappings": {
-        "properties": {
-            "chunk_id": {"type": "keyword"},
-            # The pre-tokenized text. The whitespace analyzer keeps each token whole, so
-            # the indexed terms are exactly the terms the BM25 adapter scores.
-            "tokens": {
-                "type": "text",
-                "analyzer": "whitespace",
-                "similarity": "blackbox_bm25",
-            },
-            # The raw text, kept for display and for the standard-analyzed secondary
-            # match.
-            "text": {"type": "text", "analyzer": "standard"},
-            "doc_type": {"type": "keyword"},
-            "doc_id": {"type": "keyword"},
-            "severity": {"type": "keyword"},
-            "section": {"type": "keyword"},
-            "services": {"type": "keyword"},
-            "error_codes": {"type": "keyword"},
-            "tenant_id": {"type": "keyword"},
-            "date_ord": {"type": "long"},
-            # Stored but not indexed: it is only ever read back for the trace viewer.
-            "metadata": {"type": "object", "enabled": False},
-        }
-    },
-}
+def index_mapping(*, shards: int = 1, replicas: int = 0) -> dict[str, Any]:
+    """The index mapping, with topology from configuration.
+
+    Shards and replicas are per region. A cross-region copy is a separate cluster
+    (cross-cluster replication), not a replica: replicas only survive the loss of a
+    node inside the region.
+    """
+    return {
+        "settings": {
+            "index": {"number_of_shards": shards, "number_of_replicas": replicas},
+            # The BM25 parameters of the in-process adapter, so the two score the same
+            # corpus the same way. `rank_bm25` defaults to k1=1.5, b=0.75; Lucene's
+            # default is k1=1.2, which would order the results differently.
+            "similarity": {"blackbox_bm25": {"type": "BM25", "k1": 1.5, "b": 0.75}},
+        },
+        "mappings": {
+            "properties": {
+                "chunk_id": {"type": "keyword"},
+                # The pre-tokenized text. The whitespace analyzer keeps each token
+                # whole, so the indexed terms are exactly the terms the BM25 adapter
+                # scores.
+                "tokens": {
+                    "type": "text",
+                    "analyzer": "whitespace",
+                    "similarity": "blackbox_bm25",
+                },
+                # The raw text, kept for display and for the standard-analyzed
+                # secondary match.
+                "text": {"type": "text", "analyzer": "standard"},
+                "doc_type": {"type": "keyword"},
+                "doc_id": {"type": "keyword"},
+                "severity": {"type": "keyword"},
+                "section": {"type": "keyword"},
+                "services": {"type": "keyword"},
+                "error_codes": {"type": "keyword"},
+                "tenant_id": {"type": "keyword"},
+                "date_ord": {"type": "long"},
+                # Stored but not indexed: only read back for the trace viewer.
+                "metadata": {"type": "object", "enabled": False},
+            }
+        },
+    }
+
+
+# The default mapping, kept for callers and tests that import it directly.
+INDEX_MAPPING: dict[str, Any] = index_mapping()
 
 
 class OpenSearchUnavailable(RuntimeError):
@@ -100,6 +112,8 @@ class OpenSearchSparseStore:
         tokens_field: str = "tokens",
         chunk_id_field: str = "chunk_id",
         alias: str | None = None,
+        shard_count: int = 1,
+        replica_count: int = 0,
     ) -> None:
         self.hosts = [host.strip() for host in hosts.split(",") if host.strip()]
         # When an alias is supplied, `index` names the read alias and concrete
@@ -118,6 +132,11 @@ class OpenSearchSparseStore:
         # reads keep hitting the alias (the previous version). The alias flips only
         # after validation, so a failed rebuild is invisible to readers.
         self.write_index: str | None = None
+        self.shard_count = max(1, shard_count)
+        self.replica_count = max(0, replica_count)
+        self.mapping = index_mapping(
+            shards=self.shard_count, replicas=self.replica_count
+        )
         self._client: Any = None
         self._async_client: Any = None
 
@@ -195,7 +214,7 @@ class OpenSearchSparseStore:
             return
         if self.client.indices.exists(index=self.index):
             return
-        self.client.indices.create(index=self.index, body=INDEX_MAPPING)
+        self.client.indices.create(index=self.index, body=self.mapping)
         logger.info("opensearch_index_created", index=self.index)
 
     def drop_index(self) -> None:
@@ -231,7 +250,7 @@ class OpenSearchSparseStore:
         """Create a concrete versioned index with the standard mapping."""
         name = self.versioned_index_name(version)
         if not self.client.indices.exists(index=name):
-            self.client.indices.create(index=name, body=INDEX_MAPPING)
+            self.client.indices.create(index=name, body=self.mapping)
         return name
 
     def swap_alias(self, version: int) -> None:

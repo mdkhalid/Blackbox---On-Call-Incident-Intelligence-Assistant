@@ -28,6 +28,10 @@ jobs:
         run: python -m ruff check blackbox tests scripts alembic
       - name: Type check
         run: python -m mypy blackbox
+      - name: Dependency audit
+        run: |
+          python -m pip install pip-audit
+          pip-audit
       - name: Tests
         run: |
           python -m pytest -q --cov=blackbox --cov-report=term \
@@ -38,6 +42,17 @@ jobs:
         run: |
           alembic upgrade head
           alembic downgrade base
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   chart:
     runs-on: ubuntu-latest
@@ -55,10 +70,16 @@ jobs:
           helm template blackbox deploy/helm/blackbox --namespace blackbox > /tmp/default.yaml
           helm template blackbox deploy/helm/blackbox --namespace blackbox \
             -f deploy/helm/blackbox/values-prod.example.yaml > /tmp/prod.yaml
+          # The multi-region overlay must render too: it is what Argo CD deploys.
+          helm template blackbox deploy/helm/blackbox --namespace blackbox \
+            -f deploy/helm/blackbox/values-prod.example.yaml \
+            -f deploy/gitops/regions/values-us-east-1.yaml > /tmp/region.yaml
+          grep -q 'REGION: "us-east-1"' /tmp/region.yaml
           # The KEDA and Prometheus-Operator CRDs are not part of the Kubernetes
           # schema bundle; every core object is still validated strictly.
           docker run --rm -v /tmp:/tmp ghcr.io/yannh/kubeconform:latest \
-            -strict -summary -ignore-missing-schemas /tmp/default.yaml /tmp/prod.yaml
+            -strict -summary -ignore-missing-schemas \
+            /tmp/default.yaml /tmp/prod.yaml /tmp/region.yaml
 
   terraform:
     runs-on: ubuntu-latest

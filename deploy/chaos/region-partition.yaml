@@ -1,0 +1,28 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: blackbox-region-partition
+  namespace: blackbox
+spec:
+  # Reference experiment for a two-region deployment: partition EU pods from US
+  # pods. Requires both regions' pods to be addressable from one Chaos Mesh control
+  # plane (multi-cluster), or run one copy of this manifest per cluster with the
+  # remote region as the external target.
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - blackbox
+    labelSelectors:
+      app.kubernetes.io/name: blackbox
+      topology.kubernetes.io/region: eu-west-1
+  direction: both
+  target:
+    mode: all
+    selector:
+      namespaces:
+        - blackbox
+      labelSelectors:
+        app.kubernetes.io/name: blackbox
+        topology.kubernetes.io/region: us-east-1
+  duration: 10m

@@ -1,0 +1,12 @@
+# Region overlay: US (DR pair for EU).
+#
+# `DEFAULT_HOME_REGION` stays eu-west-1: an unmapped tenant is homed in the primary
+# region, so this instance rejects its writes with 421 until the tenant is explicitly
+# moved or failed over (see docs/tenant-move-runbook.md).
+config:
+  REGION: us-east-1
+  DEFAULT_HOME_REGION: eu-west-1
+  REGION_WRITE_PINNING: "true"
+  RLS_ENABLED: "true"
+  DATABASE_READ_URL: ""
+  DATABASE_POOL_PRE_PING: "true"
