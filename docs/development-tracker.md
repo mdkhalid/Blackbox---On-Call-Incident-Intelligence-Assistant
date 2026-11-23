@@ -163,6 +163,9 @@ and opt-in store integration tests. **The full pick-up list is §12.**
 
 ### Resume point (next session)
 
+**Start here to run it: [`run-production.md`](run-production.md)** — prerequisites, env,
+Compose/Helm start, first ingest, readiness verification and troubleshooting.
+
 State: **608 tests collected (596 passing, 12 skipped: live-cluster OpenSearch and the
 opt-in Postgres/Redis integration suites)**; `ruff` clean, `mypy` clean (110 source
 files), coverage 83.5% (gate 80%). The 2026-11-14 audit's criticals **and** all seven
@@ -669,6 +672,7 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-23 | Retrieval: shadow comparison dispatched in the background with a latency-isolation test | ✅ | local |
 | 2026-11-23 | Consolidation: `Retriever` protocol, `JobStore.dequeue(kind)`, shared Redis factory, dead settings removed | ✅ | local |
 | 2026-11-23 | Deploy: cloud-agnostic Docker Compose stack (`deploy/compose`) with Caddy edge, migrate service, managed-or-local Postgres/Redis | ✅ | local |
+| 2026-11-23 | Docs: single production-start guide (`docs/run-production.md`) covering requirements, Compose/Helm/bare start, first ingest, readiness, auth, scaling, ops and troubleshooting | ✅ | local |
 
 ## 12. Remaining work (pick-up list)
 

@@ -5,7 +5,8 @@ definitions: *"checkout p99 is spiking and the DB connection pool looks saturate
 happened before?"*
 
 Phases 0–9 complete. See `docs/` for design, planning and results; `docs/phase-wise-plan.md`
-tracks progress.
+tracks progress. **To deploy it, start with [`docs/run-production.md`](docs/run-production.md)**
+— one document from prerequisites to a verified running service.
 
 ## Status
 
@@ -243,7 +244,8 @@ Compose path requires AWS.
 
 ## Production quick start
 
-Production requires auth and a provider key; settings validation refuses to start
+The full walkthrough is [`docs/run-production.md`](docs/run-production.md). The short version:
+production requires auth and a provider key, and settings validation refuses to start
 otherwise.
 
 ```bash
