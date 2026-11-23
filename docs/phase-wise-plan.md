@@ -4,7 +4,7 @@ On-Call Incident Intelligence Assistant. Python stack. Total budget 25–32 hrs.
 
 Status: Phase 0 ✅, Phase 1 ✅, Phase 2 ✅, Phase 3 ✅, Phase 4 ✅, Phase 5 ✅, Phase 6 ✅, Phase 7 ✅, Phase 8 ✅, Phase 9 ✅. **All phases complete.**
 
-Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **465 passing** (9 skipped without a live OpenSearch cluster), `ruff` clean, `mypy` clean.
+Environment: project-local `.venv` at `.venv/`; all dependencies installed there, none globally. Driver is `psycopg[binary]` because SQLAlchemy 2.1 resolves `postgresql://` to psycopg 3. Tests: **608 collected (596 passing, 12 skipped** without a live OpenSearch cluster or the opt-in Postgres/Redis suites**), `ruff` clean, `mypy` clean, coverage 83.5% (gate 80%).
 
 ## Production Program (post-assignment)
 The original assignment is complete. Further work is tracked separately:
@@ -12,17 +12,18 @@ The original assignment is complete. Further work is tracked separately:
   architecture, capacity/SLOs, tenancy, retrieval migration, Kubernetes and multi-region plan.
 - [`development-tracker.md`](development-tracker.md) — living checklist, status dashboard,
   decisions and change log. Update it with every production PR.
-Current production state: **Phase 4 (Kubernetes and operations) complete as a reference implementation**. Phase 3
-(async runtime and jobs) is complete. Phase 4 has landed the Helm deployment package, the AWS
-Terraform reference (EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA + optional OpenSearch/
-WAF/Route 53), unprivileged image, Prometheus metrics with SLO/error-budget alert rules,
-optional OpenTelemetry tracing, Grafana and Loki/Tempo/collector configs, GitOps/canary
-reference, load/chaos assets, global per-tenant quotas, pen-test checklist, secret-rotation
-runbook, synthetic probe, on-call runbook, runtime warm-up, optional Sentry, External Secrets
-wiring, and the CI coverage/image/SBOM plus Terraform validate/scan gates; remaining Phase 4
-items are global per-tenant concurrency, dependency/secret scanning in CI, applying Terraform
-to a real account, the live-cluster backend benchmark and running the load/chaos suites.
-Phase 2 open items are the live-cluster backend benchmark and global concurrency (Phase 4).
+Current production state: **Phases 4 (Kubernetes and operations) and 5 (multi-region, DR, cost
+and chaos) are complete as reference implementations**. Phase 3 (async runtime and jobs) is
+complete. Phase 4 has landed the Helm deployment package, the AWS Terraform reference
+(EKS/Aurora/ElastiCache/S3/KMS/Secrets Manager/IRSA + optional OpenSearch/WAF/Route 53),
+unprivileged image, Prometheus metrics with SLO/error-budget alert rules, optional
+OpenTelemetry tracing, Grafana and Loki/Tempo/collector configs, GitOps/canary reference,
+load/chaos assets, global per-tenant quotas and concurrency, pen-test checklist,
+secret-rotation runbook, synthetic probe, on-call runbook, runtime warm-up, optional Sentry,
+External Secrets wiring, and the CI coverage/image/SBOM plus Terraform validate/scan gates.
+The remaining items are infrastructure-bound: applying Terraform to a real account, the
+live-cluster backend benchmark, and running the load/chaos/DR suites against staging.
+Phase 2's only open item is the live-cluster backend benchmark.
 
 ## Phase 0 — Setup & Scaffolding (2 hrs) ✅ DONE
 - Repo layout, pyproject, config (env + YAML), structlog logging, request-id middleware, health endpoints.
@@ -54,10 +55,10 @@ Phase 2 open items are the live-cluster backend benchmark and global concurrency
 ### Measured outcome (k=5, seeded corpus)
 | Strategy | MRR | R@5 | P@5 |
 |---|---|---|---|
-| dense-only | 0.8548 | 0.8581 | 0.4433 |
-| sparse-only (BM25) | 0.8714 | 0.8510 | 0.3786 |
-| hybrid (RRF) | **0.9167** | **0.8867** | **0.4348** |
-| hybrid + rerank | 0.8857 | 0.9219 | 0.4543 |
+| dense-only | 0.8548 | 0.8581 | 0.3029 |
+| sparse-only (BM25) | 0.8714 | 0.8510 | 0.2629 |
+| hybrid (RRF) | **0.9167** | **0.8867** | 0.2914 |
+| hybrid + rerank | 0.8857 | 0.9219 | **0.3143** |
 
 ### Decisions the numbers forced (not the defaults)
 - **Fusion weights 0.75/0.25, from a 21-point sweep.** 0.75–0.80 is a flat plateau at MRR
@@ -348,7 +349,7 @@ Two ingestion bugs were hidden by the unit fixtures and only appeared against th
 - Clean-room verification in a fresh venv at a short path (`.[dev,rag,db]`):
   - 295 tests pass, ruff clean;
   - corpus ingested from `seed/corpus`: 60 documents → 315 chunks;
-  - retrieval eval reproduced exactly (hybrid MRR 0.9167 / R@5 0.8867 / P@5 0.4348);
+  - retrieval eval reproduced exactly (hybrid MRR 0.9167 / R@5 0.8867 / P@5 0.2914);
   - groundedness subset (10 answerable + 5 unanswerable): answer rate 1.0, abstention 1.0,
     draft claim support 1.0;
   - live demo over HTTP: compression preserved the ruled-out deploy, the entity hypothesis
@@ -408,7 +409,7 @@ re-runnable eval scripts.
 python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
-pytest -q                            # 465 tests
+pytest -q                            # 608 tests (596 passing, 12 skipped)
 python -m blackbox.eval.retrieval_eval --k 5 --write --fusion-sweep --tie-break-sweep
 python -m blackbox.eval.groundedness_eval --write
 uvicorn blackbox.main:app --reload   # then POST /api/ingest and open /

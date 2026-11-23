@@ -4,6 +4,7 @@ Ingesting a corpus and running the evaluation grid must not occupy a request wor
 for the duration of the job, so both endpoints answer `202 {job_id}` and the work
 happens on a background worker.
 """
+import asyncio
 import threading
 import time
 
@@ -104,3 +105,30 @@ def test_an_async_job_body_is_supported():
     finished = _wait(job)
     assert finished.status == SUCCEEDED
     assert finished.result == {"ok": True}
+
+
+def test_async_jobs_share_one_long_lived_event_loop():
+    """Two jobs must not run on two loop instances.
+
+    A fresh `asyncio.run` per job closes the loop each time, so a Redis or SDK client
+    created by the first job is bound to a loop the second job no longer has.
+    """
+    queue = JobQueue("test")
+    loops: list[int] = []
+    two_done = threading.Event()
+
+    async def record_loop():
+        loops.append(id(asyncio.get_running_loop()))
+        if len(loops) >= 2:
+            two_done.set()
+        return {"ok": True}
+
+    first = queue.submit(record_loop, tenant_id="t", subject="a")
+    second = queue.submit(record_loop, tenant_id="t", subject="b")
+    assert two_done.wait(timeout=5)
+    _wait(first)
+    _wait(second)
+    queue.stop()
+
+    assert len(loops) == 2
+    assert len(set(loops)) == 1

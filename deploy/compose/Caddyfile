@@ -1,0 +1,20 @@
+# Caddy edge: one public entry point, SSE-safe proxying to the API replicas.
+#
+# Set BLACKBOX_DOMAIN to a hostname (e.g. blackbox.example.com) for automatic HTTPS,
+# or leave it unset for plain HTTP on :80. Caddy resolves `api` through Compose DNS,
+# which returns every API replica; it keeps streams unbuffered for SSE.
+
+{$BLACKBOX_DOMAIN::80} {
+	encode zstd gzip
+
+	reverse_proxy api:8000 {
+		# SSE: do not buffer, or the client sees node/token events in bursts.
+		flush_interval -1
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+	}
+}

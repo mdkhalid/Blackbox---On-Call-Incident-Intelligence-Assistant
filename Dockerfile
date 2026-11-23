@@ -16,7 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the package (and its static/config/eval data) at build time.
 COPY pyproject.toml ./
 COPY blackbox ./blackbox
-RUN pip install --upgrade pip && pip install -e ".[rag,db,otel]"
+# Install every runtime backend the deployment can select: hosted provider SDKs,
+# the scale-out retrieval clients and the S3-compatible trace archive. Reranking's
+# torch dependency and the optional tracing exporter stay opt-in (`rerank`, `otel`).
+RUN pip install --upgrade pip \
+    && pip install -e ".[rag,db,otel,providers,search,vector,archive]"
 
 COPY seed ./seed
 COPY scripts ./scripts
@@ -30,6 +34,10 @@ RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
     && mkdir -p /app/data \
     && chown -R app:app /app
+
+# Chroma's bundled ONNX embedder caches under `~/.cache/chroma`. The app user has no
+# home directory, so point HOME at the writable data volume or the first warm-up fails.
+ENV HOME=/app/data
 
 USER 10001:10001
 

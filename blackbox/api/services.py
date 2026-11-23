@@ -193,6 +193,39 @@ class AppServices:
                 llm=getattr(llm, "name", type(llm).__name__),
             )
 
+    def dependency_report(self) -> dict[str, str]:
+        """Per-dependency readiness: `ok`, `degraded`, `down`, `cold` or `off`.
+
+        The storage check is a real `SELECT 1`, not the `storage_ready` flag: the flag
+        says the schema was created once, which is exactly the fact that fails to
+        notice a lost database connection or a failover.
+        """
+        report = {
+            "storage": "down",
+            "runtime": "ready" if self.runtime_ready else "cold",
+            "retrieval": "ready" if self.retriever is not None else "cold",
+            "llm": "ready" if self.llm is not None else "cold",
+            "cache": "off",
+        }
+        try:
+            ping = getattr(self.conversations, "ping", None)
+            if callable(ping):
+                ping()
+            else:  # pragma: no cover - every shipped repository implements ping
+                self.ensure_storage()
+            report["storage"] = "ok"
+        except Exception as exc:  # noqa: BLE001 - readiness reports, it does not raise
+            logger.warning("readiness_storage_ping_failed", error=str(exc))
+
+        cache = self.cache_backend
+        if cache is not None:
+            # Redis is shared; the in-process fallback keeps serving but is not the
+            # cluster-wide cache readiness should advertise as healthy.
+            report["cache"] = (
+                "ok" if type(cache).__name__ == "RedisCache" else "degraded"
+            )
+        return report
+
     def _build_entity_store(self, store_cls):
         candidates = [self.settings.database_url, _sqlite_url("entities.db")]
         for url in candidates:

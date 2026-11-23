@@ -10,9 +10,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from blackbox.text import content_tokens
+from blackbox.text import content_tokens, split_sentences
 
 DEFAULT_MIN_OVERLAP = 0.34
+_CITATION = re.compile(r"\[([^\]]+)\]")
 
 
 @dataclass(slots=True)
@@ -91,6 +92,60 @@ def verify_claims(
     return GroundCheckResult(verdicts)
 
 
+def verify_answer(
+    answer: str,
+    chunks: list[dict],
+    *,
+    min_overlap: float = DEFAULT_MIN_OVERLAP,
+) -> GroundCheckResult:
+    """Verify the answer sentence by sentence.
+
+    Declared `claims` are the generator's own account of what it said. If prose outside
+    those claims is shipped unverified, the safety guarantee is only as strong as the
+    model's honesty about its own output. This walks the actual answer text so every
+    sentence has to trace back to a retrieved chunk, whether or not the generator
+    declared it as a claim.
+
+    A citation in the sentence (`[chunk_id]`) restricts the check to that evidence; a
+    sentence with no usable citation is traced to the best matching retrieved chunk.
+    """
+    by_id = {chunk.get("chunk_id"): chunk for chunk in chunks if chunk.get("chunk_id")}
+    verdicts: list[ClaimVerdict] = []
+
+    for sentence in split_sentences(answer):
+        # Match on the prose, not the citation marker: a chunk id like
+        # `pm-001::Root Cause::0` contributes tokens that are not in the chunk text
+        # and would dilute a perfectly supported sentence below the threshold.
+        prose = _CITATION.sub(" ", sentence)
+        claim_terms = content_tokens(prose)
+        if not claim_terms:
+            continue
+
+        cited = [match.group(1) for match in _CITATION.finditer(sentence)]
+        resolved = [source for source in cited if source in by_id]
+        candidates = [by_id[source] for source in resolved] if resolved else list(chunks)
+        best_chunk, best_overlap = _best_match(claim_terms, candidates)
+        supported = best_chunk is not None and best_overlap >= min_overlap
+        verdicts.append(
+            ClaimVerdict(
+                claim=sentence,
+                supported=supported,
+                sources=resolved or cited,
+                matched_chunk_ids=(
+                    [best_chunk["chunk_id"]] if best_chunk is not None and supported else []
+                ),
+                overlap=round(best_overlap, 4),
+                reason=(
+                    "sentence terms appear in retrieved evidence"
+                    if supported
+                    else "sentence terms do not appear in retrieved evidence"
+                ),
+            )
+        )
+
+    return GroundCheckResult(verdicts)
+
+
 def strip_unsupported(answer: str, result: GroundCheckResult) -> str:
     stripped = answer or ""
     for verdict in result.verdicts:
@@ -99,6 +154,17 @@ def strip_unsupported(answer: str, result: GroundCheckResult) -> str:
         for variant in _variants(verdict.claim):
             stripped = stripped.replace(variant, " ")
     return re.sub(r"\s+", " ", stripped).strip()
+
+
+def strip_unsupported_sentences(answer: str, result: GroundCheckResult) -> str:
+    """Rebuild the answer from the sentences that traced to evidence.
+
+    This is the sentence-level counterpart of `strip_unsupported`: it removes prose the
+    generator wrote but the evidence cannot support, rather than only removing the
+    claims it happened to declare.
+    """
+    kept = [verdict.claim for verdict in result.verdicts if verdict.supported]
+    return re.sub(r"\s+", " ", " ".join(kept)).strip()
 
 
 def _best_match(claim_terms: list[str], chunks: list[dict]) -> tuple[dict | None, float]:

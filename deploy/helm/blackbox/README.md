@@ -62,8 +62,10 @@ restarts the pods on a ConfigMap change via a checksum annotation.
   scale on `blackbox_sse_active_streams` as well. Scale-down uses a 300s
   stabilization window so long turns are not cut mid-stream.
 - **Turn safety:** one active turn per conversation is enforced by a Postgres
-  advisory lock, so any replica can serve any request. Per-tenant *admission*
-  control is still per pod; global quotas are a tracked Phase 4 item.
+  advisory lock, so any replica can serve any request. Admission has two layers: a
+  per-pod fast counter plus a Redis slot counter with a lease TTL, and
+  token/LLM-call/dollar quotas are shared through Redis when reachable (both fall
+  back to local limits if Redis is down).
 - **Worker:** with Redis the queue is shared, so KEDA's Redis scaler is the correct
   signal. Without `REDIS_URL` the worker sees only its own process and is useless —
   the chart still deploys it, and the process logs a warning.

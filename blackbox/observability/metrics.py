@@ -324,6 +324,15 @@ CACHE_FALLBACK_ACTIVE = _gauge(
     "blackbox_cache_fallback_active",
     "1 when a Redis-backed feature is running on its local fallback.",
 )
+RUNTIME_READY = _gauge(
+    "blackbox_runtime_ready",
+    "1 when the runtime (retriever, LLM, graph) has finished warm-up.",
+)
+DEPENDENCY_UP = _gauge(
+    "blackbox_dependency_up",
+    "1 when a readiness dependency is healthy, 0 when degraded or down.",
+    ("dependency",),
+)
 
 _STAGE_NAMES = {
     "dense_ms": "dense",
@@ -385,6 +394,14 @@ def record_job_queue_depth(kind: str, depth: int) -> None:
 
 def record_cache_fallback(active: bool) -> None:
     CACHE_FALLBACK_ACTIVE.set(1.0 if active else 0.0)
+
+
+def record_dependency_states(states: dict[str, str]) -> None:
+    """Publish per-dependency readiness as gauges for alerting and dashboards."""
+    healthy = {"ok", "ready"}
+    for dependency, state in states.items():
+        DEPENDENCY_UP.set(1.0 if state in healthy else 0.0, dependency=dependency)
+    RUNTIME_READY.set(1.0 if states.get("runtime") == "ready" else 0.0)
 
 
 def render_metrics() -> str:

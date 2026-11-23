@@ -51,8 +51,8 @@ request writes a non-home region.
    ```
    Confirm `GET /health/ready` reports storage and runtime ready, and that a chat turn
    is persisted (`GET /api/conversations/<id>/trace`).
-8. **Notify tenants** whose data residency region changed, and record the failover
-   generation (`region.failover_generation`).
+8. **Notify tenants** whose data residency region changed, and record the failover in the
+   change log with its timestamp and the regions involved.
 
 ## Failback
 

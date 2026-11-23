@@ -9,7 +9,7 @@ next.
 - **Open bugs & scaling gaps (audit):** [`code-audit-findings.md`](code-audit-findings.md)
 - **Status legend:** ✅ done · ◐ in progress · ⬜ not started · ⚠ blocked
 
-Last updated: 2026-11-14
+Last updated: 2026-11-23
 
 - **Remaining work:** §12 — pick-up list with blocker and "done when" per item.
 - **Latest audit:** [`production-audit-2026-11-14.md`](production-audit-2026-11-14.md).
@@ -21,13 +21,13 @@ Last updated: 2026-11-14
 | Item | State |
 |---|---|
 | Original assignment phases 0–9 | ✅ complete |
-| Tests | 594 collected (582 passing, 12 skipped: live-cluster OpenSearch + opt-in Postgres/Redis), `ruff` clean, `mypy` clean, coverage 82.6% (gate 80%) |
+| Tests | 608 collected (596 passing, 12 skipped: live-cluster OpenSearch + opt-in Postgres/Redis), `ruff` clean, `mypy` clean, coverage 83.5% (gate 80%) |
 | Runtime | FastAPI + SSE, LangGraph corrective RAG, three-layer memory, trace viewer |
 | Auth | JWT/RBAC + tenant-scoped conversations implemented; dev-disabled by default |
 | Retrieval | local Chroma + in-process BM25 (single node) behind the `SparseStore` protocol |
 | Stores | Postgres/SQLite conversation + entity store |
-| Deployment | Docker Compose (two-replica smoke) + Helm chart (`deploy/helm/blackbox`) + AWS Terraform reference (`deploy/terraform`) |
-| Observability | Prometheus `/metrics` + recording/alert rules; OTel/Grafana/Loki/Tempo pending |
+| Deployment | Portable Compose stack (`deploy/compose`, any cloud or VM) + Helm chart (`deploy/helm/blackbox`) + optional AWS Terraform reference (`deploy/terraform`) |
+| Observability | Prometheus `/metrics` + recording/alert rules + optional OTel traces + Grafana dashboard/provisioning + Collector/Tempo/Loki configs |
 | Secrets | External Secrets example consuming Terraform-managed Secrets Manager entries; no static keys in pods |
 | Production target | Kubernetes, org-wide, multi-region, strict tenant isolation |
 
@@ -163,16 +163,26 @@ and opt-in store integration tests. **The full pick-up list is §12.**
 
 ### Resume point (next session)
 
-State: **594 tests collected (582 passing, 12 skipped: live-cluster OpenSearch and the
-opt-in Postgres/Redis integration suites)**; `ruff` clean, `mypy` clean (109 source
-files), coverage 82.6% (gate 80%). The 2026-11-14 audit's criticals are fixed; §12.4
-lists what remains.
+State: **608 tests collected (596 passing, 12 skipped: live-cluster OpenSearch and the
+opt-in Postgres/Redis integration suites)**; `ruff` clean, `mypy` clean (110 source
+files), coverage 83.5% (gate 80%). The 2026-11-14 audit's criticals **and** all seven
+code-doable highs are fixed (§12.4 is checked off); what remains is infrastructure-bound.
 Phase 5 is implemented as a reference: application-level multi-region behaviour and
 drills run offline; the Terraform multi-region layer validates but was not applied
 (no AWS account), and Helm was not available locally this session (CI lints/renders it).
 Phase 1 (control plane), the audit remediation, Phase 2 (retrieval migration and tenant
 isolation), Phase 3 (async runtime and jobs) and the **deployment, observability and
 infrastructure slices of Phase 4 are complete**.
+
+**2026-11-23 code-doable pass (complete):** sentence-level ground check; per-dependency
+readiness with a real `SELECT 1`, warm-up retry and `blackbox_runtime_ready` /
+`blackbox_dependency_up` gauges; shielded cancellation-safe turn cleanup; one long-lived
+event loop per job worker; `precision@k` corrected and the P@5 column regenerated; shadow
+retrieval dispatched in the background; consolidation (`Retriever` protocol,
+`JobStore.dequeue(kind)`, one `blackbox/redis_factory.py`, dead settings removed). A
+cloud-agnostic Compose deployment (`deploy/compose`) was added: one-shot migration service,
+scalable API replicas behind a Caddy edge, shared-queue worker, managed-or-local
+Postgres/Redis. 14 new tests; 608 collected, coverage 83.5%.
 
 **Phase 4 delivered:**
 1. ✅ Metrics — `blackbox/observability/metrics.py`, `/metrics` route, HTTP/SSE/retrieval/LLM/
@@ -208,17 +218,19 @@ infrastructure slices of Phase 4 are complete**.
 15. ✅ Synthetic probe and on-call runbook — `scripts/smoke_probe.py`,
     `docs/on-call-runbook.md`, `tests/test_smoke_probe.py`.
 
-**Next: finish Phase 4, in this order.**
-1. Terraform: OpenSearch/Qdrant once the backend benchmark decides the shape; WAF at the edge.
+**Next: infrastructure-bound validation only** — everything code-doable is done.
+1. Apply the Terraform stack (or bring up `deploy/compose` against managed stores) and review
+   the first `terraform plan` (Aurora engine availability per region, quotas, EKS add-ons).
+2. Run the live-cluster backend benchmark and record the OpenSearch-only vs Qdrant+OpenSearch
+   decision in §9.
+3. Run the load, chaos and DR suites against staging; replace the provisional SLO table.
 
-**Carried over (infra-bound):**
+**Carried over (infra-bound), all in §12.1:**
 - Qdrant+OpenSearch vs OpenSearch-only benchmark — `scripts/benchmark_backends.py` needs
   live clusters; record the decision in §9.
 - Terraform has not been applied to a real account; the first `terraform plan` still needs a
   review (Aurora engine availability per region, account quotas, existing EKS add-ons).
-- Global per-tenant LLM/token quotas — Phase 4.
-- Runtime warm-up at pod start (readiness currently passes before the retriever/LLM are
-  built; first chat pays cold start).
+- Load/chaos/DR runs against staging, and the decision list in §12.2.
 - Summary compaction remains inline in the turn (deliberate: it mutates the memory the
   same turn reads).
 
@@ -257,6 +269,7 @@ settled: one shared collection/index with mandatory tenant payloads.
 
 | Workstream | Phase | State | Notes |
 |---|---|---|---|
+| Portable Compose deployment | 5 | ✅ | `deploy/compose` — migrate service, scalable API replicas behind Caddy, worker, managed-or-local stores |
 | Production/scaling document | 0 | ✅ | `docs/scaling-and-production-readiness.md` |
 | HTTP body limits | 1 | ✅ | `BodyLimitMiddleware`, configurable bytes |
 | LLM timeout/retries | 1 | ✅ | passed to OpenAI/Anthropic clients |
@@ -268,9 +281,9 @@ settled: one shared collection/index with mandatory tenant payloads.
 | Shared Redis rate limits | 1 | ✅ | fixed-window shared counter, local fallback |
 | Chat idempotency keys | 1 | ✅ | result replay + in-flight dedupe via Redis `SET NX` |
 | LLM resilience wrapper | 1 | ✅ | jittered retries, circuit breaker, bounded concurrency |
-| Per-tenant admission control | 1 | ✅ | per-process counters; global quotas Phase 2 |
+| Per-tenant admission control | 1 | ✅ | per-process counters + Redis global slot counter and quotas (Phase 4) |
 | Multi-pod smoke test | 1 | ✅ | two replicas, shared Postgres read + shared Redis limit |
-| Qdrant/OpenSearch migration | 2 | ✅ | tenant filters, RLS, Qdrant adapter, versioned indexes/alias, shadow/dual-read, offboarding, retention, JSONB/partition, eval gate; only the live-cluster benchmark and global quotas remain |
+| Qdrant/OpenSearch migration | 2 | ✅ | tenant filters, RLS, Qdrant adapter, versioned indexes/alias, shadow/dual-read, offboarding, retention, JSONB/partition, eval gate; only the live-cluster benchmark remains |
 | Async graph + workers | 3 | ✅ | async graph/providers/stores; SSE cancellation; shared Redis queue + handler registry + worker process; graceful drain |
 | Staged ingest + alias swap | 3 | ✅ | validate documents/chunks/tenant coverage before `swap_alias`; abort keeps the old version |
 | Trace store split | 3 | ✅ | Postgres recent + file/S3 archive; paginated `/trace`; archive-before-prune retention (sync or queued) |
@@ -646,13 +659,23 @@ Append one row per merged PR or meaningful local milestone. Do not delete histor
 | 2026-11-14 | Audit: full production/design review; 5 criticals + highs recorded in `production-audit-2026-11-14.md` | ✅ | local |
 | 2026-11-14 | Fix: tenant bound in repository + `FORCE RLS` (0006); SSE deny-list for `claims`/`verdicts`; tenant-scoped admin/retention; tenant-scoped ingestion; single `AppServices` | ✅ | local |
 | 2026-11-14 | Fix: month-end quota crash, retrieval deadline on the graph path, Qdrant chunk-id parity, empty-compaction guard, PII query logging | ✅ | local |
+| 2026-11-15 | Audit remediation committed: RLS binding + `FORCE RLS`, SSE deny-list, tenant-scoped admin/ingest, single `AppServices`, month-end quota/retrieval-timeout/Qdrant/compaction/PII fixes | ✅ | `b87d5ec` |
+| 2026-11-23 | Docs: reconciled test counts (608 collected), phase statuses and remaining-work list with the verified suite; README, plan, scaling and demo docs updated | ✅ | local |
+| 2026-11-23 | Correctness: sentence-level ground check (prose outside declared claims is verified) + tests | ✅ | local |
+| 2026-11-23 | Ops: per-dependency readiness with real `SELECT 1`, warm-up retry, `blackbox_runtime_ready`/`blackbox_dependency_up` gauges | ✅ | local |
+| 2026-11-23 | Correctness: shielded, per-release-independent turn cleanup with a cancellation test | ✅ | local |
+| 2026-11-23 | Jobs: one long-lived event loop per worker thread instead of `asyncio.run` per job | ✅ | local |
+| 2026-11-23 | Eval: precision@k divides by k; corrected P@5 column regenerated in README/plan/results | ✅ | local |
+| 2026-11-23 | Retrieval: shadow comparison dispatched in the background with a latency-isolation test | ✅ | local |
+| 2026-11-23 | Consolidation: `Retriever` protocol, `JobStore.dequeue(kind)`, shared Redis factory, dead settings removed | ✅ | local |
+| 2026-11-23 | Deploy: cloud-agnostic Docker Compose stack (`deploy/compose`) with Caddy edge, migrate service, managed-or-local Postgres/Redis | ✅ | local |
 
 ## 12. Remaining work (pick-up list)
 
-Last completed commit: `65f09b3`. Everything code-doable through Phase 5 is in the
-repository; the items below need infrastructure, credentials, or a decision. Each one
-states the blocker and the "done when" so the next session can start without
-re-deriving context.
+Last completed commit: `b87d5ec` (production-audit critical/high fixes) plus the 2026-11-23
+code-doable pass. Everything code-doable through Phase 5 and §12.4 is in the repository; the
+items below need infrastructure, credentials, or a decision. Each one states the blocker and
+the "done when" so the next session can start without re-deriving context.
 
 ### 12.1 Infrastructure-bound validation
 
@@ -716,22 +739,24 @@ re-deriving context.
 
 See [`production-audit-2026-11-14.md`](production-audit-2026-11-14.md). The five
 criticals and the month-end/quota, retrieval-timeout, Qdrant-fusion, memory-compaction
-and PII-logging highs are fixed. These remain:
+and PII-logging highs are fixed. All seven code-doable items were addressed on 2026-11-23:
 
-- [ ] Ground check verifies only declared `claims`; answer prose absent from `claims`
-      ships unverified. Rewrite to verify sentence-by-sentence with a citation.
-- [ ] Readiness checks one dependency; add per-dependency state (`ok/degraded/down`),
-      a real `SELECT 1`, and a warm-up retry with a `blackbox_runtime_ready` gauge.
-- [ ] Lock/slot/idempotency release is not cancellation-safe (releases live in the
-      response generator's `finally`). Shield the cleanup and add a cancellation test.
-- [ ] Job worker runs `asyncio.run` per job, reusing loop-bound SDK/Redis clients;
-      move to one long-lived loop per worker thread.
-- [ ] Precision@k divides by `len(top)` after dedupe; fix the formula and regenerate
-      `docs/retrieval-results.md`.
-- [ ] Shadow retrieval is awaited, not background; dispatch it and test the latency
-      isolation.
-- [ ] Design consolidation: a real `Retriever` protocol, `JobStore.dequeue(kind)`,
-      a single Redis client factory, delete the dead settings.
+- [x] Ground check verifies every answer sentence against evidence; prose outside declared
+      `claims` is stripped. `verify_answer` / `strip_unsupported_sentences`,
+      `tests/test_grounding.py`.
+- [x] Readiness reports per-dependency state (`ok/degraded/cold/down/off`), pings storage with
+      a real `SELECT 1`, retries warm-up while cold, and exports `blackbox_runtime_ready` /
+      `blackbox_dependency_up`. `blackbox/api/routes/health.py`, `AppServices.dependency_report`.
+- [x] Turn lock/slot/idempotency release is shielded and each release is isolated
+      (`_release_turn` + `asyncio.shield`), with a cancellation test.
+- [x] Job workers keep one long-lived event loop per worker thread; `_invoke` reuses it.
+- [x] `precision@k` divides by `k`; `docs/retrieval-results.md` and the README table were
+      regenerated with the corrected column.
+- [x] Shadow retrieval is dispatched in the background (sync executor / async task) and the
+      latency isolation is tested.
+- [x] Design consolidation: `Retriever` protocol, `JobStore.dequeue(kind)`, one
+      `blackbox/redis_factory.py`, and dead settings removed (`RERANKER_MODEL`,
+      `failover_generation`, `entity_max_tokens`, `ChunkingConfig`, unused ingestion caps).
 
 ### 12.5 Optional assignment bonus features
 

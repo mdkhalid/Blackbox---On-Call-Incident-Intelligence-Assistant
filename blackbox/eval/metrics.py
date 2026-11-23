@@ -48,12 +48,19 @@ class Metrics:
 
 
 def precision_at_k(retrieved: list[str], relevant: list[str], k: int) -> float:
+    """Relevant documents in the top k, over k.
+
+    The denominator is `k`, not the number of results returned. After document-level
+    dedupe a short result list means the retriever found fewer distinct documents, not
+    that the ones it found fill the ranked window. Dividing by `len(top)` scored a
+    single correct result returned for k=5 as 1.0, inflating the reported column.
+    """
     if k <= 0:
         return 0.0
     top = retrieved[:k]
     if not top:
         return 0.0
-    return sum(1 for d in top if d in relevant) / len(top)
+    return sum(1 for d in top if d in relevant) / k
 
 
 def recall_at_k(retrieved: list[str], relevant: list[str], k: int) -> float:

@@ -11,7 +11,12 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from blackbox.config.settings import AppConfig, Settings
-from blackbox.graph.grounding import strip_unsupported, verify_claims
+from blackbox.graph.grounding import (
+    strip_unsupported,
+    strip_unsupported_sentences,
+    verify_answer,
+    verify_claims,
+)
 from blackbox.graph.output_guard import scrub_secrets
 from blackbox.graph.parsing import parse_generation, parse_grade
 from blackbox.graph.prompts import (
@@ -358,24 +363,40 @@ async def ground_check_node(state: GraphState, deps: GraphDeps) -> dict:
         # No structured claims: verify the answer as a whole rather than trusting it.
         claims = [{"text": answer, "sources": []}]
 
-    result = verify_claims(
-        claims, chunks, min_overlap=deps.config.graph.ground_check_min_overlap
-    )
-    stripped = _scrub(strip_unsupported(answer, result), deps)
+    min_overlap = deps.config.graph.ground_check_min_overlap
+    claim_result = verify_claims(claims, chunks, min_overlap=min_overlap)
+    # Verify the prose that is actually about to ship, not only the claims the
+    # generator chose to declare. A sentence the model wrote but did not list as a
+    # claim is still a factual assertion the user will read.
+    sentence_result = verify_answer(answer, chunks, min_overlap=min_overlap)
+
+    if sentence_result.verdicts:
+        stripped = strip_unsupported_sentences(answer, sentence_result)
+    else:
+        stripped = strip_unsupported(answer, claim_result)
+    # A supported sentence can still embed a declared claim that is itself
+    # unsupported; remove that residue too.
+    stripped = _scrub(strip_unsupported(stripped, claim_result), deps)
 
     supported_claims = [
         {"text": verdict.claim, "sources": verdict.matched_chunk_ids}
-        for verdict in result.verdicts
+        for verdict in claim_result.verdicts
+        if verdict.supported
+    ] or [
+        {"text": verdict.claim, "sources": verdict.matched_chunk_ids}
+        for verdict in sentence_result.verdicts
         if verdict.supported
     ]
-    answered = result.supported_count > 0 and bool(stripped.strip())
+    primary = sentence_result if sentence_result.verdicts else claim_result
+    answered = primary.supported_count > 0 and bool(stripped.strip())
     status = "answered" if answered else "honest_failure"
 
     update: dict[str, Any] = {
         "ground_check": {
-            "supported_count": result.supported_count,
-            "unsupported_count": result.unsupported_count,
-            "verdicts": [asdict(verdict) for verdict in result.verdicts],
+            "supported_count": primary.supported_count,
+            "unsupported_count": primary.unsupported_count,
+            "verdicts": [asdict(verdict) for verdict in primary.verdicts],
+            "claim_verdicts": [asdict(verdict) for verdict in claim_result.verdicts],
         },
         "claims": supported_claims,
         "answer": stripped,
@@ -383,8 +404,8 @@ async def ground_check_node(state: GraphState, deps: GraphDeps) -> dict:
         "trace": [
             {
                 "node": "ground_check",
-                "supported": result.supported_count,
-                "unsupported": result.unsupported_count,
+                "supported": primary.supported_count,
+                "unsupported": primary.unsupported_count,
                 "status": status,
                 "duration_ms": _elapsed(started),
             }

@@ -1,0 +1,102 @@
+name: blackbox
+
+# Cloud-agnostic production deployment.
+#
+#   docker compose -f deploy/compose/docker-compose.prod.yml \
+#     --env-file deploy/compose/.env.prod up -d
+#
+# This file assumes Postgres and Redis are managed services (or reachable over the
+# network). For a single server that also runs them locally, add the local override:
+#
+#   docker compose -f deploy/compose/docker-compose.prod.yml \
+#     -f deploy/compose/docker-compose.prod-local.yml \
+#     --env-file deploy/compose/.env.prod up -d
+#
+# The API has no host port: the Caddy edge is the only public entry point and load
+# balances across API replicas. Scale with --scale api=3 --scale worker=2.
+
+x-app: &app
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+  image: blackbox:${BLACKBOX_TAG:-latest}
+  env_file:
+    - .env.prod
+  environment:
+    ENV: prod
+    CONFIG_PATH: blackbox/config/config.yaml
+    DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+    AUTH_ENABLED: "true"
+    AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is required}
+    REGION: ${REGION:-local}
+    DEFAULT_HOME_REGION: ${DEFAULT_HOME_REGION:-local}
+    RLS_ENABLED: ${RLS_ENABLED:-false}
+    TENANT_QUOTA_ENABLED: ${TENANT_QUOTA_ENABLED:-true}
+    TENANT_CONCURRENCY_GLOBAL: ${TENANT_CONCURRENCY_GLOBAL:-true}
+    TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+    CHROMA_PERSIST_DIR: /app/data/chroma
+  volumes:
+    - appdata:/app/data
+  restart: unless-stopped
+
+services:
+  # Runs once per deploy: the schema is ready before any API or worker starts.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    deploy:
+      replicas: 1
+
+  api:
+    <<: *app
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health/ready"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    deploy:
+      replicas: ${API_REPLICAS:-2}
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "blackbox.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+
+  # The single public entry point. Caddy proxies to every API replica and keeps SSE
+  # unbuffered; set BLACKBOX_DOMAIN to a hostname for automatic TLS, or leave :80
+  # for plain HTTP on a private network.
+  edge:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BLACKBOX_DOMAIN: ${BLACKBOX_DOMAIN:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  appdata:
+  caddydata:
+  caddyconfig:

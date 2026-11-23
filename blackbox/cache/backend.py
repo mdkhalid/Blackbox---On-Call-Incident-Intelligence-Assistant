@@ -173,13 +173,10 @@ def build_cache(settings, config) -> CacheBackend | None:
     default_ttl = max(1, config.redis.ttl_retrieval_s)
     if settings.redis_url:
         try:
-            import redis
+            from blackbox.redis_factory import build_sync_client
 
-            client = redis.Redis.from_url(
-                settings.redis_url,
-                socket_timeout=max(0.01, config.redis.timeout_ms / 1000),
-                socket_connect_timeout=max(0.01, config.redis.timeout_ms / 1000),
-                decode_responses=True,
+            client = build_sync_client(
+                settings.redis_url, timeout_s=config.redis.timeout_ms / 1000
             )
             client.ping()
             logger.info("cache_backend", backend="redis")

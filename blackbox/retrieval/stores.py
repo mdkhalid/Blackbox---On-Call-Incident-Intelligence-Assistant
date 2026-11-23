@@ -81,6 +81,59 @@ class SparseStore(Protocol):
     def size(self) -> int: ...
 
 
+@runtime_checkable
+class Retriever(Protocol):
+    """The seam the graph, API and eval harness depend on.
+
+    A `HybridRetriever` and its `ShadowingRetriever` wrapper are both substitutable:
+    the graph calls only these methods, so a new backend or a migration wrapper does
+    not need the graph to change.
+    """
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        filter: MetadataFilter | None = None,
+        tenant_id: str | None = None,
+    ) -> list[RetrievedChunk]: ...
+
+    def retrieve_detailed(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        filter: MetadataFilter | None = None,
+        tenant_id: str | None = None,
+    ) -> Any: ...
+
+    async def aretrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        filter: MetadataFilter | None = None,
+        tenant_id: str | None = None,
+    ) -> list[RetrievedChunk]: ...
+
+    async def aretrieve_detailed(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        filter: MetadataFilter | None = None,
+        tenant_id: str | None = None,
+    ) -> Any: ...
+
+    def invalidate(self) -> None: ...
+
+    def rebuild_indexes(self) -> None: ...
+
+    @property
+    def corpus_size(self) -> int: ...
+
+
 def opensearch_clauses(filter: MetadataFilter | None) -> list[dict[str, Any]]:
     """Compile a metadata filter into OpenSearch filter clauses.
 

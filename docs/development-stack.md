@@ -53,7 +53,6 @@ EMBEDDING_MODEL=text-embedding-3-small
 GENERATION_MODEL=gpt-4o
 GRADING_MODEL=gpt-4o-mini
 REWRITE_MODEL=gpt-4o-mini
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 LOG_LEVEL=INFO
 ENV=dev
 ```

@@ -13,6 +13,30 @@ def test_health_ready(client):
     assert r.json()["status"] == "ok"
 
 
+def test_readiness_reports_each_dependency(client):
+    body = client.get("/health/ready").json()
+    assert body["dependencies"]["storage"] == "ok"
+    assert set(body["dependencies"]) >= {
+        "storage",
+        "runtime",
+        "retrieval",
+        "llm",
+        "cache",
+    }
+
+
+def test_readiness_fails_when_the_database_ping_fails(client):
+    services = client.app.state.services
+
+    def down() -> None:
+        raise RuntimeError("database is unreachable")
+
+    services.conversations.ping = down
+    response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json()["dependencies"]["storage"] == "down"
+
+
 def test_request_id_echoed(client):
     r = client.get("/health", headers={"X-Request-ID": "abc-999"})
     assert r.headers.get("x-request-id") == "abc-999"

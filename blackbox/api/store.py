@@ -132,6 +132,7 @@ class TurnRecord:
 
 class ConversationRepository(Protocol):
     def init(self) -> None: ...
+    def ping(self) -> None: ...
     def get(
         self, conversation_id: str, *, tenant_id: str = DEFAULT_TENANT
     ) -> ConversationRecord | None: ...
@@ -255,6 +256,18 @@ class SqlAlchemyConversationRepository:
     def recreate(self) -> None:
         """Drop and recreate the tables. Destroys the stored conversations."""
         recreate(self.engine, Base.metadata)
+
+    def ping(self) -> None:
+        """A real round trip to the database, not a cached readiness flag.
+
+        Readiness must fail when the database is unreachable even if the schema was
+        created earlier in the process; a flag cannot see a failover or a killed
+        connection.
+        """
+        from sqlalchemy import text
+
+        with self.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
 
     def _session(self) -> Session:
         return self.SessionLocal()

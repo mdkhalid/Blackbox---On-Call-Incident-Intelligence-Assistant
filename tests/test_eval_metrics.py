@@ -31,9 +31,9 @@ def test_precision_with_empty_results():
     assert precision_at_k([], ["a"], k=5) == 0.0
 
 
-def test_precision_uses_returned_count_not_k():
-    # Returning 1 perfect result should not be penalised for not filling k.
-    assert precision_at_k(["a"], ["a"], k=5) == 1.0
+def test_precision_divides_by_k_not_the_returned_count():
+    # One correct document out of five requested is 1/5, not 1/1.
+    assert precision_at_k(["a"], ["a"], k=5) == pytest.approx(0.2)
 
 
 def test_recall_at_k():

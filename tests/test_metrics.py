@@ -144,7 +144,7 @@ def test_in_process_job_store_reports_pending_by_kind():
     assert store.pending_count("ingest") == 1
     assert store.pending_count("retention") == 1
 
-    store.dequeue(timeout=1)
+    store.dequeue("ingest", timeout=1)
     # The first dequeued item belongs to whichever kind was enqueued first; the
     # totals must add up to one remaining job either way.
     assert store.pending_count("ingest") + store.pending_count("retention") == 1

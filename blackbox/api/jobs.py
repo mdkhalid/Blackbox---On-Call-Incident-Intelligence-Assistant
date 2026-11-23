@@ -110,7 +110,9 @@ class JobStore(Protocol):
 
     def enqueue(self, job_id: str, fn: Callable[[], Any] | None = None) -> None: ...
 
-    def dequeue(self, timeout: float) -> tuple[str, Callable[[], Any] | None] | None: ...
+    def dequeue(
+        self, kind: str, timeout: float
+    ) -> tuple[str, Callable[[], Any] | None] | None: ...
 
     def pending_count(self, kind: str) -> int: ...
 
@@ -150,7 +152,11 @@ class InProcessJobStore:
                 )
         self._pending.put((job_id, fn))
 
-    def dequeue(self, timeout: float) -> tuple[str, Callable[[], Any] | None] | None:
+    def dequeue(
+        self, kind: str, timeout: float
+    ) -> tuple[str, Callable[[], Any] | None] | None:
+        # One in-process FIFO serves every kind; the job's own `kind` selects the
+        # handler, so the requested kind is only a hint here.
         try:
             item = self._pending.get(timeout=timeout)
         except queue.Empty:
@@ -209,14 +215,10 @@ class RedisJobStore:
             return
         self.client.rpush(_PENDING_KEY.format(kind=job.kind), job_id)
 
-    def dequeue(self, timeout: float) -> tuple[str, Callable[[], Any] | None] | None:
-        # One queue per kind, so this only returns jobs of our kind. Each kind has
-        # its own JobQueue and its own pending key.
-        raise NotImplementedError
-
-    def dequeue_kind(
+    def dequeue(
         self, kind: str, timeout: float
     ) -> tuple[str, Callable[[], Any] | None] | None:
+        # One queue per kind, so this only returns jobs of the requested kind.
         item = self.client.blpop(_PENDING_KEY.format(kind=kind), timeout=max(1, int(timeout)))
         if not item:
             return None
@@ -291,6 +293,10 @@ class JobQueue:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._autostart = autostart
+        # One event loop owns every async job this worker runs. Creating a fresh loop
+        # per job via `asyncio.run` tears down the loop a Redis/SDK client was bound to
+        # and hands the next job a dead one.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ---- public API ----
 
@@ -395,9 +401,7 @@ class JobQueue:
             self._ensure_worker()
 
     def _dequeue(self, timeout: float) -> tuple[str, Callable[[], Any] | None] | None:
-        if isinstance(self.store, RedisJobStore):
-            return self.store.dequeue_kind(self.kind, timeout)
-        return self.store.dequeue(timeout)
+        return self.store.dequeue(self.kind, timeout)
 
     def _ensure_worker(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -411,11 +415,29 @@ class JobQueue:
         self._thread.start()
 
     def _run(self) -> None:
-        while not self._stop.is_set():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        try:
+            while not self._stop.is_set():
+                try:
+                    self.drain_once(timeout=0.2)
+                except BaseException:  # noqa: BLE001 - the worker must outlive one bad job
+                    _safe_log("job_worker_error", kind=self.kind)
+        finally:
             try:
-                self.drain_once(timeout=0.2)
-            except BaseException:  # noqa: BLE001 - the worker must outlive one bad job
-                _safe_log("job_worker_error", kind=self.kind)
+                pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            finally:
+                self._loop = None
+                asyncio.set_event_loop(None)
+                loop.close()
 
     def _execute(self, job: Job, fn: Callable[[], Any] | None) -> None:
         if fn is None:
@@ -437,7 +459,7 @@ class JobQueue:
         self.store.save(job)
         _safe_log("job_started", job_id=job.id, kind=self.kind)
         try:
-            result = _invoke(fn)
+            result = _invoke(fn, self._loop)
         except BaseException as exc:  # noqa: BLE001 - a failed job must not kill the worker
             self._fail(job, exc)
             return
@@ -463,9 +485,10 @@ def build_job_store(settings: Any) -> JobStore:
     url = getattr(settings, "redis_url", None)
     if url:
         try:
-            import redis
+            from blackbox.redis_factory import build_sync_client
 
-            client = redis.Redis.from_url(url, decode_responses=True)
+            # No socket timeout: BLPOP legitimately blocks for the dequeue window.
+            client = build_sync_client(url, timeout_s=None)
             client.ping()
             logger.info("job_store_shared", backend="redis")
             return RedisJobStore(client)
@@ -486,19 +509,28 @@ def _safe_log(event: str, **fields: Any) -> None:
         return
 
 
-def _invoke(fn: Callable[[], Any]) -> Any:
+def _invoke(fn: Callable[[], Any], loop: asyncio.AbstractEventLoop | None = None) -> Any:
     """Run a job body, whether it is synchronous or asynchronous.
 
-    A synchronous body runs directly on the worker thread. An asynchronous body is run
-    on an event loop of its own, which lets it await the graph directly rather than
-    blocking the worker.
+    A synchronous body runs directly on the worker thread. An asynchronous body runs on
+    the worker's long-lived loop, so SDK and Redis clients created by the first job stay
+    bound to a loop that is still alive for the next one. Callers without a worker loop
+    (direct `drain_once` in tests) fall back to a one-off loop.
     """
     if inspect.iscoroutinefunction(fn):
-        return asyncio.run(fn())
+        return _run_coroutine(fn(), loop)
     result = fn()
     if inspect.iscoroutine(result):
-        return asyncio.run(result)
+        return _run_coroutine(result, loop)
     return result
+
+
+def _run_coroutine(
+    coro: Any, loop: asyncio.AbstractEventLoop | None
+) -> Any:
+    if loop is not None and not loop.is_closed():
+        return loop.run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _now() -> str:

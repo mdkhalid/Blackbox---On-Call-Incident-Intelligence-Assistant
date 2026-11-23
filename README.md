@@ -43,17 +43,19 @@ code) are collected in
 fixed**, including the critical one where the SSE token stream exposed an answer before the
 ground check had run.
 
-Current production phase: **Phase 4 (Kubernetes and operations) — complete as a reference
-implementation**. Phase 3
+Current production phase: **Phases 4 (Kubernetes and operations) and 5 (multi-region, DR,
+cost and chaos) are complete as reference implementations**; what remains is
+infrastructure-bound validation (apply Terraform, run the benchmark, load, chaos and DR drills
+against live clusters). Phase 3
 (async runtime and jobs) is complete: async store interfaces (`asearch`), SSE cancellation on
 client disconnect, a shared Redis job store with a handler registry and a dedicated worker
 process (`python -m blackbox.worker`), staged ingest with validation before the alias swap,
 and the trace store split (Postgres recent + file/S3 archive, paginated `/trace`,
 archive-before-prune retention).
-Phase 2 (retrieval migration and data-plane tenant isolation) is functionally complete:
-tenant isolation, RLS, Qdrant adapter, versioned indexes, shadow indexing/dual-read,
-offboarding, retention, partition plan and eval parity gate landed; only the live-cluster
-backend benchmark and global quotas remain.
+Phase 2 (retrieval migration and data-plane tenant isolation) is complete: tenant isolation,
+RLS, Qdrant adapter, versioned indexes, shadow indexing/dual-read, offboarding, retention,
+partition plan, eval parity gate and global per-tenant quotas landed; only the live-cluster
+backend benchmark remains.
 
 Phase 4 progress so far:
 - **Deployment package:** [`deploy/helm/blackbox`](deploy/helm/blackbox) — API and worker
@@ -95,10 +97,11 @@ Phase 4 progress so far:
   password key.
 - **CI:** coverage gate, chart lint/render with kubeconform, Terraform fmt/validate + Trivy
   config, image build, Trivy scan and SPDX SBOM.
-Still open in Phase 4: OpenSearch/Qdrant Terraform modules are optional until the backend
-benchmark decides their shape; global per-tenant *concurrency* is still per-pod; token and
-LLM-call quotas are now shared when enabled; dependency/secret scanning in CI, applying
-Terraform and the live-cluster benchmark remain.
+Global per-tenant concurrency (Redis slot counter with local fallback), shared token/LLM-call
+and dollar-budget quotas, and dependency/secret scanning in CI (`pip-audit`, `gitleaks`) have
+since landed. Still open in Phase 4: the OpenSearch/Qdrant Terraform modules are optional until
+the backend benchmark decides their shape; applying Terraform to a real account, the
+live-cluster benchmark, and the load/chaos/DR runs against staging remain.
 Production Phase 1 (control-plane auth, shared limits, resilience, migrations, multi-pod
 smoke) is complete, and the code-audit remediation is complete: the SSE token stream is
 emitted only after the ground check, retrieval timings are per-request, the budget endpoint
@@ -166,7 +169,7 @@ python -m venv .venv
 source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,rag,db]"
 
-pytest -q                            # 465 tests
+pytest -q                            # 608 tests (596 passing, 12 skipped)
 uvicorn blackbox.main:app --reload
 ```
 
@@ -220,6 +223,23 @@ cp .env.example .env
 docker compose up --build
 curl http://localhost:8000/health
 ```
+
+### Deploy on any cloud or a plain server
+
+The image is cloud-agnostic. [`deploy/compose`](deploy/compose) runs it with Docker Compose
+behind a Caddy edge (SSE-safe, one public port), against managed Postgres/Redis or the
+bundled local override:
+
+```bash
+cp deploy/compose/.env.prod.example deploy/compose/.env.prod   # fill in secrets
+docker compose -f deploy/compose/docker-compose.prod.yml \
+  --env-file deploy/compose/.env.prod up -d --scale api=3 --scale worker=2
+```
+
+The migration runs as its own service before any API replica starts, the API has no public
+port (the edge load balances), and `/health/ready` gates traffic per dependency. Kubernetes
+keeps the Helm chart; AWS users can keep the optional Terraform reference. Nothing in the
+Compose path requires AWS.
 
 ## Production quick start
 
@@ -308,15 +328,15 @@ per-category breakdown and the fusion weight sweep are in
 
 | Strategy | MRR | Recall@5 | Precision@5 |
 |---|---|---|---|
-| dense-only | 0.8548 | 0.8581 | 0.4433 |
-| sparse-only (BM25) | 0.8714 | 0.8510 | 0.3786 |
-| hybrid (RRF) | **0.9167** | **0.8867** | **0.4348** |
-| hybrid + rerank | 0.8857 | 0.9219 | 0.4543 |
+| dense-only | 0.8548 | 0.8581 | 0.3029 |
+| sparse-only (BM25) | 0.8714 | 0.8510 | 0.2629 |
+| hybrid (RRF) | **0.9167** | **0.8867** | 0.2914 |
+| hybrid + rerank | 0.8857 | 0.9219 | **0.3143** |
 
 Two results are reported as measured rather than as hoped:
 
 - **Reranking is disabled by default.** It lowered MRR by 0.031 on this corpus while
-  raising recall. It is implemented and selectable per request.
+  raising recall and precision@5. It is implemented and selectable per request.
 - **Dense-only and BM25 tie on exact-token queries here** (0.90 vs 0.90), rather than the
   usual expectation that only BM25 can match an identifier literally. The seeded documents
   are short and templated, so identifiers appear in tight, repeated contexts that MiniLM
@@ -487,7 +507,8 @@ unreachable the service falls back to SQLite under `data/`; in prod an unavailab
 - **Rate limiting.** Redis-backed fixed-window limiter shared across replicas when Redis is
   reachable, with an in-process fallback; health/viewer are exempt; 429 includes `Retry-After`.
 - **Idempotent chat.** Send `Idempotency-Key` on `/api/chat` to replay the stored final
-  response instead of running the turn again (in-flight dedupe is still pending).
+  response instead of running the turn again. In-flight duplicates are rejected with `409`
+  via a Redis `SET NX` lock, so only one turn runs per key.
 - **CORS.** Set `CORS_ORIGINS` to a comma-separated allowlist. Empty disables CORS; `*` is
   rejected when `ENV=prod`.
 - **Prompt injection.** Heuristics flag and log suspected injection and return the labels in
@@ -554,24 +575,27 @@ python -m blackbox.eval.groundedness_eval --write
   transport chunks emitted only after ground check, so unverified text never ships.
 - The offline provider is extractive, so its groundedness number is a floor; use a hosted
   model for the generator's real overreach (the harness is unchanged).
-- Rate limiting is Redis-backed (shared across replicas) with a local fallback; turn locks are
-  Postgres advisory locks. Per-tenant turn admission control is per pod; global quotas remain
-  on the Phase 4 backlog.
+- Rate limiting and per-tenant quotas are Redis-backed (shared across replicas) with a local
+  fallback; turn locks are Postgres advisory locks. Admission has two layers: a per-pod fast
+  counter plus a Redis slot counter with a lease TTL, so the concurrency limit is global while
+  still degrading to per-pod if Redis is unavailable.
 - The corpus is synthetic and templated; `paraphrase` retrieval is intentionally weak and
   reported as measured rather than tuned away.
 - The cross-encoder reranker requires the optional `rerank` extra; without it the lexical
   reranker is used and the measured trade-off still holds.
 - **Authentication is implemented but dev-disabled.** Set `AUTH_ENABLED=true` (and a JWT
   secret or JWKS URL) to enforce bearer-token auth and tenant scoping; production settings
-  refuse to start without it. Postgres RLS and retrieval-store tenant filters are the Phase 2
-  data-plane gate.
+  refuse to start without it. Postgres RLS (bound per transaction, forced on the tenant
+  tables) and retrieval-store tenant filters provide the data-plane backstop.
 - `Content-Length` is capped before JSON parsing (`413`); chunked/streamed requests still
   need a hard body limit at the reverse proxy.
 - Hosted LLM SDK calls receive the configured timeout/retries; a circuit breaker, jittered
   retries and bounded concurrency wrap the provider. The provider interface is async, and
   every graph node is a coroutine, so a hosted round trip does not occupy a worker thread.
-- Readiness checks the conversation store; Redis is optional and its availability is
-  reported only after the runtime is initialized.
+- Readiness (`/health/ready`) reports each dependency separately — storage (a real
+  `SELECT 1`), runtime, retrieval, LLM and cache — retries warm-up while cold, and exposes
+  `blackbox_runtime_ready` / `blackbox_dependency_up` gauges. Redis is optional; the cache
+  is reported as `degraded` rather than down when the in-process fallback is in use.
 - The rate limiter keys on the client address. Behind an ingress every request arrives from
   the proxy, so `X-Forwarded-For` is honoured — but only from a configured trusted proxy
   (`TRUSTED_PROXY_CIDRS`), so the header cannot be spoofed to dodge the limit.
@@ -582,7 +606,9 @@ python -m blackbox.eval.groundedness_eval --write
 
 ## Tests
 
-465 tests, `ruff` clean, `mypy` clean. Retrieval, graph, memory, cache and API tests run against a small in-file
+608 tests collected (596 passing, 12 skipped without a live OpenSearch cluster or the opt-in
+Postgres/Redis suites), `ruff` clean, `mypy` clean, coverage 83.5% (gate 80%). Retrieval,
+graph, memory, cache and API tests run against a small in-file
 corpus with a deterministic hashing embedder and the offline LLM provider, so they need no
 network and no model download.
 

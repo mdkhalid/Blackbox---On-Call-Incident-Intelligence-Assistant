@@ -10,7 +10,12 @@ import pytest
 from blackbox.retrieval.filters import MetadataFilter
 from blackbox.retrieval.opensearch import OpenSearchSparseStore
 from blackbox.retrieval.sparse import SparseRetriever
-from blackbox.retrieval.stores import DenseStore, SparseStore, opensearch_clauses
+from blackbox.retrieval.stores import (
+    DenseStore,
+    Retriever,
+    SparseStore,
+    opensearch_clauses,
+)
 
 
 def test_the_in_process_bm25_adapter_satisfies_the_sparse_store_protocol(vectorstore):
@@ -27,6 +32,17 @@ def test_the_dense_retriever_satisfies_the_dense_store_protocol(vectorstore):
     from blackbox.retrieval.dense import DenseRetriever
 
     assert isinstance(DenseRetriever(vectorstore), DenseStore)
+
+
+def test_the_hybrid_and_shadow_retrievers_satisfy_the_retriever_protocol(
+    vectorstore, retrieval_config
+):
+    from blackbox.retrieval.hybrid_retriever import build_hybrid_retriever
+    from blackbox.retrieval.shadow import ShadowingRetriever
+
+    retriever = build_hybrid_retriever(vectorstore, retrieval_config)
+    assert isinstance(retriever, Retriever)
+    assert isinstance(ShadowingRetriever(retriever, None), Retriever)
 
 
 def test_the_sparse_store_contract(vectorstore):

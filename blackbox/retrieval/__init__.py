@@ -15,7 +15,7 @@ from blackbox.retrieval.hybrid_retriever import (
 from blackbox.retrieval.models import RetrievedChunk, to_documents
 from blackbox.retrieval.rerank import build_reranker
 from blackbox.retrieval.sparse import SparseRetriever, tokenize
-from blackbox.retrieval.stores import DenseStore, SparseStore
+from blackbox.retrieval.stores import DenseStore, Retriever, SparseStore
 from blackbox.retrieval.timeout import Deadline, RetrievalTimeoutError, with_timeout
 
 __all__ = [
@@ -27,6 +27,7 @@ __all__ = [
     "MetadataFilter",
     "RetrievalTimeoutError",
     "RetrievedChunk",
+    "Retriever",
     "SparseRetriever",
     "SparseStore",
     "build_default_retriever",

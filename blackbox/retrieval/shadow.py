@@ -9,6 +9,7 @@ becomes the primary. The shadow result never reaches the caller.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import time
 from typing import Any
 
@@ -17,6 +18,25 @@ from blackbox.logging_setup import get_logger
 from blackbox.pii import summarize_query
 
 logger = get_logger(__name__)
+
+# Shadow comparison is diagnostic, never part of the answer path. It runs on its own
+# threads so a slow shadow backend cannot add its latency to a user's request. The set
+# holds strong references to the in-flight work, because asyncio and the executor only
+# keep weak ones and a collected future would silently drop the comparison.
+_SHADOW_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="shadow-retrieval"
+)
+_BACKGROUND: set[Any] = set()
+
+
+def _track(future: Any) -> None:
+    _BACKGROUND.add(future)
+    future.add_done_callback(_BACKGROUND.discard)
+
+
+def pending_shadow_comparisons() -> int:
+    """Number of shadow comparisons still in flight (tests and shutdown diagnostics)."""
+    return len(_BACKGROUND)
 
 
 class ShadowingRetriever:
@@ -65,7 +85,9 @@ class ShadowingRetriever:
     def retrieve_detailed(self, query: str, **kwargs: Any) -> Any:
         result = self.primary.retrieve_detailed(query, **kwargs)
         if self.shadow is not None:
-            self._compare_sync(query, kwargs, result)
+            # Dispatch, do not wait: the shadow's result never reaches the caller, so
+            # its latency must never reach the caller either.
+            _track(_SHADOW_EXECUTOR.submit(self._compare_sync, query, kwargs, result))
         return result
 
     async def aretrieve(self, query: str, **kwargs: Any) -> list[Any]:
@@ -74,7 +96,11 @@ class ShadowingRetriever:
     async def aretrieve_detailed(self, query: str, **kwargs: Any) -> Any:
         result = await self.primary.aretrieve_detailed(query, **kwargs)
         if self.shadow is not None:
-            await asyncio.to_thread(self._compare_sync, query, kwargs, result)
+            _track(
+                asyncio.create_task(
+                    asyncio.to_thread(self._compare_sync, query, kwargs, result)
+                )
+            )
         return result
 
     # ---- comparison ----

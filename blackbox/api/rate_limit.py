@@ -78,13 +78,10 @@ async def build_rate_limiter(settings, config, fallback: RateLimiter) -> RateLim
     if not config.redis.enabled or not settings.redis_url:
         return fallback
     try:
-        import redis.asyncio as aioredis
+        from blackbox.redis_factory import build_async_client
 
-        client = aioredis.from_url(
-            settings.redis_url,
-            socket_timeout=max(0.01, config.redis.timeout_ms / 1000),
-            socket_connect_timeout=max(0.01, config.redis.timeout_ms / 1000),
-            decode_responses=True,
+        client = build_async_client(
+            settings.redis_url, timeout_s=config.redis.timeout_ms / 1000
         )
         await asyncio.wait_for(client.ping(), timeout=config.redis.timeout_ms / 1000)
         logger.info("rate_limiter_backend", backend="redis")

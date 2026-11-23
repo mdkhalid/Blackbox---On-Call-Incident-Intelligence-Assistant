@@ -12,6 +12,13 @@ tracked for confirmation.
 Baseline at audit: commit `0b4c982`, 587 tests collected, `ruff`/`mypy` clean,
 coverage 82.7%.
 
+Re-verified 2026-11-23 at commit `b87d5ec`: 608 collected (596 passing, 12 skipped),
+`ruff`/`mypy` clean, coverage 83.5%. The five criticals and the fixed highs below remain
+fixed, and all seven code-doable items in §3/§4 were closed on 2026-11-23 (each section
+records its resolution). Only infrastructure-bound validation (Terraform apply, the
+live-cluster benchmark, load/chaos/DR runs) and the two residual maintainability notes in §4
+remain.
+
 **Headline:** the architecture is sound and the design patterns are largely good, but
 the service was **not production-ready**: five verified criticals, including a safety
 regression (ungrounded claims on the wire) and an inert tenant-isolation backstop that
@@ -89,35 +96,38 @@ the orphan container, and the first container never closed.
   logged `query[:120]` at INFO. Query log sites now route through
   `summarize_query`/`redact_pii` according to policy.
 
-## 3. Verified highs — still open
+## 3. Verified highs — fixed 2026-11-23
 
-- ⬜ **Ground check verifies only declared claims.** Answer prose absent from `claims`
-  ships unverified; `strip_unsupported` is a substring replace, so paraphrased clauses
-  can survive. Needs sentence-level verification with citations.
-- ⬜ **Readiness is a single check.** `ensure_storage` short-circuits after the first
-  success; vector store, Redis, lock engine and executor saturation are not checked and
-  a failed warm-up leaves the pod NotReady indefinitely.
-- ⬜ **Lock/slot/idempotency release is not cancellation-safe.** Releases live in the
-  response generator's `finally`; an exception before streaming or a cancelled task can
-  leak the advisory lock and tenant slot.
-- ⬜ **Job worker uses `asyncio.run` per job**, reusing loop-bound SDK/Redis clients
-  across loops; sequential LLM-backed jobs can fail.
-- ⬜ **Evaluation precision@k divides by `len(top)`** after document dedupe, inflating
-  the shipped P@5 column. Needs the formula fix and a regenerated comparison table.
-- ⬜ **Shadow retrieval is awaited, not background**, doubling latency when enabled.
+- ✅ **Ground check verifies only declared claims.** `verify_answer` now walks every answer
+  sentence and traces it to a cited or best-matching chunk; `strip_unsupported_sentences`
+  rebuilds the answer from supported sentences only. Long prose outside `claims` no longer
+  ships unverified.
+- ✅ **Readiness is a single check.** `/health/ready` reports `storage`, `runtime`,
+  `retrieval`, `llm` and `cache` separately, pings storage with `SELECT 1`, retries warm-up
+  while cold, and exports `blackbox_runtime_ready` / `blackbox_dependency_up`.
+- ✅ **Lock/slot/idempotency release is not cancellation-safe.** Cleanup is a shielded,
+  per-release-isolated `_release_turn`; a cancellation test proves the lock, slot and key
+  are still released.
+- ✅ **Job worker uses `asyncio.run` per job.** Each worker thread owns one long-lived event
+  loop; `_invoke` reuses it, so loop-bound SDK/Redis clients stay valid across jobs.
+- ✅ **Evaluation precision@k divides by `len(top)`.** The denominator is now `k`; the
+  comparison table and README were regenerated (P@5 dense 0.3029, sparse 0.2629, hybrid
+  0.2914, hybrid+rerank 0.3143).
+- ✅ **Shadow retrieval is awaited, not background.** Both sync and async paths dispatch the
+  comparison and return immediately; a latency-isolation test covers both.
 
 ## 4. Design-pattern deviations (maintainability)
 
-- ◐ `DenseStore` seam is fictional: Chroma filter compilation lives in `DenseRetriever`,
-  so Qdrant is not substitutable. `JobStore.dequeue` is unimplementable in the Redis
-  adapter, and the caller branches on `isinstance`.
-- ◐ Job bodies live in the API route module; `worker.py` imports a route module for its
-  registration side effect.
+- ◐ `JobStore.dequeue` now takes the kind and the `isinstance` branch is gone; the
+  `DenseStore` filter compilation still lives in `DenseRetriever`.
+- ◐ Job bodies still live in the API route module; `worker.py` imports it for registration.
 - ⬜ `AppServices` stores every seam as `Any`, so protocols are not checked at the
-  composition root.
-- ⬜ Five separate "Redis or fall back" factories with divergent enable flags.
-- ⬜ Dead settings: `RERANKER_MODEL`, most of `ChunkingConfig`, `entity_max_tokens`,
-  `IngestionConfig` caps, `RegionConfig.failover_generation`.
+  composition root. A `Retriever` protocol now exists and is asserted for the hybrid and
+  shadow retrievers, but the container is not typed against it yet.
+- ✅ Five separate "Redis or fall back" factories with divergent enable flags. They now use
+  one `blackbox/redis_factory.py` for client construction.
+- ✅ Dead settings removed: `RERANKER_MODEL`, `ChunkingConfig`, `entity_max_tokens`,
+  unused `IngestionConfig` caps, `RegionConfig.failover_generation`.
 
 ## 5. What is genuinely production-grade
 
@@ -130,9 +140,14 @@ gate; provider contract tests; opt-in store integration tests; the CI gates.
 
 ## 6. Recommended order for the remaining work
 
-1. Ground-check sentence verification (correctness of the safety claim).
-2. Readiness with per-dependency state and warm-up retry.
-3. Cancellation-safe release of lock/slot/idempotency.
-4. Job worker event loop and lease/DLQ semantics.
-5. Precision@k correction + regenerate `docs/retrieval-results.md`.
-6. Design-pattern consolidation (retriever protocol, job registry, Redis factory).
+1. ✅ Ground-check sentence verification (correctness of the safety claim).
+2. ✅ Readiness with per-dependency state and warm-up retry.
+3. ✅ Cancellation-safe release of lock/slot/idempotency.
+4. ✅ Job worker event loop (lease/DLQ semantics remain a separate feature).
+5. ✅ Precision@k correction + regenerated `docs/retrieval-results.md`.
+6. ◐ Design-pattern consolidation: retriever protocol, `JobStore.dequeue(kind)` and the
+   Redis factory are done; typing `AppServices` against the protocols and moving job bodies
+   out of the route module remain.
+
+The residual items are infrastructure-bound (apply Terraform, live backend benchmark,
+load/chaos/DR runs) and the optional bonus features; see `development-tracker.md` §12.

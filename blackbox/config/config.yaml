@@ -35,7 +35,6 @@ memory:
   working_turns: 6
   summary_trigger_turns: 8
   summary_max_tokens: 600
-  entity_max_tokens: 400
 
 budget:
   system_prompt_tokens: 800
@@ -45,13 +44,6 @@ budget:
   retrieved_chunks_tokens: 2000
   output_headroom_tokens: 1024
   total_cap_tokens: 6024
-
-chunking:
-  postmortem_max_tokens: 800
-  runbook_max_tokens: 600
-  arch_max_tokens: 700
-  alert_max_tokens: 300
-  embedding_max_tokens: 8000
 
 guardrails:
   max_message_chars: 4000
@@ -74,12 +66,7 @@ redis:
   ttl_idempotency_s: 3600
 
 ingestion:
-  max_upload_size_mb: 50
-  max_total_corpus_size_mb: 2048
-  spool_threshold_bytes: 1048576
   batch_size_chunks: 64
-  batch_size_tokens: 100000
-  max_concurrent_jobs: 2
 
 # Per-million-token prices, used to report the cost of a conversation from the
 # per-node token usage recorded in each turn's trace. A model with no entry is

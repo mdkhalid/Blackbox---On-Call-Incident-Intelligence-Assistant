@@ -1,6 +1,7 @@
 """POST /api/chat — SSE streaming of graph events, then the grounded answer."""
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 
@@ -205,6 +206,17 @@ async def chat(
 
     async def event_stream():
         SSE_ACTIVE.inc()
+
+        async def _cleanup() -> None:
+            await _release_turn(
+                turn_lock=turn_lock,
+                services=services,
+                tenant_id=tenant_id,
+                release_idempotency=_release_idempotency_lock,
+                conversation_id=conversation_id,
+            )
+            SSE_ACTIVE.dec()
+
         with span(
             "chat.turn",
             **{
@@ -373,11 +385,11 @@ async def chat(
                     {"message": "the turn failed", "detail": type(exc).__name__},
                 )
             finally:
-                await turn_lock.release()
-                services.release_tenant(tenant_id)
-                await services.release_tenant_slot(tenant_id)
-                await _release_idempotency_lock()
-                SSE_ACTIVE.dec()
+                # Shield the release: a cancelled SSE task must still free the
+                # conversation lock, tenant slot and idempotency key. Awaiting them
+                # directly lets a second CancelledError interrupt the cleanup and leak
+                # the lease until its TTL expires.
+                await asyncio.shield(_cleanup())
 
     return StreamingResponse(
         event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS
@@ -386,3 +398,35 @@ async def chat(
 
 async def _replay_final(payload: dict):
     yield sse_event("final", {**payload, "replayed": True})
+
+
+async def _release_turn(
+    *,
+    turn_lock,
+    services,
+    tenant_id: str,
+    release_idempotency,
+    conversation_id: str,
+) -> None:
+    """Release everything a turn holds, isolating each release.
+
+    The caller wraps this in `asyncio.shield`, because it runs from a `finally` that may
+    already be unwinding a cancellation. Inside, each release is independently guarded:
+    a cancelled slot decrement must not stop the advisory lock from being released.
+    """
+    try:
+        await turn_lock.release()
+    except Exception:  # noqa: BLE001 - cleanup must outlive its own errors
+        logger.warning("turn_lock_release_failed", conversation_id=conversation_id)
+    try:
+        services.release_tenant(tenant_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("tenant_count_release_failed", tenant_id=tenant_id)
+    try:
+        await services.release_tenant_slot(tenant_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("tenant_slot_release_failed", tenant_id=tenant_id)
+    try:
+        await release_idempotency()
+    except Exception:  # noqa: BLE001
+        logger.warning("idempotency_release_failed", tenant_id=tenant_id)

@@ -95,6 +95,58 @@ def test_an_empty_stream_finishes_normally():
     assert asyncio.run(run()) == []
 
 
+def test_turn_cleanup_completes_even_when_the_task_is_cancelled():
+    """A cancelled SSE task must still release the lock, slot and idempotency key.
+
+    The route awaits `asyncio.shield(cleanup)`; without the shield a second
+    CancelledError interrupts the release and leaks the lease until its TTL.
+    """
+    from blackbox.api.routes.chat import _release_turn
+
+    released: list[str] = []
+
+    class Lock:
+        async def release(self):
+            # Slow enough that the cancellation arrives while cleanup is in flight.
+            await asyncio.sleep(0.05)
+            released.append("lock")
+
+    class Services:
+        def release_tenant(self, tenant_id):
+            released.append("tenant")
+
+        async def release_tenant_slot(self, tenant_id):
+            released.append("slot")
+
+    async def release_idempotency():
+        released.append("idempotency")
+
+    async def run():
+        cleanup = _release_turn(
+            turn_lock=Lock(),
+            services=Services(),
+            tenant_id="t1",
+            release_idempotency=release_idempotency,
+            conversation_id="c1",
+        )
+        async def shielded():
+            await asyncio.shield(cleanup)
+
+        task = asyncio.create_task(shielded())
+        await asyncio.sleep(0)  # let the shielded cleanup start
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The shielded cleanup keeps running on its own task; let it finish.
+        for _ in range(100):
+            if set(released) == {"lock", "tenant", "slot", "idempotency"}:
+                break
+            await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+    assert set(released) == {"lock", "tenant", "slot", "idempotency"}
+
+
 def test_a_non_positive_poll_interval_is_rejected():
     async def source():
         yield 1

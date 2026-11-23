@@ -1,4 +1,9 @@
-from blackbox.graph.grounding import strip_unsupported, verify_claims
+from blackbox.graph.grounding import (
+    strip_unsupported,
+    strip_unsupported_sentences,
+    verify_answer,
+    verify_claims,
+)
 
 CHUNKS = [
     {
@@ -61,3 +66,27 @@ def test_strip_unsupported_removes_the_sentence():
     )
     assert "moon" not in stripped.lower()
     assert "saturated" in stripped.lower()
+
+
+def test_answer_prose_is_verified_even_when_it_is_not_a_declared_claim():
+    """Fabricated prose that the generator never listed as a claim is still checked."""
+    result = verify_answer(
+        "The pool was saturated. NASA faked the moon landing in 1969.",
+        CHUNKS,
+        min_overlap=0.3,
+    )
+    assert result.supported_count == 1
+    stripped = strip_unsupported_sentences(
+        "The pool was saturated. NASA faked the moon landing in 1969.", result
+    )
+    assert "saturated" in stripped.lower()
+    assert "moon" not in stripped.lower()
+
+
+def test_a_sentence_with_a_citation_is_checked_against_the_cited_chunk():
+    result = verify_answer(
+        "The pool was saturated [c1]. Unrelated prose [c1].",
+        CHUNKS,
+        min_overlap=0.3,
+    )
+    assert [verdict.supported for verdict in result.verdicts] == [True, False]

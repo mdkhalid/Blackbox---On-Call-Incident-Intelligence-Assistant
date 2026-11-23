@@ -26,14 +26,17 @@ The current application is a correct, measured, single-process corrective-RAG se
 - FastAPI + SSE, LangGraph, three-layer memory, hybrid retrieval, trace viewer and eval harness.
 - Local Chroma for dense vectors; in-process BM25; Redis-shared rate limits and Postgres
   advisory turn locks; JWT/RBAC with tenant-scoped conversations.
-- 465 tests, deterministic offline fallbacks, Postgres/SQLite conversation store.
+- 608 collected tests (596 passing, 12 skipped), deterministic offline fallbacks,
+  Postgres/SQLite conversation store.
 
-It is suitable for a demo or a small internal team. It is **not** yet horizontally scalable
-as written: the dense retrieval index is node-local (Qdrant and OpenSearch adapters are
-opt-in), and tenant admission control is per pod. The data-plane tenant filters, RLS and
-the tenant-isolated retrieval predicates are implemented, and the job queue can be shared
-through Redis with a dedicated worker process; the remaining gaps are the opt-in backend
-cutover, global quotas, and the Phase 4 deployment/observability work.
+It is suitable for a demo or a small internal team and is now production-shaped as a
+reference deployment: the Qdrant and OpenSearch adapters, tenant-isolated retrieval
+predicates, RLS, shared Redis job queue with a dedicated worker, global per-tenant quotas and
+concurrency, and the Phase 4 deployment/observability assets are all implemented. The dense
+index remains node-local on the default dev adapters because the production cutover still
+awaits the live-cluster benchmark; capacity, tenancy tiers and the multi-region stack are
+validated only offline until the Terraform stack, load, chaos and DR drills run against real
+infrastructure.
 
 The target separates state from compute:
 
@@ -206,9 +209,9 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 - Async provider interface; async graph nodes; concurrent dense/sparse calls; no threadpool
   hops in the request path.
 - Explicit LLM policy: connect/read timeout, bounded retries with jitter, circuit breaker,
-  per-tenant admission control, max tokens/cost. **Phase 1 implements timeout/retry, the
-  circuit breaker, bounded provider concurrency and per-tenant admission; global quotas are
-  Phase 4.**
+  per-tenant admission control, max tokens/cost. **Implemented: timeout/retry, the circuit
+  breaker, bounded provider concurrency, per-tenant admission, and Redis-backed global
+  token/LLM-call and dollar-budget quotas with a local fallback.**
 - SSE: stateless streams, configurable ingress idle timeout, no proxy buffering; tokens remain
   post-ground-check; node events stream during execution.
 - Idempotency: `Idempotency-Key` on `/api/chat`, stored in Redis with the final result, so
@@ -225,9 +228,11 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 > (`MAX_WORKER_THREADS`, replacing asyncio's `min(32, cpu_count + 4)`) are implemented. A
 > hosted LLM round trip no longer occupies a worker thread.
 >
-> Two things are still open. The *retrieval stores* are synchronous and reached through
-> `asyncio.to_thread`, so the request path still has threadpool hops for Chroma and BM25.
-> And the provider's concurrency limit is per-process; global quotas remain Phase 4.
+> The retrieval stores remain synchronous behind `asyncio.to_thread` for the Chroma/BM25 dev
+> adapters (the Qdrant/OpenSearch adapters are async), so the request path still has
+> threadpool hops on the default backend. The provider's concurrency limit is per-process;
+> token/LLM-call/dollar quotas and the concurrency slot counter are now shared through Redis
+> when it is reachable.
 
 ---
 
@@ -302,6 +307,14 @@ unchanged, tenant filters proven, p95 within SLO at target concurrency.
 - NetworkPolicies: API → stores/Redis/queue/gateway only; workers → stores/queue only.
 - No local persistent volumes for authoritative data.
 
+### Portable baseline (Docker Compose)
+
+Not every deployment needs Kubernetes. [`deploy/compose`](../deploy/compose) runs the same
+image on a single VM, a laptop, or any container host: a one-shot `alembic upgrade head`
+service, N API replicas behind a Caddy edge (SSE unbuffered, one public port), a
+shared-queue worker, and either managed Postgres/Redis or a local override. It is the
+low-operations path; the Kubernetes topology above is the org-wide path.
+
 ### Reference infrastructure (Terraform, AWS)
 
 EKS, Aurora PostgreSQL, ElastiCache Redis, SQS/MSK, OpenSearch, Qdrant on EKS (or managed),
@@ -324,10 +337,11 @@ with tenant affinity.
 > Phase 2 benchmark decides the shape. [`deploy/external-secrets`](../deploy/external-secrets)
 > assembles the chart's `existingSecret` from those secrets.
 >
-> Runtime warm-up is still open: readiness calls `/health/ready` (which checks the
-> conversation store) but does not build the retriever or LLM, so the first chat after a pod
-> starts pays cold start. The chart's startup probe allows up to 60s, which is enough to warm
-> on startup once that is wired.
+> Runtime warm-up is wired: the lifespan calls `ensure_runtime()`, and `/health/ready`
+> retries it on every probe while the pod is cold. Readiness reports each dependency
+> (`storage` via a real `SELECT 1`, `runtime`, `retrieval`, `llm`, `cache`) and fails until
+> the runtime is warm, so the first chat does not pay cold start. The chart's startup probe
+> allows up to 60s, which covers warm-up.
 
 ---
 
@@ -509,8 +523,9 @@ Implemented:
 - Audit log lines for chat, ingest and eval.
 - Two-replica Docker smoke green: shared Postgres conversation read and shared Redis limit.
 
-Data-plane isolation (retrieval tenant predicates and Postgres RLS) is a Phase 2 gate because
-the retrieval stores are replaced there. Tenant offboarding and global quotas are also Phase 2.
+Data-plane isolation (retrieval tenant predicates and Postgres RLS) landed in Phase 2 because
+the retrieval stores were replaced there. Tenant offboarding and global quotas also landed
+(Phase 2/4).
 
 ---
 

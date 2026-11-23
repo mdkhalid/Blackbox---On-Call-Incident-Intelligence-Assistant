@@ -69,6 +69,11 @@ db = [
     "psycopg[binary]>=3.2",
     "redis>=5.0",
 ]
+# Hosted provider SDKs only; the production image needs these, but not torch.
+providers = [
+    "openai>=1.40",
+    "anthropic>=0.34",
+]
 llm = [
     "openai>=1.40",
     "anthropic>=0.34",

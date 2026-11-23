@@ -116,9 +116,8 @@ class MemoryConfig(BaseModel):
     working_turns: int = 6
     summary_trigger_turns: int = 8
     summary_max_tokens: int = 600
-    entity_max_tokens: int = 400
 
-    @field_validator("working_turns", "summary_trigger_turns", "summary_max_tokens", "entity_max_tokens")
+    @field_validator("working_turns", "summary_trigger_turns", "summary_max_tokens")
     @classmethod
     def positive(cls, v):
         if v < 1:
@@ -156,14 +155,6 @@ class BudgetConfig(BaseModel):
         if v < 0:
             raise ValueError("token budgets must be >= 0")
         return v
-
-
-class ChunkingConfig(BaseModel):
-    postmortem_max_tokens: int = 800
-    runbook_max_tokens: int = 600
-    arch_max_tokens: int = 700
-    alert_max_tokens: int = 300
-    embedding_max_tokens: int = 8000
 
 
 class GuardrailsConfig(BaseModel):
@@ -224,12 +215,9 @@ class RedisConfig(BaseModel):
 
 
 class IngestionConfig(BaseModel):
-    max_upload_size_mb: int = 50
-    max_total_corpus_size_mb: int = 2048
-    spool_threshold_bytes: int = 1048576
+    # The only ingestion knob the pipeline reads today. Upload/corpus caps belong at
+    # the ingress and in the request-body guardrail, not in an ignored config field.
     batch_size_chunks: int = 64
-    batch_size_tokens: int = 100000
-    max_concurrent_jobs: int = 2
 
 
 class ModelPrice(BaseModel):
@@ -260,16 +248,13 @@ class CostConfig(BaseModel):
 
 
 class RegionConfig(BaseModel):
-    # Bumped by an operator when a region takes ownership of a tenant after a
-    # failover, so a later failback starts from a known generation.
-    failover_generation: int = 0
     # How long a tenant's home-region lookup is cached in-process. The DB stays
     # authoritative; the cache only avoids a query per request.
     resolver_cache_ttl_s: int = 60
     # Optional suffix so each region's retrieval index has a distinct name.
     region_suffix: bool = False
 
-    @field_validator("failover_generation", "resolver_cache_ttl_s")
+    @field_validator("resolver_cache_ttl_s")
     @classmethod
     def non_negative(cls, v):
         if v < 0:
@@ -284,7 +269,6 @@ class AppConfig(BaseModel):
     graph: GraphConfig = Field(default_factory=GraphConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
-    chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
@@ -358,9 +342,6 @@ class Settings(BaseSettings):
     generation_model: str = Field(default="gpt-4o", alias="GENERATION_MODEL")
     grading_model: str = Field(default="gpt-4o-mini", alias="GRADING_MODEL")
     rewrite_model: str = Field(default="gpt-4o-mini", alias="REWRITE_MODEL")
-    reranker_model: str = Field(
-        default="cross-encoder/ms-marco-MiniLM-L-6-v2", alias="RERANKER_MODEL"
-    )
     config_path: str = Field(default="blackbox/config/config.yaml", alias="CONFIG_PATH")
     cors_origins: str = Field(default="", alias="CORS_ORIGINS")
     llm_timeout_s: float = Field(default=30.0, alias="LLM_TIMEOUT_S")

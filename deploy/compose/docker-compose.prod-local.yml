@@ -1,0 +1,68 @@
+name: blackbox
+
+# Local/single-server override: adds Postgres and Redis to the production stack.
+# Use this on a plain VM or laptop when you do not have managed services:
+#
+#   docker compose -f deploy/compose/docker-compose.prod.yml \
+#     -f deploy/compose/docker-compose.prod-local.yml \
+#     --env-file deploy/compose/.env.prod up -d
+#
+# In .env.prod set the local URLs:
+#   DATABASE_URL=postgresql://blackbox:<POSTGRES_PASSWORD>@postgres:5432/blackbox
+#   REDIS_URL=redis://redis:6379/0
+#   POSTGRES_PASSWORD=<a strong password>
+
+services:
+  migrate:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-blackbox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-blackbox}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blackbox} -d ${POSTGRES_DB:-blackbox}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # noeviction: the queue and idempotency keys share this instance; eviction would
+    # silently drop work rather than free a cache entry.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
